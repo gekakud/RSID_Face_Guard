@@ -1,2 +1,14 @@
 Pillow
 numpy
+
+tk
+
+# led - also need install pyaudio headers
+pyaudio
+lgpio
+
+Adafruit-Blinka-Raspberry-Pi5-Neopixel
+adafruit-circuitpython-neopixel
+rpi_ws281x
+
+adafruit-blinka
