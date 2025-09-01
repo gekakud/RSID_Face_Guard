@@ -371,7 +371,7 @@ class GUI(tk.Tk):
         self.resize_handle = None
         self.snapshot_handle = None
 
-        self.title(f'{WINDOW_NAME} ({str(controller.device_type).split('.')[-1]})')
+        #self.title(f'{WINDOW_NAME} ({str(controller.device_type).split('.')[-1]})')
         max_w = int(720 / 1.5)
         max_h = int(1280 / 1.5) + 80
         self.geometry(f"{max_w}x{max_h}")
@@ -746,7 +746,16 @@ def main():
     group.add_argument('-r', '--crop', help='Cropped Face mode.', action='store_true')
 
     args = arg_parser.parse_args()
+    # linux or windows
+
     port = "COM14"
+    import platform
+
+    if platform.system() == "Windows":
+        port = "COM14"
+    else:  # Linux, macOS, etc.
+        port = "/dev/ttyACM0"
+
     camera_index = args.camera
 
     if args.port is None:
