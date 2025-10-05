@@ -83,12 +83,14 @@ class UserDatabase:
             print(f"Error saving user database: {e}")
             return False
     
-    def add_user(self, user_id, name, permission_level):
-        """Add a new user to the database"""
+
+    def add_user(self, user_id, name, permission_level, faceprints=None):
+        """Add a new user to the database, including faceprints if provided"""
         self.users[user_id] = {
             'name': name,
             'id': user_id,
-            'permission_level': permission_level
+            'permission_level': permission_level,
+            'faceprints': faceprints
         }
         return self.save_users()
     
@@ -244,17 +246,62 @@ class Controller(threading.Thread):
         self.detected_faces = [{'face': f} for f in faces]
 
     def auth_example(self):
-        with rsid_py.FaceAuthenticator(self.device_type, self.port) as f:
+
+        def on_fp_auth_result(status, new_prints, authenticator):
+            if status != rsid_py.AuthenticateStatus.Success:
+                self.status_msg = f"Authentication failed: {status}"
+                return
+            # Host-side matching
+            max_score = -100
+            selected_user_id = None
+            for user_id, user_info in self.user_db.get_all_users().items():
+                fp = user_info.get('faceprints')
+                if not fp:
+                    continue
+                db_item = rsid_py.Faceprints()
+                db_item.version = fp['version']
+                db_item.features_type = fp['features_type']
+                db_item.flags = fp['flags']
+                db_item.adaptive_descriptor_nomask = fp['adaptive_descriptor_nomask']
+                db_item.adaptive_descriptor_withmask = fp['adaptive_descriptor_withmask']
+                db_item.enroll_descriptor = fp['enroll_descriptor']
+                updated_faceprints = rsid_py.Faceprints()
+                match_result = authenticator.match_faceprints(new_prints, db_item, updated_faceprints)
+                if match_result.success and match_result.score > max_score:
+                    max_score = match_result.score
+                    selected_user_id = user_id
+            if selected_user_id:
+                user_info = self.user_db.get_user(selected_user_id)
+                self.status_msg = f"Authenticated: {user_info['name']} (ID: {selected_user_id})"
+            else:
+                self.status_msg = "No match found"
+
+        with rsid_py.FaceAuthenticator(self.port) as authenticator:
             self.status_msg = "Authenticating.."
-            f.authenticate(on_hint=self.on_hint, on_result=self.on_result, on_faces=self.on_faces)
+            authenticator.extract_faceprints_for_auth(
+                on_result=lambda status, new_prints: on_fp_auth_result(status, new_prints, authenticator))
 
     def enroll_example(self, user_id, name, permission_level):
-        with rsid_py.FaceAuthenticator(self.port) as f:
+
+        def on_fp_enroll_result(status, extracted_prints):
+            if status == rsid_py.EnrollStatus.Success:
+                # Convert faceprints to serializable format
+                faceprints_data = {
+                    'version': extracted_prints.version,
+                    'features_type': extracted_prints.features_type,
+                    'flags': extracted_prints.flags,
+                    'adaptive_descriptor_nomask': list(extracted_prints.features),
+                    'adaptive_descriptor_withmask': [0]*515,
+                    'enroll_descriptor': list(extracted_prints.features)
+                }
+                self.user_db.add_user(user_id, name, permission_level, faceprints=faceprints_data)
+                self.status_msg = f"Enroll Success: {name} (ID: {user_id})"
+            else:
+                self.status_msg = f"Enroll Failed: {status}"
+
+        with rsid_py.FaceAuthenticator(self.port) as authenticator:
             self.status_msg = "Enroll.."
-            f.enroll(on_hint=self.on_hint, on_progress=self.on_progress,
-                     on_result=self.on_result, on_faces=self.on_faces, user_id=user_id)
-            # Add user to database after enrollment
-            self.user_db.add_user(user_id, name, permission_level)
+            authenticator.extract_faceprints_for_enroll(on_progress=self.on_progress, on_result=on_fp_enroll_result)
 
     def remove_all_users(self):
         with rsid_py.FaceAuthenticator(self.port) as f:
