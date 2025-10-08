@@ -256,6 +256,10 @@ class GUI(tk.Tk):
                                         command=self.remove_all_users)
         self.delete_button.grid(row=0, column=2, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
 
+        self.change_mode_button = ttk.Button(self.button_frame, text="Change Op Mode",
+                                            command=self.change_operation_mode)
+        self.change_mode_button.grid(row=1, column=0, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew", columnspan=3)
+
         self.button_frame.grid_columnconfigure(0, weight=1)
         self.button_frame.grid_columnconfigure(1, weight=1)
         self.button_frame.grid_columnconfigure(2, weight=1)
@@ -323,6 +327,29 @@ class GUI(tk.Tk):
         if user_input is not None:
             self.controller.enroll_example(user_input)
             self.reset_later()
+
+    def change_operation_mode(self):
+        """Change the device operation mode"""
+        try:
+            # Use the actual port from the controller
+            with rsid_py.FaceAuthenticator(self.controller.port) as f:
+                # Read current config
+                cfg = f.query_device_config()
+                # Change the operation mode to "All"
+                # modes: All, SpoofOnly, RecognitionOnly, FaceDetectionOnly
+                cfg.algo_flow = rsid_py.AlgoFlow.All
+
+                # Apply it
+                f.set_device_config(cfg)
+
+                # Verify change
+                new_cfg = f.query_device_config()
+                print("Operation mode changed to:", new_cfg.algo_flow)
+
+                self.reset_later()
+        except Exception as e:
+            print(f"Error changing operation mode: {e}")
+            messagebox.showerror("Error", f"Failed to change operation mode:\n{str(e)}", parent=self)
 
     def clear_snapshot(self):
         self.canvas.itemconfig(self.canvas_snapshot_image_id, image=None)
@@ -452,7 +479,7 @@ def main():
     group.add_argument('-r', '--crop', help='Cropped Face mode.', action='store_true')
 
     args = arg_parser.parse_args()
-    port = "COM14"
+    port = "COM9"
     camera_index = args.camera
 
     if args.port is None:
