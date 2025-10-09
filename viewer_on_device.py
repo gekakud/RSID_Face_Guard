@@ -201,8 +201,6 @@ class Controller(threading.Thread):
         self.device_type = device_type
         self.dump_mode = dump_mode
         self.user_db = UserDatabase()  # Initialize user database
-        self.user_candidate_name = ''
-        self.user_permission_level = ''
         
         if self.dump_mode in [rsid_py.DumpMode.CroppedFace, rsid_py.DumpMode.FullFrame]:
             self.status_msg = '-- Dump Mode --' \
@@ -214,17 +212,6 @@ class Controller(threading.Thread):
     def reset(self):
         self.status_msg = ''
         self.detected_faces = []
-
-    def on_new_user_added_result(self, result, user_id=None):
-        success = result == rsid_py.AuthenticateStatus.Success
-        
-        # If authentication successful, get user details from database
-        if success and user_id:
-            # Add user to database after enrollment
-            self.user_db.add_user(user_id, self.user_candidate_name, self.user_permission_level)
-            self.status_msg = f'Enroll Success: {self.user_candidate_name} (ID: {user_id}, Access: {self.user_permission_level})'
-        else:
-            self.status_msg = str(result)
 
     def on_result(self, result, user_id=None):
         success = result == rsid_py.AuthenticateStatus.Success
@@ -261,15 +248,13 @@ class Controller(threading.Thread):
             self.status_msg = "Authenticating.."
             f.authenticate(on_hint=self.on_hint, on_result=self.on_result, on_faces=self.on_faces)
 
-    def enroll_new_user(self, user_id, name, permission_level):
-        self.user_candidate_name = name
-        self.user_permission_level = permission_level
+    def enroll_example(self, user_id, name, permission_level):
         with rsid_py.FaceAuthenticator(self.port) as f:
             self.status_msg = "Enroll.."
-            
             f.enroll(on_hint=self.on_hint, on_progress=self.on_progress,
-                     on_result=self.on_new_user_added_result, on_faces=self.on_faces, user_id=user_id)
-            
+                     on_result=self.on_result, on_faces=self.on_faces, user_id=user_id)
+            # Add user to database after enrollment
+            self.user_db.add_user(user_id, name, permission_level)
 
     def remove_all_users(self):
         with rsid_py.FaceAuthenticator(self.port) as f:
@@ -514,7 +499,7 @@ class GUI(tk.Tk):
         
         if dialog.result:
             user_data = dialog.result
-            self.controller.enroll_new_user(user_data['id'], user_data['name'], user_data['permission_level'])
+            self.controller.enroll_example(user_data['id'], user_data['name'], user_data['permission_level'])
             self.reset_later()
 
     def delete_user(self):
