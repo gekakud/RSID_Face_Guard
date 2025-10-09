@@ -181,8 +181,13 @@ def get_keypress():
 
 
 def setup_terminal():
+    if not sys.stdin.isatty():
+        # running under systemd or non-interactive -> skip raw TTY tweaks
+        return
     """Setup terminal for raw input - Unix/Linux/macOS only"""
+    
     if not sys.platform.startswith('win'):
+        import termios, tty
         global old_settings
         old_settings = termios.tcgetattr(sys.stdin)
         tty.setcbreak(sys.stdin.fileno())
