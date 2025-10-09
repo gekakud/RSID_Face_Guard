@@ -185,7 +185,7 @@ def setup_terminal():
     if not sys.platform.startswith('win'):
         global old_settings
         old_settings = termios.tcgetattr(sys.stdin)
-        tty.setraw(sys.stdin.fileno())
+        tty.setcbreak(sys.stdin.fileno())
         
 
 def restore_terminal():
