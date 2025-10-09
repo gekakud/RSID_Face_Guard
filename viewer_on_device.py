@@ -201,6 +201,7 @@ class Controller(threading.Thread):
         self.device_type = device_type
         self.dump_mode = dump_mode
         self.user_db = UserDatabase()  # Initialize user database
+        self.user_id, self.name, self.permission_level = None, None, None
         
         if self.dump_mode in [rsid_py.DumpMode.CroppedFace, rsid_py.DumpMode.FullFrame]:
             self.status_msg = '-- Dump Mode --' \
@@ -213,6 +214,16 @@ class Controller(threading.Thread):
         self.status_msg = ''
         self.detected_faces = []
 
+
+    def on_new_user_result(self, result):
+        success = result == rsid_py.EnrollStatus.Success
+
+        if success:
+            self.status_msg = 'Enroll Success'
+            # Add user to database after enrollment
+            self.user_db.add_user(self.user_id, self.name, self.permission_level)
+
+    # user id will appear on auth success
     def on_result(self, result, user_id=None):
         success = result == rsid_py.AuthenticateStatus.Success
         
@@ -251,10 +262,10 @@ class Controller(threading.Thread):
     def enroll_example(self, user_id, name, permission_level):
         with rsid_py.FaceAuthenticator(self.port) as f:
             self.status_msg = "Enroll.."
+            self.user_id, self.name, self.permission_level = user_id, name, permission_level
             f.enroll(on_hint=self.on_hint, on_progress=self.on_progress,
-                     on_result=self.on_result, on_faces=self.on_faces, user_id=user_id)
-            # Add user to database after enrollment
-            self.user_db.add_user(user_id, name, permission_level)
+                     on_result=self.on_new_user_result, on_faces=self.on_faces, user_id=user_id)
+            
 
     def remove_all_users(self):
         with rsid_py.FaceAuthenticator(self.port) as f:
