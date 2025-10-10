@@ -15,6 +15,16 @@ source ./.venv/bin/activate
 # demo service run - no GUI
 /home/gatevision/Desktop/RSID_Face_Guard/.venv/bin/python /home/gatevision/Desktop/RSID_Face_Guard/auth_cli.py
 
+# service how to
+sudo usermod -aG gpio gatevision
+
+sudo nano /etc/systemd/system/rsid_face_guard.service
+sudo systemctl daemon-reload
+sudo systemctl enable rsid_face_guard.service           # start on every boot
+sudo systemctl restart rsid_face_guard.service
+ls -la /etc/systemd/
+journalctl -u rsid_face_guard.service -e
+
 
 # service
 [Unit]
@@ -34,6 +44,8 @@ Restart=on-failure
 RestartSec=3
 StandardOutput=journal
 StandardError=journal
+
+SupplementaryGroups=gpio
 
 [Install]
 WantedBy=multi-user.target
