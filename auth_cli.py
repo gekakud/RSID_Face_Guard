@@ -12,6 +12,8 @@ import sys
 import threading
 import time
 from typing import Optional
+from button_listener import ButtonListener
+
 
 try:
     import rsid_py
@@ -248,6 +250,9 @@ def main():
     # Create authenticator
     auth = AuthenticatorCLI(port, device_type)
     
+    button_listener = ButtonListener(pin=16, callback=auth.authenticate)  # GPIO pin 16
+    button_thread = threading.Thread(target=button_listener.start, daemon=True)
+    button_thread.start()
     # Display initial info
     auth.display_info()
     
