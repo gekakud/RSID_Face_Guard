@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # Wiegand reader for Raspberry Pi 5 using lgpio callbacks (RP1-friendly)
 
+
+# evgeny 1110447364
+# alon 1241789444
 import lgpio, time
 
 CHIP   = 0          # /dev/gpiochip0

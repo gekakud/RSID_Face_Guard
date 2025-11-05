@@ -18,6 +18,8 @@ import threading
 import time
 import traceback
 
+from card_reader_api import initialize_card_reader, get_card_id, disconnect_card_reader
+
 import PIL
 
 try:
@@ -245,8 +247,7 @@ class Controller(threading.Thread):
         self.status_msg = f'detected {len(faces)} face(s)'
         self.detected_faces = [{'face': f} for f in faces]
 
-    def auth_example(self):
-
+    def authenticate_user(self, card_id: int = None):
         def on_fp_auth_result(status, new_prints, authenticator):
             if status != rsid_py.AuthenticateStatus.Success:
                 self.status_msg = f"Authentication failed: {status}"
@@ -254,7 +255,12 @@ class Controller(threading.Thread):
             # Host-side matching
             max_score = -100
             selected_user_id = None
+
+            
+            print(f"Card ID read: {card_id}")
             for user_id, user_info in self.user_db.get_all_users().items():
+                if int(user_id) != card_id:
+                    continue  # Skip card ID user
                 fp = user_info.get('faceprints')
                 if not fp:
                     continue
@@ -281,7 +287,7 @@ class Controller(threading.Thread):
             authenticator.extract_faceprints_for_auth(
                 on_result=lambda status, new_prints: on_fp_auth_result(status, new_prints, authenticator))
 
-    def enroll_example(self, user_id, name, permission_level):
+    def enroll_user(self, user_id, name, permission_level):
 
         def on_fp_enroll_result(status, extracted_prints):
             if status == rsid_py.EnrollStatus.Success:
@@ -395,7 +401,12 @@ class Controller(threading.Thread):
     def run(self):
         self.start_preview()
         while self.running:
-            time.sleep(0.1)
+            # time.sleep(0.1)
+            id = get_card_id(timeout=0.1)  # Keep card reader active
+            if id is not None:
+                print(f"Card ID read in preview thread: {id}")
+                self.authenticate_user(card_id=id)
+                
         self.preview.stop()
         self.preview = None
         print("Controller thread exited")
@@ -526,7 +537,7 @@ class GUI(tk.Tk):
 
     def authenticate(self):
         self.controller.reset()
-        self.controller.auth_example()
+        self.controller.authenticate_user()
         self.reset_later()
 
     def remove_all_users(self):
@@ -546,7 +557,7 @@ class GUI(tk.Tk):
         
         if dialog.result:
             user_data = dialog.result
-            self.controller.enroll_example(user_data['id'], user_data['name'], user_data['permission_level'])
+            self.controller.enroll_user(user_data['id'], user_data['name'], user_data['permission_level'])
             self.reset_later()
 
     def delete_user(self):
@@ -855,6 +866,7 @@ def main():
 
     controller = Controller(port=port, camera_index=camera_index, device_type=device_type, dump_mode=config.dump_mode)
     controller.daemon = True
+    initialize_card_reader()
     controller.start()
     gui = GUI(controller)
     gui.mainloop()
