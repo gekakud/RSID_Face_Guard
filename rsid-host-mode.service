@@ -1,0 +1,24 @@
+[Unit]
+Description=RealSense ID Host Mode Service
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/rsid
+ExecStart=/usr/bin/python3 /home/pi/rsid/host_mode_cli.py -d -l /var/log/rsid-host-mode.log
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+PrivateTmp=true
+NoNewPrivileges=true
+
+# Device access permissions
+SupplementaryGroups=dialout gpio i2c
+
+[Install]
+WantedBy=multi-user.target
