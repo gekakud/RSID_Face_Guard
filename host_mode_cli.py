@@ -240,7 +240,7 @@ class HostModeService:
         """Monitor card reader for authentication requests"""
         self.logger.info("Card reader monitoring active")
         last_card_id = None
-        card_cooldown = 3.0  # seconds before same card can be read again
+        card_cooldown = 2.0  # seconds before same card can be read again
         last_read_time = 0
         
         while self.running:
