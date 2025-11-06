@@ -49,42 +49,11 @@ except ImportError:
     exit(1)
 
 
-# Configure logging
-def setup_logging(log_file: str = 'host_mode_service.log', debug: bool = False):
-    """Setup logging configuration"""
-    log_level = logging.DEBUG if debug else logging.INFO
-    
-    # Create formatter
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    
-    # File handler
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setFormatter(formatter)
-    file_handler.setLevel(log_level)
-    
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(formatter)
-    console_handler.setLevel(log_level)
-    
-    # Configure root logger
-    logger = logging.getLogger()
-    logger.setLevel(log_level)
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
-    
-    return logger
-
-
 class UserDatabase:
     """Manage user database in JSON file (read-only)"""
     
-    def __init__(self, filename: str = 'user_database.json', logger: logging.Logger = None):
+    def __init__(self, filename: str = 'user_database.json'):
         self.filename = filename
-        self.logger = logger or logging.getLogger(__name__)
         self.users = self.load_users()
         self.lock = threading.Lock()
     
@@ -94,12 +63,12 @@ class UserDatabase:
             try:
                 with open(self.filename, 'r') as f:
                     users = json.load(f)
-                    self.logger.info(f"Loaded {len(users)} users from database")
+                    print(f"Loaded {len(users)} users from database")
                     return users
             except Exception as e:
-                self.logger.error(f"Error loading user database: {e}")
+                print(f"Error loading user database: {e}")
                 return {}
-        self.logger.error("No user database found - cannot authenticate without users")
+        print("No user database found - cannot authenticate without users")
         return {}
     
     
@@ -117,16 +86,15 @@ class UserDatabase:
 class HostModeService:
     """Host mode service for RealSense ID with card authentication only"""
     
-    def __init__(self, port: str, device_type: rsid_py.DeviceType, logger: logging.Logger = None):
+    def __init__(self, port: str, device_type: rsid_py.DeviceType):
         self.port = port
         self.device_type = device_type
-        self.logger = logger or logging.getLogger(__name__)
         self.running = True
-        self.user_db = UserDatabase(logger=self.logger)
+        self.user_db = UserDatabase()
         
         # Check if we have users in database
         if not self.user_db.get_all_users():
-            self.logger.error("No users in database. Please enroll users using a different tool.")
+            print("No users in database. Please enroll users using a different tool.")
             sys.exit(1)
         
         # Initialize LED controller if available
@@ -134,27 +102,28 @@ class HostModeService:
         if LED_SUPPORT:
             try:
                 self.led_controller = LEDController()
-                self.logger.info("LED feedback initialized")
+                print("LED feedback initialized")
             except Exception as e:
-                self.logger.warning(f"LED controller init failed: {e}")
+                print(f"LED controller init failed: {e}")
         
         # Initialize card reader (required)
         try:
             initialize_card_reader()
+            print("Card reader initialized")
             initialize_wiegand_tx()
-            self.logger.info("Card reader initialized")
+            print("Wiegand transmitter initialized")
         except Exception as e:
-            self.logger.error(f"Card reader initialization failed: {e}")
+            print(f"Wiegand initialization failed: {e}")
             sys.exit(1)
     
     def authenticate_with_card(self, card_id: int) -> tuple[bool, Optional[str], Optional[str]]:
         """Authenticate user with card ID and face matching"""
-        self.logger.info(f"Authentication attempt with card ID: {card_id}")
+        print(f"Authentication attempt with card ID: {card_id}")
         
         # Check if card ID exists in database
         user_info = self.user_db.get_user(str(card_id))
         if not user_info:
-            self.logger.warning(f"Card ID {card_id} not found in database")
+            print(f"Card ID {card_id} not found in database")
             if self.led_controller:
                 self.led_controller.flash_red(3)
             return False, None, "Card not registered"
@@ -170,11 +139,11 @@ class HostModeService:
         
         try:
             with rsid_py.FaceAuthenticator(self.port) as authenticator:
-                self.logger.debug("Extracting faceprints for authentication...")
+                print("Extracting faceprints for authentication...")
                 authenticator.extract_faceprints_for_auth(on_result=on_fp_auth_result)
                 
                 if auth_status != rsid_py.AuthenticateStatus.Success or not extracted_prints:
-                    self.logger.warning(f"Face extraction failed: {auth_status}")
+                    print(f"Face extraction failed: {auth_status}")
                     if self.led_controller:
                         self.led_controller.flash_red(3)
                     return False, None, f"Face extraction failed: {auth_status}"
@@ -182,7 +151,7 @@ class HostModeService:
                 # Perform host-side matching
                 fp = user_info.get('faceprints')
                 if not fp:
-                    self.logger.error(f"No faceprints stored for user {user_info['name']}")
+                    print(f"No faceprints stored for user {user_info['name']}")
                     if self.led_controller:
                         self.led_controller.flash_red(3)
                     return False, None, "No faceprints on file"
@@ -203,7 +172,7 @@ class HostModeService:
                 )
                 
                 if match_result.success:
-                    self.logger.info(f"Authentication successful for {user_info['name']} (score: {match_result.score})")
+                    print(f"Authentication successful for {user_info['name']} (score: {match_result.score})")
                     
                     if self.led_controller:
                         self.led_controller.flash_green(3)
@@ -211,7 +180,7 @@ class HostModeService:
                     
                     return True, user_info['name'], user_info['permission_level']
                 else:
-                    self.logger.warning(f"Face match failed for card ID {card_id}")
+                    print(f"Face match failed for card ID {card_id}")
                     
                     if self.led_controller:
                         self.led_controller.flash_red(3)
@@ -219,21 +188,21 @@ class HostModeService:
                     return False, None, "Face match failed"
                     
         except Exception as e:
-            self.logger.error(f"Authentication error: {e}")
+            print(f"Authentication error: {e}")
             if self.led_controller:
                 self.led_controller.flash_red(3)
             return False, None, str(e)
     
     def run_service(self):
         """Main service loop"""
-        self.logger.info("Host Mode Service started (Card Authentication Only)")
-        self.logger.info(f"Port: {self.port}, Device Type: {self.device_type}")
-        self.logger.info(f"Total users in database: {len(self.user_db.get_all_users())}")
+        print("Host Mode Service started (Card Authentication Only)")
+        print(f"Port: {self.port}, Device Type: {self.device_type}")
+        print(f"Total users in database: {len(self.user_db.get_all_users())}")
         
         # Start card reader monitoring thread
         card_thread = threading.Thread(target=self._card_reader_loop, daemon=True)
         card_thread.start()
-        self.logger.info("Card reader monitoring started")
+        print("Card reader monitoring started")
         
         # Main service loop
         try:
@@ -242,14 +211,14 @@ class HostModeService:
                 # Main loop just keeps the service alive
         
         except KeyboardInterrupt:
-            self.logger.info("Service interrupted by user")
+            print("Service interrupted by user")
         
         finally:
             self.cleanup()
     
     def _card_reader_loop(self):
         """Monitor card reader for authentication requests"""
-        self.logger.info("Card reader monitoring active")
+        print("Card reader monitoring active")
         last_card_id = None
         card_cooldown = 2.0  # seconds before same card can be read again
         last_read_time = 0
@@ -265,43 +234,43 @@ class HostModeService:
                     if card_id == last_card_id and (current_time - last_read_time) < card_cooldown:
                         continue
                     
-                    self.logger.info(f"Card detected: {card_id}")
+                    print(f"Card detected: {card_id}")
                     success, user_name, permission = self.authenticate_with_card(card_id)
                     
                     if success:
-                        self.logger.info(f"✅ Access granted to {user_name} ({permission})")
+                        print(f"✅ Access granted to {user_name} ({permission})")
                     else:
-                        self.logger.warning(f"❌ Access denied for card {card_id}: {permission}")
+                        print(f"❌ Access denied for card {card_id}: {permission}")
                     
                     last_card_id = card_id
                     last_read_time = current_time
                     
             except Exception as e:
-                self.logger.error(f"Card reader error: {e}")
+                print(f"Card reader error: {e}")
                 time.sleep(1)
     
     def cleanup(self):
         """Cleanup resources"""
         self.running = False
-        self.logger.info("Cleaning up resources...")
+        print("Cleaning up resources...")
         
         if self.led_controller:
             self.led_controller.cleanup()
-            self.logger.info("LED controller cleaned up")
+            print("LED controller cleaned up")
         
         try:
             disconnect_card_reader()
-            self.logger.info("Card reader disconnected")
+            print("Card reader disconnected")
             close_wiegand_tx()
-            self.logger.info("Wiegand transmitter closed")
+            print("Wiegand transmitter closed")
         except:
             pass
         
-        self.logger.info("Service stopped")
+        print("Service stopped")
     
     def stop(self):
         """Stop the service"""
-        self.logger.info("Stopping service...")
+        print("Stopping service...")
         self.running = False
 
 
@@ -334,15 +303,12 @@ def main():
     
     args = parser.parse_args()
     
-    # Setup logging
-    logger = setup_logging(args.log_file, args.debug)
-    
     # Check if card reader is available
     if not CARD_READER_SUPPORT:
-        logger.error("Card reader module is required but not available. Exiting.")
+        print("Card reader module is required but not available. Exiting.")
         sys.exit(1)
     if not CARD_WRITER_SUPPORT:
-        logger.error("Card writer module is required but not available. Exiting.")
+        print("Card writer module is required but not available. Exiting.")
         sys.exit(1)
 
     # Determine port
@@ -355,20 +321,20 @@ def main():
             # Try default ports based on OS
             if platform.system() == "Windows":
                 port = "COM14"
-                logger.warning(f"No devices auto-detected. Trying default port: {port}")
+                print(f"No devices auto-detected. Trying default port: {port}")
             else:
                 port = "/dev/ttyACM0"
-                logger.warning(f"No devices auto-detected. Trying default port: {port}")
+                print(f"No devices auto-detected. Trying default port: {port}")
         else:
             port = devices[0]
-            logger.info(f"Auto-detected device on port: {port}")
+            print(f"Auto-detected device on port: {port}")
     
     # Discover device type
     try:
         device_type = rsid_py.discover_device_type(port)
-        logger.info(f"Device type: {device_type}")
+        print(f"Device type: {device_type}")
     except Exception as e:
-        logger.error(f"Could not connect to device on port {port}: {e}")
+        print(f"Could not connect to device on port {port}: {e}")
         print("\nPlease check:")
         print("  - Device is connected")
         print("  - Port is correct (use -p to specify)")
@@ -376,11 +342,11 @@ def main():
         exit(1)
     
     # Create service
-    service = HostModeService(port, device_type, logger)
+    service = HostModeService(port, device_type)
     
     # Signal handler for clean exit
     def signal_handler(sig, frame):
-        logger.info("Signal received, shutting down...")
+        print("Signal received, shutting down...")
         service.stop()
         sys.exit(0)
     
@@ -388,7 +354,7 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
     
     # Run service
-    logger.info("Starting service mode...")
+    print("Starting service mode...")
     service.run_service()
 
 
