@@ -31,7 +31,7 @@ class LEDController:
         if LED_AVAILABLE:
             try:
                 self.pixels = neopixel.NeoPixel(
-                    board.D21, 
+                    board.D26, 
                     NUM_LEDS,
                     brightness=LED_BRIGHTNESS,
                     auto_write=False,

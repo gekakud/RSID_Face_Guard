@@ -2,7 +2,7 @@ import time, board, neopixel
 
 NUM_LEDS = 19
 pixels = neopixel.NeoPixel(
-    board.D21, NUM_LEDS,
+    board.D26, NUM_LEDS,
     brightness=0.6,
     auto_write=False,  
 )
