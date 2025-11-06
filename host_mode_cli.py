@@ -25,6 +25,15 @@ except ImportError:
     CARD_READER_SUPPORT = False
     sys.exit(1)  # Exit if card reader is not available since it's required
 
+# Card writer support
+try:
+    from card_writer_api import initialize_wiegand_tx, send_w32, close_wiegand_tx
+    CARD_WRITER_SUPPORT = True
+except ImportError:
+    print('Card writer module not available. Card authentication disabled.')
+    CARD_WRITER_SUPPORT = False
+    sys.exit(1)  # Exit if card writer is not available since it's required
+
 # LED control support
 try:
     from led_control import LEDController
@@ -132,6 +141,7 @@ class HostModeService:
         # Initialize card reader (required)
         try:
             initialize_card_reader()
+            initialize_wiegand_tx()
             self.logger.info("Card reader initialized")
         except Exception as e:
             self.logger.error(f"Card reader initialization failed: {e}")
@@ -197,6 +207,7 @@ class HostModeService:
                     
                     if self.led_controller:
                         self.led_controller.flash_green(3)
+                        send_w32(card_id)  # Send card ID via Wiegand
                     
                     return True, user_info['name'], user_info['permission_level']
                 else:
@@ -281,6 +292,8 @@ class HostModeService:
         try:
             disconnect_card_reader()
             self.logger.info("Card reader disconnected")
+            close_wiegand_tx()
+            self.logger.info("Wiegand transmitter closed")
         except:
             pass
         
@@ -328,7 +341,10 @@ def main():
     if not CARD_READER_SUPPORT:
         logger.error("Card reader module is required but not available. Exiting.")
         sys.exit(1)
-    
+    if not CARD_WRITER_SUPPORT:
+        logger.error("Card writer module is required but not available. Exiting.")
+        sys.exit(1)
+
     # Determine port
     if args.port:
         port = args.port
