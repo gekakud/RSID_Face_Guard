@@ -54,7 +54,7 @@ print('Version: ' + rsid_py.__version__)
 
 # globals
 WINDOW_NAME = 'RealSenseID'
-USER_DB_FILE = 'user_database.json'
+USER_DB_FILE = 'user_database_viewer.json'
 
 
 class UserDatabase:
