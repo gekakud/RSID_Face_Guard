@@ -19,10 +19,14 @@ source ./.venv/bin/activate
 sudo usermod -aG gpio gatevision
 
 sudo nano /etc/systemd/system/rsid_face_guard.service
-sudo systemctl daemon-reload
+sudo systemctl daemon-reload                            # restart all services in OS
 sudo systemctl enable rsid_face_guard.service           # start on every boot
 sudo systemctl restart rsid_face_guard.service
-ls -la /etc/systemd/
+sudo systemctl stop rsid_face_guard.service
+
+# see all services:
+ls -la /etc/systemd/system
+# see rsid_face_guard trace/log:
 journalctl -u rsid_face_guard.service -e
 
 
