@@ -14,12 +14,39 @@ Public API:
 import time
 import lgpio
 
+# ---------- module-level microsecond busy-wait ----------
+def _spin_wait_us(us: int):
+    target = time.monotonic_ns() + us * 1000
+    while time.monotonic_ns() < target:
+        pass
+
+def force_hold_low_d0(seconds: float = 2.0):
+    """
+    Hold D0 low continuously via the optocoupler so a multimeter can read it.
+    Expect ~0–0.6 V if sinking is strong enough. Then return to idle.
+    """
+    if _instance is None:
+        raise RuntimeError("initialize_wiegand_tx() first.")
+    tx = _instance
+    tx._drive(tx.d0, True)      # controller side should go LOW
+    time.sleep(seconds)
+    tx._idle(tx.d0)
+
+def force_hold_low_d1(seconds: float = 2.0):
+    if _instance is None:
+        raise RuntimeError("initialize_wiegand_tx() first.")
+    tx = _instance
+    tx._drive(tx.d1, True)
+    time.sleep(seconds)
+    tx._idle(tx.d1)
+
+
 # Defaults (BCM numbering)
 DEFAULT_CHIP     = 0       # /dev/gpiochip0
 DEFAULT_D0_TX    = 22      # drives IN1 of opto -> D0 line at controller
 DEFAULT_D1_TX    = 23      # drives IN2 of opto -> D1 line at controller
-DEFAULT_T_LOW_US = 80      # active LOW pulse width (µs) at controller
-DEFAULT_T_SP_US  = 2000    # inter-bit spacing (µs)
+DEFAULT_T_LOW_US = 120     # active LOW pulse width (µs) at controller
+DEFAULT_T_SP_US  = 2200    # inter-bit spacing (µs)
 DEFAULT_ACTIVE_HIGH = True # HIGH on GPIO turns opto ON -> controller line LOW
 
 class _WiegandTx:
@@ -51,18 +78,34 @@ class _WiegandTx:
         val = 0 if self.active_high else 1
         lgpio.gpio_write(self._h, pin, val)
 
+    # replace your _pulse_bit and send_bits_msb_first:
+
+
     def _pulse_bit(self, bit1: bool):
-        # Wiegand bit: '0' = pulse on D0, '1' = pulse on D1
         pin = self.d1 if bit1 else self.d0
-        self._drive(pin, True)                            # active (LOW at controller)
-        time.sleep(self.t_low_us / 1_000_000.0)
-        self._idle(pin)                                   # back to idle (HIGH at controller)
-        time.sleep(self.t_space_us / 1_000_000.0)
+        self._drive(pin, True)               # LOW at controller
+        _spin_wait_us(self.t_low_us)         # try 120 µs
+        self._idle(pin)                      # back HIGH
+        _spin_wait_us(self.t_space_us)       # try 2200 µs
 
     def send_bits_msb_first(self, bits: str):
-        # bits like "0101..." MSB first (matches your reader’s shift-left parsing)
+        _spin_wait_us(10000)  # 10 ms pre-frame quiet
         for b in bits:
             self._pulse_bit(b == '1')
+        _spin_wait_us(10000)  # 10 ms post-frame quiet
+
+  #  def _pulse_bit(self, bit1: bool):
+ #       # Wiegand bit: '0' = pulse on D0, '1' = pulse on D1
+ #       pin = self.d1 if bit1 else self.d0
+ #       self._drive(pin, True)                            # active (LOW at controller)
+ ##       time.sleep(self.t_low_us / 1_000_000.0)
+ #       self._idle(pin)                                   # back to idle (HIGH at controller)
+ #       time.sleep(self.t_space_us / 1_000_000.0)
+
+ #   def send_bits_msb_first(self, bits: str):
+        # bits like "0101..." MSB first (matches your reader’s shift-left parsing)
+ #       for b in bits:
+ #           self._pulse_bit(b == '1')
 
     def send_w32(self, value: int):
         # Send exactly 32 data bits, MSB first (no parity)
@@ -119,7 +162,11 @@ def close_wiegand_tx():
 
 if __name__ == "__main__":
     # quick test: send 0xDEADBEEF once
+
     initialize_wiegand_tx()
-    print("Sending 0xDEADBEEF as 32 data bits...")
-    send_w32(0xDEADBEEF)
+
+   # force_hold_low_d0(20)
+
+    print("Sending 0x49506D29 as 32 data bits...")
+    send_w32(0x49506D29)
     close_wiegand_tx()

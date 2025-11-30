@@ -152,7 +152,7 @@ from card_writer_api import initialize_wiegand_tx, send_w32, close_wiegand_tx
 # Optional CLI for quick testing
 if __name__ == "__main__":
     initialize_card_reader()
-    initialize_wiegand_tx(d0_pin=22, d1_pin=23, t_low_us=80, t_space_us=2000, active_high=True)
+   # initialize_wiegand_tx(d0_pin=22, d1_pin=23, t_low_us=80, t_space_us=2000, active_high=True)
 
     print("Listening… present a card (Ctrl+C to exit)")
     try:
@@ -161,7 +161,7 @@ if __name__ == "__main__":
             if val is not None:
                 print(f"Wiegand 32-bit value: 0x{val:08X} ({val})")
                 print(f"Read 0x{val:08X} ({val}); echoing to controller...")
-                send_w32(val)   # exact same 32 raw bits, no parity added/removed
+         #       send_w32(val)   # exact same 32 raw bits, no parity added/removed
     except KeyboardInterrupt:
         pass
     finally:
