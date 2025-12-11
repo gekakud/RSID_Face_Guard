@@ -1,0 +1,71 @@
+need compiled aarch64 libs for rsid
+must use python 3.11 as libs compiled on rpi 5 python 3.11
+
+how to install python 3.11 on rpi debian 13? (cannot be installed from apt get), only 3.13 availiable
+
+1. create big swap file:
+
+sudo fallocate -l 1G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+
+Then check:
+swapon --show
+
+You should see a 1G swap file now.
+
+2. install deps:
+sudo apt update
+sudo apt install -y \
+    build-essential \
+    libssl-dev \
+    zlib1g-dev \
+    libbz2-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    libffi-dev \
+    liblzma-dev \
+    tk-dev \
+    git \
+    curl
+
+
+3. install pyenv
+curl https://pyenv.run | bash
+echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.bashrc
+echo 'export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.bashrc
+echo 'eval "$(pyenv init -)"' >> ~/.bashrc
+source ~/.bashrc
+
+
+3. install python3.11.8 - very long task - OS may crash, do it with lowest priority
+
+nice -n 19 pyenv install 3.11.8
+
+4. Create a virtual environment with Python 3.11
+pyenv local 3.11.8
+python -m venv .venv
+source .venv/bin/activate
+
+
+python --version
+Should show:
+Python 3.11.8
+
+5. no space in /tmp  ???
+cc1: fatal error: can't write ... No space left on device
+
+sudo systemctl mask tmp.mount
+sudo reboot
+After reboot, /tmp will use the SD card (large space), not RAM.
+
+6. install librsid libs:
+Install the libs system-wide (requires sudo)
+
+sudo cp path_to_our_libs/librsid*.so /usr/local/lib/
+sudo ldconfig
+
+7. run demo
+cd ~/Desktop/RSID_Face_Guard
+sudo .venv/bin/python viewer_on_device.py
