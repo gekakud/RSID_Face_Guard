@@ -66,6 +66,13 @@ Install the libs system-wide (requires sudo)
 sudo cp path_to_our_libs/librsid*.so /usr/local/lib/
 sudo ldconfig
 
-7. run demo
+7. run simple demo for enroll and auth - GUIS
 cd ~/Desktop/RSID_Face_Guard
 sudo .venv/bin/python viewer_on_device.py
+
+8. how we work - use root user
+sudo su
+cd /home/alon/Desktop/RSID_Face_Guard
+source .venv/bin/activate
+
+
