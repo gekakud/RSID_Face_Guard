@@ -6,15 +6,13 @@ Suitable for running as a Linux service with card reader integration
 """
 
 import argparse
-import json
 import logging
-import os
 import platform
 import signal
 import sys
 import threading
 import time
-from typing import Optional, Dict, Any
+from typing import Optional
 
 CUSTOM_THRESHOLD = 400   # התאמה לפי מה שתמצא בלוגים
 
@@ -36,39 +34,7 @@ except ImportError:
     print('Failed importing rsid_py. Please ensure rsid_py module is available.')
     exit(1)
 
-
-class UserDatabase:
-    """Manage user database in JSON file (read-only)"""
-    
-    def __init__(self, filename: str = 'user_database.json'):
-        self.filename = filename
-        self.users = self.load_users()
-        self.lock = threading.Lock()
-    
-    def load_users(self) -> Dict[str, Dict[str, Any]]:
-        """Load users from JSON file"""
-        if os.path.exists(self.filename):
-            try:
-                with open(self.filename, 'r') as f:
-                    users = json.load(f)
-                    print(f"Loaded {len(users)} users from database")
-                    return users
-            except Exception as e:
-                print(f"Error loading user database: {e}")
-                return {}
-        print("No user database found - cannot authenticate without users")
-        return {}
-    
-    
-    def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get user details by ID"""
-        with self.lock:
-            return self.users.get(user_id, None)
-    
-    def get_all_users(self) -> Dict[str, Dict[str, Any]]:
-        """Get all users"""
-        with self.lock:
-            return self.users.copy()
+from user_db import UserDatabase
 
 
 class HostModeService:

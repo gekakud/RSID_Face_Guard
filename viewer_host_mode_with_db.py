@@ -8,7 +8,6 @@ Copyright(c) 2020-2024 Intel Corporation. All Rights Reserved.
 import argparse
 import copy
 import ctypes
-import json
 import os
 import pathlib
 import queue
@@ -19,6 +18,7 @@ import time
 import traceback
 
 from card_api import initialize_card_reader, get_card_id, disconnect_card_reader
+from user_db import UserDatabase
 
 import PIL
 
@@ -55,66 +55,6 @@ print('Version: ' + rsid_py.__version__)
 # globals
 WINDOW_NAME = 'RealSenseID'
 USER_DB_FILE = 'user_database_viewer.json'
-
-
-class UserDatabase:
-    """Manage user database in JSON file"""
-    
-    def __init__(self, filename=USER_DB_FILE):
-        self.filename = filename
-        self.users = self.load_users()
-    
-    def load_users(self):
-        """Load users from JSON file"""
-        if os.path.exists(self.filename):
-            try:
-                with open(self.filename, 'r') as f:
-                    return json.load(f)
-            except Exception as e:
-                print(f"Error loading user database: {e}")
-                return {}
-        return {}
-    
-    def save_users(self):
-        """Save users to JSON file"""
-        try:
-            with open(self.filename, 'w') as f:
-                json.dump(self.users, f, indent=2)
-            return True
-        except Exception as e:
-            print(f"Error saving user database: {e}")
-            return False
-    
-
-    def add_user(self, user_id, name, permission_level, faceprints=None):
-        """Add a new user to the database, including faceprints if provided"""
-        self.users[user_id] = {
-            'name': name,
-            'id': user_id,
-            'permission_level': permission_level,
-            'faceprints': faceprints
-        }
-        return self.save_users()
-    
-    def get_user(self, user_id):
-        """Get user details by ID"""
-        return self.users.get(user_id, None)
-    
-    def delete_user(self, user_id):
-        """Delete a user from the database"""
-        if user_id in self.users:
-            del self.users[user_id]
-            return self.save_users()
-        return False
-    
-    def clear_all(self):
-        """Clear all users from the database"""
-        self.users = {}
-        return self.save_users()
-    
-    def get_all_users(self):
-        """Get all users"""
-        return self.users
 
 
 class EnrollDialog(tk.Toplevel):
@@ -204,7 +144,7 @@ class Controller(threading.Thread):
         self.camera_index = camera_index
         self.device_type = device_type
         self.dump_mode = dump_mode
-        self.user_db = UserDatabase()  # Initialize user database
+        self.user_db = UserDatabase(USER_DB_FILE)  # Initialize user database with viewer-specific file
         
         if self.dump_mode in [rsid_py.DumpMode.CroppedFace, rsid_py.DumpMode.FullFrame]:
             self.status_msg = '-- Dump Mode --' \
