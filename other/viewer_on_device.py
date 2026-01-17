@@ -763,7 +763,7 @@ def main():
     import platform
 
     if platform.system() == "Windows":
-        port = "COM14"
+        port = "COM9"
     else:  # Linux, macOS, etc.
         port = "/dev/ttyACM0"
 

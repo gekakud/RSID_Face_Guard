@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 from typing import Optional
-from button_listener import ButtonListener
+from other.button_listener import ButtonListener
 
 
 try:
@@ -23,7 +23,7 @@ except ImportError:
 
 # Import LED control
 try:
-    from led_control import LEDController
+    from other.led_control import LEDController
     LED_SUPPORT = True
 except ImportError:
     print('LED control module not available. LED feedback disabled.')
