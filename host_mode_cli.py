@@ -17,23 +17,18 @@ import time
 from typing import Optional, Dict, Any
 
 CUSTOM_THRESHOLD = 400   # התאמה לפי מה שתמצא בלוגים
-# Card reader support
-try:
-    from card_reader_api import initialize_card_reader, get_card_id, disconnect_card_reader
-    CARD_READER_SUPPORT = True
-except ImportError:
-    print('Card reader module not available. Card authentication disabled.')
-    CARD_READER_SUPPORT = False
-    sys.exit(1)  # Exit if card reader is not available since it's required
 
-# Card writer support
+# Card API support (reader and writer)
 try:
-    from card_writer_api import initialize_wiegand_tx, send_w32, close_wiegand_tx
-    CARD_WRITER_SUPPORT = True
+    from card_api import (
+        initialize_card_reader, get_card_id, disconnect_card_reader,
+        initialize_wiegand_tx, send_w32, close_wiegand_tx,
+    )
+    CARD_API_SUPPORT = True
 except ImportError:
-    print('Card writer module not available. Card authentication disabled.')
-    CARD_WRITER_SUPPORT = False
-    sys.exit(1)  # Exit if card writer is not available since it's required
+    print('Card API module not available. Card authentication disabled.')
+    CARD_API_SUPPORT = False
+    sys.exit(1)  # Exit if card API is not available since it's required
 
 try:
     import rsid_py
@@ -268,12 +263,9 @@ def main():
     
     args = parser.parse_args()
     
-    # Check if card reader is available
-    if not CARD_READER_SUPPORT:
-        print("Card reader module is required but not available. Exiting.")
-        sys.exit(1)
-    if not CARD_WRITER_SUPPORT:
-        print("Card writer module is required but not available. Exiting.")
+    # Check if card API is available
+    if not CARD_API_SUPPORT:
+        print("Card API module is required but not available. Exiting.")
         sys.exit(1)
 
     # Determine port
