@@ -277,7 +277,7 @@ def main():
         if len(devices) == 0:
             # Try default ports based on OS
             if platform.system() == "Windows":
-                port = "COM14"
+                port = "COM9"
                 print(f"No devices auto-detected. Trying default port: {port}")
             else:
                 port = "/dev/ttyACM0"

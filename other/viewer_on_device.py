@@ -759,7 +759,7 @@ def main():
     args = arg_parser.parse_args()
     # linux or windows
 
-    port = "COM14"
+    port = "COM9"
     import platform
 
     if platform.system() == "Windows":
