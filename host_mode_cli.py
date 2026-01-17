@@ -16,17 +16,27 @@ from typing import Optional
 
 CUSTOM_THRESHOLD = 400   # התאמה לפי מה שתמצא בלוגים
 
+# Set to True to simulate card hardware (for testing without physical card reader)
+SIMULATE_HW = False
+
 # Card API support (reader and writer)
-try:
-    from card_api import (
+if SIMULATE_HW:
+    from card_api_sim import (
         initialize_card_reader, get_card_id, disconnect_card_reader,
         initialize_wiegand_tx, send_w32, close_wiegand_tx,
     )
     CARD_API_SUPPORT = True
-except ImportError:
-    print('Card API module not available. Card authentication disabled.')
-    CARD_API_SUPPORT = False
-    sys.exit(1)  # Exit if card API is not available since it's required
+else:
+    try:
+        from card_api import (
+            initialize_card_reader, get_card_id, disconnect_card_reader,
+            initialize_wiegand_tx, send_w32, close_wiegand_tx,
+        )
+        CARD_API_SUPPORT = True
+    except ImportError:
+        print('Card API module not available. Card authentication disabled.')
+        CARD_API_SUPPORT = False
+        sys.exit(1)  # Exit if card API is not available since it's required
 
 try:
     import rsid_py

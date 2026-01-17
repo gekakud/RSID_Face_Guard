@@ -17,7 +17,14 @@ import threading
 import time
 import traceback
 
-from card_api import initialize_card_reader, get_card_id, disconnect_card_reader
+# Set to True to simulate card hardware (for testing without physical card reader)
+SIMULATE_HW = True
+
+if SIMULATE_HW:
+    from card_api_sim import initialize_card_reader, get_card_id, disconnect_card_reader
+else:
+    from card_api import initialize_card_reader, get_card_id, disconnect_card_reader
+
 from user_db import UserDatabase
 
 import PIL
@@ -341,7 +348,7 @@ class Controller(threading.Thread):
     def run(self):
         self.start_preview()
         while self.running:
-            # time.sleep(0.1)
+            
             id = get_card_id(timeout=0.1)  # Keep card reader active
             if id is not None:
                 print(f"Card ID read in preview thread: {id}")
