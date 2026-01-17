@@ -35,21 +35,6 @@ except ImportError:
     CARD_WRITER_SUPPORT = False
     sys.exit(1)  # Exit if card writer is not available since it's required
 
-# LED control support
-try:
-    from led_control import LEDController
-    LED_SUPPORT = True
-except ImportError:
-    print('LED control module not available. LED feedback disabled.')
-    LED_SUPPORT = False
-
-try:
-    from card_reader_led_control_test import CardReaderLEDAPI
-    CARD_LED_SUPPORT = True
-except ImportError:
-    print('Card reader LED control module not available. LED feedback disabled.')
-    CARD_LED_SUPPORT = False
-
 try:
     import rsid_py
 except ImportError:
@@ -105,23 +90,6 @@ class HostModeService:
             print("No users in database. Please enroll users using a different tool.")
             sys.exit(1)
         
-        # Initialize LED controller if available
-        self.led_controller = None
-        if LED_SUPPORT:
-            try:
-                self.led_controller = LEDController()
-                print("LED feedback initialized")
-            except Exception as e:
-                print(f"LED controller init failed: {e}")
-        self.card_led_controller = None
-
-        if CARD_LED_SUPPORT:
-            try:
-                self.card_led_controller = CardReaderLEDAPI()
-                print("Card reader LED feedback initialized")
-            except Exception as e:
-                print(f"Card reader LED controller init failed: {e}")
-
         # Initialize card reader (required)
         try:
             initialize_card_reader()
@@ -140,12 +108,6 @@ class HostModeService:
         user_info = self.user_db.get_user(str(card_id))
         if not user_info:
             print(f"Card ID {card_id} not found in database")
-            if self.led_controller:
-                self.led_controller.flash_red(3)
-
-            if self.card_led_controller:
-                self.card_led_controller.led_red_on(3)
-
             return False, None, "Card not registered"
         
         # Extract faceprints from camera
@@ -164,22 +126,12 @@ class HostModeService:
                 
                 if auth_status != rsid_py.AuthenticateStatus.Success or not extracted_prints:
                     print(f"Face extraction failed: {auth_status}")
-                    if self.led_controller:
-                        self.led_controller.flash_red(3)
-                    if self.card_led_controller:
-                        self.card_led_controller.led_red_on(3)
-
                     return False, None, f"Face extraction failed: {auth_status}"
                 
                 # Perform host-side matching
                 fp = user_info.get('faceprints')
                 if not fp:
                     print(f"No faceprints stored for user {user_info['name']}")
-                    if self.led_controller:
-                        self.led_controller.flash_red(3)
-                    if self.card_led_controller:
-                        self.card_led_controller.led_red_on(3)
-
                     return False, None, "No faceprints on file"
                 
                 # Reconstruct faceprints object
@@ -201,31 +153,13 @@ class HostModeService:
                 if match_result.success or (match_result.score is not None and match_result.score >= CUSTOM_THRESHOLD):                    
                     print(f"Authentication successful for {user_info['name']} (score: {match_result.score})")
                     send_w32(card_id)  # Send card ID via Wiegand
-
-                    if self.led_controller:
-                        self.led_controller.flash_green(3)
-                        
-                    if self.card_led_controller:
-                        self.card_led_controller.led_green_on(3)
-                    
                     return True, user_info['name'], user_info['permission_level']
                 else:
                     print(f"Face match failed for card ID {card_id} (score: {match_result.score})")
-                    
-                    if self.led_controller:
-                        self.led_controller.flash_red(3)
-
-                    if self.card_led_controller:
-                        self.card_led_controller.led_red_on(3)
-                    
                     return False, None, "Face match failed"
                     
         except Exception as e:
             print(f"Authentication error: {e}")
-            if self.led_controller:
-                self.led_controller.flash_red(3)
-            if self.card_led_controller:
-                self.card_led_controller.led_red_on(3)
             return False, None, str(e)
     
     def run_service(self):
@@ -289,13 +223,6 @@ class HostModeService:
         self.running = False
         print("Cleaning up resources...")
         
-        if self.led_controller:
-            self.led_controller.cleanup()
-            print("LED controller cleaned up")
-        if self.card_led_controller:
-            self.card_led_controller.close()
-            print("Card reader LED controller cleaned up")
-            
         try:
             disconnect_card_reader()
             print("Card reader disconnected")
