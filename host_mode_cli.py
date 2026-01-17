@@ -16,6 +16,7 @@ import threading
 import time
 from typing import Optional, Dict, Any
 
+CUSTOM_THRESHOLD = 400   # התאמה לפי מה שתמצא בלוגים
 # Card reader support
 try:
     from card_reader_api import initialize_card_reader, get_card_id, disconnect_card_reader
@@ -195,10 +196,10 @@ class HostModeService:
                 match_result = authenticator.match_faceprints(
                     extracted_prints, db_faceprints, updated_faceprints
                 )
+                print(f"Match result: success={match_result.success}, score={match_result.score}")
                 
-                if match_result.success:
+                if match_result.success or (match_result.score is not None and match_result.score >= CUSTOM_THRESHOLD):                    
                     print(f"Authentication successful for {user_info['name']} (score: {match_result.score})")
-                    
                     send_w32(card_id)  # Send card ID via Wiegand
 
                     if self.led_controller:
@@ -209,7 +210,7 @@ class HostModeService:
                     
                     return True, user_info['name'], user_info['permission_level']
                 else:
-                    print(f"Face match failed for card ID {card_id}")
+                    print(f"Face match failed for card ID {card_id} (score: {match_result.score})")
                     
                     if self.led_controller:
                         self.led_controller.flash_red(3)
