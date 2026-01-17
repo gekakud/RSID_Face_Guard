@@ -18,7 +18,7 @@ import threading
 import time
 import traceback
 
-from card_reader_api import initialize_card_reader, get_card_id, disconnect_card_reader
+from card_api import initialize_card_reader, get_card_id, disconnect_card_reader
 
 import PIL
 
