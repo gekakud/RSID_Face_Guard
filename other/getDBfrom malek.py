@@ -3,8 +3,11 @@ import json
 
 #MAC = "2c:cf:67:f5:ce:ca"   #
 MAC = "111"
-url = "https://geine-server.onrender.com/getAllTicketDeviceAccessByMacAdress"
-payload = {"mac": MAC}
+url = "https://geine-server.onrender.com/getAllTicketDeviceAccessByCompanyID"
+
+
+
+payload = {"companyID": '1'}
 
 print("Calling URL:", url)
 print("Payload:", payload)
@@ -23,12 +26,13 @@ try:
     print("Raw length:", len(response.text))
     print("Raw repr:  ", repr(response.text))
 
+    # save to json
+    with open("malek_db.json", "w") as f:
+        json.dump(data, f, indent=2)
 
 except requests.exceptions.HTTPError as e:
     print("HTTP error:", e)
 except requests.exceptions.RequestException as e:
     print("Request error:", e)
-
-
 
 

@@ -28,7 +28,7 @@ def initialize_wiegand_tx():
 
 
 def send_w32(card_id):
-    """Simulated Wiegand W32 send"""
+    """Simulated Wiegand W32 send and BAKAR"""
     print(f'[SIMULATE_HW] Would send W32: {card_id}')
 
 
