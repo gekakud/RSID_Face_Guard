@@ -20,6 +20,9 @@ import traceback
 # Set to True to simulate card hardware (for testing without physical card reader)
 SIMULATE_HW = True
 
+# Set to True for RPi5 with small 800x480 screen (fullscreen + 90 degree rotation)
+RUN_SMALL_SCREEN = True
+
 if SIMULATE_HW:
     from card_api_sim import initialize_card_reader, get_card_id, disconnect_card_reader
 else:
@@ -377,11 +380,21 @@ class GUI(tk.Tk):
         self.snapshot_handle = None
 
         #self.title(f'{WINDOW_NAME} ({str(controller.device_type).split('.')[-1]})')
-        max_w = int(720 / 1.5)
-        max_h = int(1280 / 1.5) + 80
-        self.geometry(f"{max_w}x{max_h}")
-        self.minsize(int(max_w / 1.5), int(max_h / 2.5))
-        self.maxsize(max_w, max_h)
+        
+        # Small screen mode for RPi5 with 800x480 display (rotated 90 degrees)
+        if RUN_SMALL_SCREEN:
+            # For 800x480 screen rotated 90 degrees -> 480x800 effective
+            max_w = 480
+            max_h = 800
+            self.geometry(f"{max_w}x{max_h}")
+            self.attributes('-fullscreen', True)
+            self.config(cursor="none")  # Hide cursor on small screen
+        else:
+            max_w = int(720 / 1.5)
+            max_h = int(1280 / 1.5) + 80
+            self.geometry(f"{max_w}x{max_h}")
+            self.minsize(int(max_w / 1.5), int(max_h / 2.5))
+            self.maxsize(max_w, max_h)
 
         # Window bindings
         self.protocol("WM_DELETE_WINDOW", self.exit_app)
@@ -649,7 +662,13 @@ class GUI(tk.Tk):
             for f in self.controller.detected_faces:
                 self.render_face_rect(f, image)
 
+            # Apply transformations: flip horizontally (mirror effect)
             scaled_image = ImageOps.contain(image, size=(canvas_w, canvas_h)).transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+            
+            # Rotate 90 degrees for small screen mode (portrait orientation)
+            if RUN_SMALL_SCREEN:
+                scaled_image = scaled_image.transpose(Image.Transpose.ROTATE_90)
+            
             self.scaled_image = ImageTk.PhotoImage(image=scaled_image)
 
             if self.reset_canvas:
