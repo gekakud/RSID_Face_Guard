@@ -20,8 +20,8 @@ import traceback
 # Set to True to simulate card hardware (for testing without physical card reader)
 SIMULATE_HW = True
 
-# Set to True for RPi5 with small 800x480 screen (fullscreen + 90 degree rotation)
-RUN_SMALL_SCREEN = True
+# Set to True for RPi5 with small 800x480 screen (fullscreen mode, use system display_rotate for rotation)
+RUN_SMALL_SCREEN = False
 
 if SIMULATE_HW:
     from card_api_sim import initialize_card_reader, get_card_id, disconnect_card_reader
@@ -662,13 +662,7 @@ class GUI(tk.Tk):
             for f in self.controller.detected_faces:
                 self.render_face_rect(f, image)
 
-            # Apply transformations: flip horizontally (mirror effect)
             scaled_image = ImageOps.contain(image, size=(canvas_w, canvas_h)).transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-            
-            # Rotate 90 degrees for small screen mode (portrait orientation)
-            if RUN_SMALL_SCREEN:
-                scaled_image = scaled_image.transpose(Image.Transpose.ROTATE_90)
-            
             self.scaled_image = ImageTk.PhotoImage(image=scaled_image)
 
             if self.reset_canvas:
