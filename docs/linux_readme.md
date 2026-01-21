@@ -11,6 +11,7 @@ cmake --build . --config Release
 
 sudo code . --no-sandbox --user-data-dir ./datadir
 source ./.venv/bin/activate
+export LD_LIBRARY_PATH=$PWD:$LD_LIBRARY_PATH
 
 # demo service run - no GUI
 /home/gatevision/Desktop/RSID_Face_Guard/.venv/bin/python /home/gatevision/Desktop/RSID_Face_Guard/auth_cli.py
