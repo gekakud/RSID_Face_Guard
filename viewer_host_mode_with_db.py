@@ -21,7 +21,10 @@ import traceback
 SIMULATE_HW = True
 
 # Set to True for RPi5 with small 800x480 screen (fullscreen mode, use system display_rotate for rotation)
-RUN_SMALL_SCREEN = False
+RUN_SMALL_SCREEN = True
+
+# Set to True for production mode (only shows authenticate button, centered and larger)
+RUN_IN_PRODUCTION = True
 
 if SIMULATE_HW:
     from card_api_sim import initialize_card_reader, get_card_id, disconnect_card_reader
@@ -424,33 +427,44 @@ class GUI(tk.Tk):
         self.button_frame = ttk.Frame(self)
         self.button_frame.grid(row=1, column=0, padx=(5, 5), pady=(0, 5), sticky="nsew", columnspan=2)
 
-        self.auth_button = ttk.Button(self.button_frame, text="Authenticate",
-                                      command=self.authenticate)
-        self.auth_button.grid(row=0, column=0, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
+        if RUN_IN_PRODUCTION:
+            # Production mode: only show authenticate button, centered and twice as big
+            self.button_frame.grid_columnconfigure(0, weight=1)
+            self.button_frame.grid_columnconfigure(1, weight=2)  # Center column gets more weight
+            self.button_frame.grid_columnconfigure(2, weight=1)
+            
+            self.auth_button = ttk.Button(self.button_frame, text="Authenticate",
+                                          command=self.authenticate)
+            self.auth_button.grid(row=0, column=1, padx=(20, 20), pady=(10, 10), ipady=20, sticky="nsew")
+        else:
+            # Normal mode: show all buttons
+            self.auth_button = ttk.Button(self.button_frame, text="Authenticate",
+                                          command=self.authenticate)
+            self.auth_button.grid(row=0, column=0, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
 
-        self.enroll_button = ttk.Button(self.button_frame, text="Enroll",
-                                        command=self.enroll)
-        self.enroll_button.grid(row=0, column=1, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
+            self.enroll_button = ttk.Button(self.button_frame, text="Enroll",
+                                            command=self.enroll)
+            self.enroll_button.grid(row=0, column=1, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
 
-        self.delete_button = ttk.Button(self.button_frame, text="Delete All",
-                                        command=self.remove_all_users)
-        self.delete_button.grid(row=0, column=2, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
-        
-        # Add Delete User button
-        self.delete_user_button = ttk.Button(self.button_frame, text="Delete User",
-                                           command=self.delete_user)
-        self.delete_user_button.grid(row=0, column=3, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
-        
-        # Add Show Users button
-        self.show_users_button = ttk.Button(self.button_frame, text="Show Users",
-                                          command=self.show_all_users)
-        self.show_users_button.grid(row=0, column=4, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
+            self.delete_button = ttk.Button(self.button_frame, text="Delete All",
+                                            command=self.remove_all_users)
+            self.delete_button.grid(row=0, column=2, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
+            
+            # Add Delete User button
+            self.delete_user_button = ttk.Button(self.button_frame, text="Delete User",
+                                               command=self.delete_user)
+            self.delete_user_button.grid(row=0, column=3, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
+            
+            # Add Show Users button
+            self.show_users_button = ttk.Button(self.button_frame, text="Show Users",
+                                              command=self.show_all_users)
+            self.show_users_button.grid(row=0, column=4, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
 
-        self.button_frame.grid_columnconfigure(0, weight=1)
-        self.button_frame.grid_columnconfigure(1, weight=1)
-        self.button_frame.grid_columnconfigure(2, weight=1)
-        self.button_frame.grid_columnconfigure(3, weight=1)
-        self.button_frame.grid_columnconfigure(4, weight=1)
+            self.button_frame.grid_columnconfigure(0, weight=1)
+            self.button_frame.grid_columnconfigure(1, weight=1)
+            self.button_frame.grid_columnconfigure(2, weight=1)
+            self.button_frame.grid_columnconfigure(3, weight=1)
+            self.button_frame.grid_columnconfigure(4, weight=1)
 
         style = ttk.Style(self)
         if sys.platform.startswith('win'):
