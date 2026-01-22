@@ -1,15 +1,9 @@
 #!/usr/bin/env python3
 
-"""
-License: Apache 2.0. See LICENSE file in root directory.
-Copyright(c) 2020-2024 Intel Corporation. All Rights Reserved.
-"""
-
 import argparse
 import copy
 import ctypes
 import os
-import pathlib
 import queue
 import signal
 import sys
@@ -20,7 +14,7 @@ import traceback
 # Set to True to simulate card hardware (for testing without physical card reader)
 SIMULATE_HW = True
 
-# Set to True for RPi5 with small 800x480 screen (fullscreen mode, use system display_rotate for rotation)
+# Set to True for RPi5 with small 800x480 screen (fullscreen mode)
 RUN_SMALL_SCREEN = False
 
 # Set to True for production mode (only shows authenticate button, centered and larger)
@@ -57,8 +51,7 @@ try:
     from PIL import Image, ImageDraw, ImageOps, ImageTk
 except ImportError as ex:
     print(f'Failed importing PIL ({ex}). Please install Pillow *version 9.1.0 or newer* (pip install Pillow).')
-    print(
-        '  On Ubuntu, you may install the system wide package instead: sudo apt install python3-pil python3-pil.imagetk')
+    print('  On Ubuntu, you may install the system wide package instead: sudo apt install python3-pil python3-pil.imagetk')
     exit(1)
 
 import rsid_py
@@ -192,12 +185,6 @@ class Controller(threading.Thread):
         self.user_db.clear_all()
         self.status_msg = 'Remove All Success'
         return
-        # remove on device
-        with rsid_py.FaceAuthenticator(self.port) as f:
-            self.status_msg = "Remove.."
-            f.remove_all_users()
-            self.user_db.clear_all()
-            self.status_msg = 'Remove All Success'
 
     def remove_user(self, user_id):
         # remove in DB
@@ -208,29 +195,13 @@ class Controller(threading.Thread):
         else:
             self.status_msg = f'User {user_id} not found in database'
             return False
-        
-        # remove on device
-        with rsid_py.FaceAuthenticator(self.port) as f:
-            self.status_msg = f"Removing user {user_id}.."
-            # Get all users and remove the specific one
-            users = f.query_user_ids()
-            if user_id in users:
-                f.remove_user(user_id)
-                # Also remove from database
-                self.user_db.delete_user(user_id)
-                self.status_msg = f'User {user_id} removed successfully'
-                return True
-            else:
-                self.status_msg = f'User {user_id} not found'
-                return False
 
     def query_users(self):
         with rsid_py.FaceAuthenticator(self.port) as f:
             return f.query_user_ids()
 
-    #########################
+
     # Preview
-    #########################
     def on_image(self, image):
         if not self.running:
             return
@@ -241,18 +212,14 @@ class Controller(threading.Thread):
             self.image_q.put(array2d.copy())
         except Exception:
             print("Exception")
-            print("-" * 60)
             traceback.print_exc(file=sys.stdout)
-            print("-" * 60)
 
     def on_snapshot(self, image):
         try:
             pass
         except Exception:
             print("Exception")
-            print("-" * 60)
             traceback.print_exc(file=sys.stdout)
-            print("-" * 60)
 
     def start_preview(self):
         preview_cfg = rsid_py.PreviewConfig()
@@ -294,9 +261,7 @@ class GUI(tk.Tk):
         self.resize_handle = None
         self.snapshot_handle = None
 
-        #self.title(f'{WINDOW_NAME} ({str(controller.device_type).split('.')[-1]})')
-        
-        # Small screen mode for RPi5 with 800x480 display (rotated 90 degrees)
+        # Small screen mode for RPi5 with 800x480 display
         if RUN_SMALL_SCREEN:
             # For 800x480 screen rotated 90 degrees -> 480x800 effective
             max_w = 480
@@ -344,32 +309,26 @@ class GUI(tk.Tk):
             self.button_frame.grid_columnconfigure(0, weight=1)
             self.button_frame.grid_columnconfigure(1, weight=2)  # Center column gets more weight
             self.button_frame.grid_columnconfigure(2, weight=1)
-            
-            self.auth_button = ttk.Button(self.button_frame, text="Authenticate",
-                                          command=self.authenticate)
+
+            self.auth_button = ttk.Button(self.button_frame, text="Authenticate", command=self.authenticate)
             self.auth_button.grid(row=0, column=1, padx=(20, 20), pady=(10, 10), ipady=20, sticky="nsew")
         else:
             # Normal mode: show all buttons
-            self.auth_button = ttk.Button(self.button_frame, text="Authenticate",
-                                          command=self.authenticate)
+            self.auth_button = ttk.Button(self.button_frame, text="Authenticate", command=self.authenticate)
             self.auth_button.grid(row=0, column=0, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
 
-            self.enroll_button = ttk.Button(self.button_frame, text="Enroll",
-                                            command=self.enroll)
+            self.enroll_button = ttk.Button(self.button_frame, text="Enroll", command=self.enroll)
             self.enroll_button.grid(row=0, column=1, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
 
-            self.delete_button = ttk.Button(self.button_frame, text="Delete All",
-                                            command=self.remove_all_users)
+            self.delete_button = ttk.Button(self.button_frame, text="Delete All", command=self.remove_all_users)
             self.delete_button.grid(row=0, column=2, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
             
             # Add Delete User button
-            self.delete_user_button = ttk.Button(self.button_frame, text="Delete User",
-                                               command=self.delete_user)
+            self.delete_user_button = ttk.Button(self.button_frame, text="Delete User", command=self.delete_user)
             self.delete_user_button.grid(row=0, column=3, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
             
             # Add Show Users button
-            self.show_users_button = ttk.Button(self.button_frame, text="Show Users",
-                                              command=self.show_all_users)
+            self.show_users_button = ttk.Button(self.button_frame, text="Show Users", command=self.show_all_users)
             self.show_users_button.grid(row=0, column=4, padx=(5, 5), pady=(5, 5), ipady=5, sticky="nsew")
 
             self.button_frame.grid_columnconfigure(0, weight=1)
@@ -525,21 +484,6 @@ class GUI(tk.Tk):
                 "JSON DB"
             ))
         
-        # Get users from device
-        # try:
-        #     device_users = self.controller.query_users()
-        # except:
-        #     device_users = []
-        # # Add device users not in database
-        # for user_id in device_users:
-        #     if user_id not in db_users:
-        #         tree.insert('', 'end', values=(
-        #             user_id,
-        #             "Unknown",
-        #             "Unknown",
-        #             "Device Only"
-        #         ))
-        
         # Add scrollbars
         vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         hsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
@@ -593,20 +537,15 @@ class GUI(tk.Tk):
 
             if self.reset_canvas:
                 self.canvas.delete("all")
-                self.canvas_image_id = self.canvas.create_image(int(self.scaled_image.width() / 2),
-                                                                int(self.scaled_image.height() / 2),
-                                                                anchor=tk.CENTER, image=None)
-                self.canvas_text_bg_id = self.canvas.create_rectangle(0, canvas_h - 50, canvas_w, canvas_h,
-                                                                      fill='black', stipple='gray50')
-                self.canvas_text_id = self.canvas.create_text(canvas_w / 2, canvas_h - 30, text='',
-                                                              font='Helvetica 18 bold')
+                self.canvas_image_id = self.canvas.create_image(int(self.scaled_image.width() / 2), int(self.scaled_image.height() / 2), anchor=tk.CENTER, image=None)
+                self.canvas_text_bg_id = self.canvas.create_rectangle(0, canvas_h - 50, canvas_w, canvas_h, fill='black', stipple='gray50')
+                self.canvas_text_id = self.canvas.create_text(canvas_w / 2, canvas_h - 30, text='', font='Helvetica 18 bold')
                 self.canvas_snapshot_image_id = self.canvas.create_image(0, 0, anchor=tk.NW, image=None)
                 self.canvas.itemconfig(self.canvas_snapshot_image_id, state='hidden')
                 self.reset_canvas = False
 
             self.canvas.itemconfig(self.canvas_image_id, image=self.scaled_image)
-            self.canvas.moveto(self.canvas_image_id, int((canvas_w - self.scaled_image.width()) / 2),
-                               int((canvas_h - self.scaled_image.height()) / 2))
+            self.canvas.moveto(self.canvas_image_id, int((canvas_w - self.scaled_image.width()) / 2), int((canvas_h - self.scaled_image.height()) / 2))
 
             # Render message
             msg = self.controller.status_msg.replace('Status.', ' ')
@@ -624,8 +563,7 @@ class GUI(tk.Tk):
                 new_snapshot = self.controller.snapshot_q.get()
 
             if new_snapshot is not None:
-                scaled_image = ImageOps.contain(new_snapshot, size=(int(canvas_w / 4), int(canvas_h / 4))).transpose(
-                    Image.Transpose.FLIP_LEFT_RIGHT)
+                scaled_image = ImageOps.contain(new_snapshot, size=(int(canvas_w / 4), int(canvas_h / 4))).transpose(Image.Transpose.FLIP_LEFT_RIGHT)
 
                 self.snapshot_image = ImageTk.PhotoImage(image=scaled_image)
 
@@ -672,21 +610,17 @@ class GUI(tk.Tk):
 def main():
     arg_parser = argparse.ArgumentParser(prog='viewer', add_help=False)
     options = arg_parser.add_argument_group('Options')
-    options.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS,
-                         help='Show this help message and exit.')
-    options.add_argument('-p', '--port', help='Device port. Will detect first device '
-                                              'port if not specified.', type=str)
+    options.add_argument('-h', '--help', action='help', default=argparse.SUPPRESS, help='Show this help message and exit.')
+    options.add_argument('-p', '--port', help='Device port. Will detect first device port if not specified.', type=str)
     options.add_argument('-c', '--camera', help='Camera number. -1 for autodetect.', type=int, default=-1)
-
     group = arg_parser.add_mutually_exclusive_group(required=False)
     group.add_argument('-r', '--crop', help='Cropped Face mode.', action='store_true')
-
     args = arg_parser.parse_args()
-    # linux or windows
 
     port = "COM9"
-    import platform
 
+    # linux or windows
+    import platform
     if platform.system() == "Windows":
         port = "COM9"
     else:  # Linux, macOS, etc.
@@ -716,9 +650,7 @@ def main():
             f.set_device_config(config)
         except Exception as e:
             print("Exception")
-            print("-" * 60)
             traceback.print_exc(file=sys.stdout)
-            print("-" * 60)
             os._exit(1)
         finally:
             f.disconnect()
