@@ -5,7 +5,9 @@ import copy
 import ctypes
 import os
 import queue
+import re
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -15,10 +17,14 @@ import traceback
 SIMULATE_HW = True
 
 # Set to True for RPi5 with small 800x480 screen (fullscreen mode)
-RUN_SMALL_SCREEN = False
+RUN_SMALL_SCREEN = True
+
+# Small display resolution settings
+SMALL_W = 800
+SMALL_H = 480
 
 # Set to True for production mode (only shows authenticate button, centered and larger)
-RUN_IN_PRODUCTION = False
+RUN_IN_PRODUCTION = True
 
 if SIMULATE_HW:
     from card_api_sim import initialize_card_reader, get_card_id, disconnect_card_reader, initialize_wiegand_tx, send_w32, close_wiegand_tx
@@ -62,6 +68,35 @@ print('Version: ' + rsid_py.__version__)
 # globals
 WINDOW_NAME = 'RealSenseID'
 USER_DB_FILE = 'user_database.json'
+
+
+def _find_display_xy_by_resolution(prefer_w=800, prefer_h=480):
+    """
+    Return (x, y) offset of the first connected display with resolution prefer_w x prefer_h.
+    Uses xrandr output (works under X11/XWayland). Returns None if not found / not available.
+    """
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        out = subprocess.check_output(["xrandr"], text=True)
+        # Example:
+        # XWAYLAND0 connected 800x480+1920+0 inverted ...
+        pat = re.compile(r"connected\s+(?P<w>\d+)x(?P<h>\d+)\+(?P<x>\d+)\+(?P<y>\d+)")
+        for line in out.splitlines():
+            if " connected " not in line:
+                continue
+            m = pat.search(line)
+            if not m:
+                continue
+            w = int(m.group("w"))
+            h = int(m.group("h"))
+            x = int(m.group("x"))
+            y = int(m.group("y"))
+            if w == prefer_w and h == prefer_h:
+                return (x, y)
+    except Exception as e:
+        print("xrandr detect failed:", e)
+    return None
 
 
 class Controller(threading.Thread):
@@ -260,15 +295,16 @@ class GUI(tk.Tk):
         self.video_update_handle = None
         self.resize_handle = None
         self.snapshot_handle = None
+        max_w = SMALL_W
+        max_h = SMALL_H
 
         # Small screen mode for RPi5 with 800x480 display
         if RUN_SMALL_SCREEN:
             # For 800x480 screen rotated 90 degrees -> 480x800 effective
-            max_w = 480
-            max_h = 800
-            self.geometry(f"{max_w}x{max_h}")
-            self.attributes('-fullscreen', True)
+            self.geometry(f"{SMALL_W}x{SMALL_H}")
             self.config(cursor="none")  # Hide cursor on small screen
+            # Place on correct display (small screen) if connected
+            self._place_on_correct_display()
         else:
             max_w = int(720 / 1.5)
             max_h = int(1280 / 1.5) + 80
@@ -354,6 +390,29 @@ class GUI(tk.Tk):
         op.text((10, 0), "R", font_size=40, fill="white")
         self.icon = ImageTk.PhotoImage(icon)
         self.wm_iconphoto(False, self.icon)
+
+    def _place_on_correct_display(self):
+        """Place window on the small display if connected (Linux only via xrandr)"""
+        pos = _find_display_xy_by_resolution(SMALL_W, SMALL_H)
+        if pos is not None:
+            x, y = pos
+            try:
+                # Move to the small display
+                self.geometry(f"+{x}+{y}")
+                self.update_idletasks()
+                print(f"GUI moved to small display at {x},{y}")
+
+                self.attributes("-fullscreen", True)
+            except Exception as e:
+                print("Failed placing window:", e)
+        else:
+            # No small display found -> stay on primary (0,0)
+            try:
+                self.geometry("+0+0")
+                self.update_idletasks()
+                print("Small display not found -> using primary screen")
+            except Exception:
+                pass
 
     def key_event(self, event):
         cmd_exec = {'a': self.authenticate,
