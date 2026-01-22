@@ -21,17 +21,18 @@ import traceback
 SIMULATE_HW = True
 
 # Set to True for RPi5 with small 800x480 screen (fullscreen mode, use system display_rotate for rotation)
-RUN_SMALL_SCREEN = True
+RUN_SMALL_SCREEN = False
 
 # Set to True for production mode (only shows authenticate button, centered and larger)
-RUN_IN_PRODUCTION = True
+RUN_IN_PRODUCTION = False
 
 if SIMULATE_HW:
-    from card_api_sim import initialize_card_reader, get_card_id, disconnect_card_reader
+    from card_api_sim import initialize_card_reader, get_card_id, disconnect_card_reader, initialize_wiegand_tx, send_w32, close_wiegand_tx
 else:
-    from card_api import initialize_card_reader, get_card_id, disconnect_card_reader
+    from card_api import initialize_card_reader, get_card_id, disconnect_card_reader, initialize_wiegand_tx, send_w32, close_wiegand_tx
 
 from user_db import UserDatabase
+from ui_utils import EnrollDialog
 
 import PIL
 
@@ -67,77 +68,7 @@ print('Version: ' + rsid_py.__version__)
 
 # globals
 WINDOW_NAME = 'RealSenseID'
-USER_DB_FILE = 'user_database_viewer.json'
-
-
-class EnrollDialog(tk.Toplevel):
-    """Custom dialog for enrolling users with additional fields"""
-    
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.parent = parent
-        self.result = None
-        
-        self.title("Enroll New User")
-        self.geometry("400x250")
-        self.resizable(False, False)
-        
-        # Center the dialog
-        self.transient(parent)
-        self.grab_set()
-        
-        # Create form fields
-        tk.Label(self, text="User ID:").grid(row=0, column=0, padx=10, pady=10, sticky='e')
-        self.id_entry = tk.Entry(self, width=30)
-        self.id_entry.grid(row=0, column=1, padx=10, pady=10)
-        
-        tk.Label(self, text="Name:").grid(row=1, column=0, padx=10, pady=10, sticky='e')
-        self.name_entry = tk.Entry(self, width=30)
-        self.name_entry.grid(row=1, column=1, padx=10, pady=10)
-        
-        tk.Label(self, text="Permission Level:").grid(row=2, column=0, padx=10, pady=10, sticky='e')
-        self.permission_var = tk.StringVar(value="Limited access")
-        self.permission_combo = ttk.Combobox(self, textvariable=self.permission_var, width=27, state='readonly')
-        self.permission_combo['values'] = ('Extended access', 'Limited access')
-        self.permission_combo.grid(row=2, column=1, padx=10, pady=10)
-        
-        # Buttons
-        button_frame = tk.Frame(self)
-        button_frame.grid(row=3, column=0, columnspan=2, pady=20)
-        
-        tk.Button(button_frame, text="OK", command=self.ok_pressed, width=10).pack(side=tk.LEFT, padx=5)
-        tk.Button(button_frame, text="Cancel", command=self.cancel_pressed, width=10).pack(side=tk.LEFT, padx=5)
-        
-        # Focus on first field
-        self.id_entry.focus_set()
-        
-        # Bind Enter key
-        self.bind('<Return>', lambda e: self.ok_pressed())
-        self.bind('<Escape>', lambda e: self.cancel_pressed())
-    
-    def ok_pressed(self):
-        user_id = self.id_entry.get().strip()
-        name = self.name_entry.get().strip()
-        permission = self.permission_var.get()
-        
-        if not user_id:
-            messagebox.showerror("Error", "User ID is required!", parent=self)
-            return
-        
-        if not name:
-            messagebox.showerror("Error", "Name is required!", parent=self)
-            return
-        
-        self.result = {
-            'id': user_id,
-            'name': name,
-            'permission_level': permission
-        }
-        self.destroy()
-    
-    def cancel_pressed(self):
-        self.result = None
-        self.destroy()
+USER_DB_FILE = 'user_database.json'
 
 
 class Controller(threading.Thread):
@@ -212,8 +143,10 @@ class Controller(threading.Thread):
             
             print(f"Card ID read: {card_id}")
             for user_id, user_info in self.user_db.get_all_users().items():
-                if int(user_id) != card_id:
-                    continue  # Skip card ID user
+                if not SIMULATE_HW:
+                    if int(user_id) != card_id:
+                        continue  # Skip card ID user
+
                 fp = user_info.get('faceprints')
                 if not fp:
                     continue
@@ -263,15 +196,28 @@ class Controller(threading.Thread):
             authenticator.extract_faceprints_for_enroll(on_progress=self.on_progress, on_result=on_fp_enroll_result)
 
     def remove_all_users(self):
+        # remove in DB
+        self.user_db.clear_all()
+        self.status_msg = 'Remove All Success'
+        return
+        # remove on device
         with rsid_py.FaceAuthenticator(self.port) as f:
             self.status_msg = "Remove.."
             f.remove_all_users()
-            # Also clear the user database
             self.user_db.clear_all()
             self.status_msg = 'Remove All Success'
 
     def remove_user(self, user_id):
-        """Remove a specific user by ID"""
+        # remove in DB
+        res = self.user_db.delete_user(user_id)
+        if res:
+            self.status_msg = f'User {user_id} removed successfully'
+            return True
+        else:
+            self.status_msg = f'User {user_id} not found in database'
+            return False
+        
+        # remove on device
         with rsid_py.FaceAuthenticator(self.port) as f:
             self.status_msg = f"Removing user {user_id}.."
             # Get all users and remove the specific one
@@ -602,31 +548,31 @@ class GUI(tk.Tk):
         # Get users from database
         db_users = self.controller.user_db.get_all_users()
         
-        # Get users from device
-        try:
-            device_users = self.controller.query_users()
-        except:
-            device_users = []
+        
         
         # Add users to the tree
         for user_id, user_info in db_users.items():
-            status = "Active" if user_id in device_users else "DB Only"
             tree.insert('', 'end', values=(
                 user_id,
                 user_info['name'],
                 user_info['permission_level'],
-                status
+                "JSON DB"
             ))
         
-        # Add device users not in database
-        for user_id in device_users:
-            if user_id not in db_users:
-                tree.insert('', 'end', values=(
-                    user_id,
-                    "Unknown",
-                    "Unknown",
-                    "Device Only"
-                ))
+        # Get users from device
+        # try:
+        #     device_users = self.controller.query_users()
+        # except:
+        #     device_users = []
+        # # Add device users not in database
+        # for user_id in device_users:
+        #     if user_id not in db_users:
+        #         tree.insert('', 'end', values=(
+        #             user_id,
+        #             "Unknown",
+        #             "Unknown",
+        #             "Device Only"
+        #         ))
         
         # Add scrollbars
         vsb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
@@ -639,7 +585,7 @@ class GUI(tk.Tk):
         hsb.grid(row=2, column=0, sticky=(tk.W, tk.E))
         
         # Summary label
-        total_users = len(db_users) + len([u for u in device_users if u not in db_users])
+        total_users = len(db_users)
         summary_label = ttk.Label(frame, text=f"Total users: {total_users}")
         summary_label.grid(row=3, column=0, pady=(10, 0))
         
