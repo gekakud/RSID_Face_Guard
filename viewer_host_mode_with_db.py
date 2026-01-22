@@ -679,7 +679,6 @@ def main():
     options.add_argument('-c', '--camera', help='Camera number. -1 for autodetect.', type=int, default=-1)
 
     group = arg_parser.add_mutually_exclusive_group(required=False)
-    group.add_argument('-d', '--dump', help='Dump mode.', action='store_true')
     group.add_argument('-r', '--crop', help='Cropped Face mode.', action='store_true')
 
     args = arg_parser.parse_args()
