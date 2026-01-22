@@ -79,7 +79,7 @@ class Controller(threading.Thread):
     image_q: queue.Queue = queue.Queue()
     snapshot_q: queue.Queue = queue.Queue()
 
-    def __init__(self, port: str, camera_index: int, device_type: rsid_py.DeviceType, dump_mode: rsid_py.DumpMode):
+    def __init__(self, port: str, camera_index: int, device_type: rsid_py.DeviceType):
         super().__init__()
         self.preview = None
         self.status_msg = ''
@@ -87,15 +87,7 @@ class Controller(threading.Thread):
         self.port = port
         self.camera_index = camera_index
         self.device_type = device_type
-        self.dump_mode = dump_mode
         self.user_db = UserDatabase(USER_DB_FILE)  # Initialize user database with viewer-specific file
-        
-        if self.dump_mode in [rsid_py.DumpMode.CroppedFace, rsid_py.DumpMode.FullFrame]:
-            self.status_msg = '-- Dump Mode --' \
-                if rsid_py.DumpMode.FullFrame == self.dump_mode else '-- Cropped Face --'
-            (pathlib.Path('.') / 'dumps').mkdir(parents=True, exist_ok=True)
-            if not (pathlib.Path('.') / 'dumps').exists():
-                raise RuntimeError('Unable to create dumps directory.')
 
     def reset(self):
         self.status_msg = ''
@@ -255,30 +247,7 @@ class Controller(threading.Thread):
 
     def on_snapshot(self, image):
         try:
-            if self.dump_mode == rsid_py.DumpMode.FullFrame:
-                buffer = copy.copy(bytearray(image.get_buffer()))
-                dump_path = (pathlib.Path('.') / 'dumps' / f'timestamp-{image.metadata.timestamp}')
-                dump_path.mkdir(parents=True, exist_ok=True)
-                print(f"frame metadata: "
-                      f"ts: {image.metadata.timestamp}, "
-                      f"status: {image.metadata.status}, "
-                      f"sensor_id: {image.metadata.sensor_id}, "
-                      f"exposure: {image.metadata.exposure}, "
-                      f"gain: {image.metadata.gain}, "
-                      f"led: {image.metadata.led}")
-                file_name = (f'{image.metadata.timestamp}-{image.metadata.status}-{image.metadata.sensor_id}-'
-                             f'{image.metadata.exposure}-{image.metadata.gain}.w10')
-                file_path = dump_path / file_name
-                with open(file_path, 'wb') as fd:
-                    fd.write(buffer)
-                print(f'RAW File saved to: {file_path.absolute()}')
-            elif self.dump_mode == rsid_py.DumpMode.CroppedFace:
-                buffer = image.get_buffer()
-                # https://pillow.readthedocs.io/en/stable/reference/Image.html#PIL.Image.frombytes
-                # https://pillow.readthedocs.io/en/stable/handbook/writing-your-own-image-plugin.html#the-raw-decoder
-                image = Image.frombytes('RGB', (image.width, image.height), buffer, 'raw',
-                                        'RGB', 0, 1)
-                self.snapshot_q.put(image)
+            pass
         except Exception:
             print("Exception")
             print("-" * 60)
@@ -289,13 +258,10 @@ class Controller(threading.Thread):
         preview_cfg = rsid_py.PreviewConfig()
         preview_cfg.device_type = self.device_type
         preview_cfg.camera_number = self.camera_index
-        if self.dump_mode == rsid_py.DumpMode.FullFrame:
-            preview_cfg.preview_mode = rsid_py.PreviewMode.RAW10_1080P  # In dump mode, we can use RAW10
-        elif self.dump_mode in [rsid_py.DumpMode.CroppedFace, rsid_py.DumpMode.Disable]:
-            preview_cfg.preview_mode = rsid_py.PreviewMode.MJPEG_1080P
 
+        preview_cfg.preview_mode = rsid_py.PreviewMode.MJPEG_1080P
         self.preview = rsid_py.Preview(preview_cfg)
-        self.preview.start(preview_callback=self.on_image, snapshot_callback=self.on_snapshot)
+        self.preview.start(preview_callback=self.on_image, snapshot_callback=None)
 
     def run(self):
         self.start_preview()
@@ -669,13 +635,6 @@ class GUI(tk.Tk):
                 self.canvas.itemconfig(self.canvas_snapshot_image_id, image=self.snapshot_image)
                 self.canvas.itemconfig(self.canvas_snapshot_image_id, state='normal')
 
-        elif self.image is None and self.controller.dump_mode:
-            self.canvas.delete("all")
-            self.canvas.create_text(canvas_w / 2, canvas_h / 2,
-                                    text='Dump Mode', fill='white', font='Helvetica 20 bold')
-            self.canvas.create_text(canvas_w / 2, (canvas_h / 2) + 30,
-                                    text='Auth or Enroll to proceed', fill='white', font='Helvetica 14')
-
         self.update_idletasks()
 
         if self.video_update_handle is not None:
@@ -750,26 +709,12 @@ def main():
     print(f'Using self.port: {port} ({device_type})')
     print(f'Using CAMERA_INDEX: {camera_index}')
 
-    if args.dump:
-        print("-" * 60)
-        print('NOTE: Running in DUMP mode.')
-        print('      While in dump mode, you need to use a separate rsid-client to initiate authentication for the'
-              '      RAW image to appear on this viewer.')
-        print("-" * 60)
-
     config = None
     with rsid_py.FaceAuthenticator(device_type, str(port)) as f:
         try:
             config = copy.copy(f.query_device_config())
-            if args.dump:
-                config.dump_mode = rsid_py.DumpMode.FullFrame
-                f.set_device_config(config)
-            elif args.crop:
-                config.dump_mode = rsid_py.DumpMode.CroppedFace
-                f.set_device_config(config)
-            else:
-                config.dump_mode = rsid_py.DumpMode.Disable
-                f.set_device_config(config)
+            config.dump_mode = rsid_py.DumpMode.Disable
+            f.set_device_config(config)
         except Exception as e:
             print("Exception")
             print("-" * 60)
@@ -784,7 +729,7 @@ def main():
 
     signal.signal(signal.SIGINT, signal_handler)
 
-    controller = Controller(port=port, camera_index=camera_index, device_type=device_type, dump_mode=config.dump_mode)
+    controller = Controller(port=port, camera_index=camera_index, device_type=device_type)
     controller.daemon = True
     initialize_card_reader()
     controller.start()
