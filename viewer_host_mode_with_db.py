@@ -17,7 +17,7 @@ import traceback
 SIMULATE_HW = True
 
 # Set to True for RPi5 with small 800x480 screen (fullscreen mode)
-RUN_SMALL_SCREEN = True
+RUN_SMALL_SCREEN = False
 
 # Small display resolution settings
 SMALL_W = 800
@@ -262,6 +262,7 @@ class Controller(threading.Thread):
         preview_cfg.camera_number = self.camera_index
 
         preview_cfg.preview_mode = rsid_py.PreviewMode.MJPEG_1080P
+        # preview_cfg.portrait_mode = False
         self.preview = rsid_py.Preview(preview_cfg)
         self.preview.start(preview_callback=self.on_image, snapshot_callback=None)
 
@@ -706,6 +707,9 @@ def main():
         try:
             config = copy.copy(f.query_device_config())
             config.dump_mode = rsid_py.DumpMode.Disable
+            # config.camera_rotation = rsid_py.CameraRotation.Rotation_180_Deg
+            # Rotation_90_Deg
+            # config.camera_rotation = rsid_py.CameraRotation.Rotation_270_Deg
             f.set_device_config(config)
         except Exception as e:
             print("Exception")
