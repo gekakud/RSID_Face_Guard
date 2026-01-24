@@ -17,7 +17,7 @@ from typing import Optional
 CUSTOM_THRESHOLD = 400   # התאמה לפי מה שתמצא בלוגים
 
 # Set to True to simulate card hardware (for testing without physical card reader)
-SIMULATE_HW = False
+SIMULATE_HW = True
 
 # Card API support (reader and writer)
 if SIMULATE_HW:
@@ -166,7 +166,9 @@ class HostModeService:
         while self.running:
             try:
                 card_id = get_card_id(timeout=0.5)
-                
+                # if SIMULATE_HW:
+                #     card_id = 1230007405  # Simulated card ID for testing
+
                 if card_id is not None:
                     current_time = time.time()
                     
