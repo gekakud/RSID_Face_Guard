@@ -35,6 +35,14 @@ else:
         print('Card API module not available.')
         sys.exit(1)
 
+# Import rsid_py BEFORE PyQt5 to avoid native library conflicts
+try:
+    import rsid_py
+    print('rsid_py Version: ' + rsid_py.__version__)
+except ImportError:
+    print('Failed importing rsid_py. Please ensure rsid_py module is available.')
+    sys.exit(1)
+
 try:
     import numpy as np
 except ImportError:
@@ -56,13 +64,6 @@ try:
     from PyQt5.QtGui import QImage, QPixmap, QFont
 except ImportError:
     print('Failed importing PyQt5. Please install it (pip install PyQt5).')
-    sys.exit(1)
-
-try:
-    import rsid_py
-    print('rsid_py Version: ' + rsid_py.__version__)
-except ImportError:
-    print('Failed importing rsid_py. Please ensure rsid_py module is available.')
     sys.exit(1)
 
 from user_db import UserDatabase
