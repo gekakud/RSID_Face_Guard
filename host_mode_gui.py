@@ -7,24 +7,14 @@ Based on host_mode_cli.py (business logic) and viewer_host_mode_with_db.py (came
 
 import argparse
 import copy
+import os
+import platform
 import queue
 import sys
 import threading
 import traceback
 from typing import Optional
-import argparse
-import copy
-import ctypes
-import os
-import queue
-import re
-import signal
-import subprocess
-import sys
-import threading
-import time
-import traceback
-import PIL
+
 # Configuration
 SIMULATE_HW = True
 CUSTOM_THRESHOLD = 400
@@ -70,7 +60,7 @@ except ImportError:
 
 try:
     import rsid_py
-    print('Version: ' + rsid_py.__version__)
+    print('rsid_py Version: ' + rsid_py.__version__)
 except ImportError:
     print('Failed importing rsid_py. Please ensure rsid_py module is available.')
     sys.exit(1)
@@ -149,13 +139,12 @@ class HostModeService:
         self.signals = signals
         self.user_db = UserDatabase()
         
-        # Initialize card hardware
+        # Initialize Wiegand transmitter (card reader is initialized in main())
         try:
-            initialize_card_reader()
             initialize_wiegand_tx()
-            print("Card reader and Wiegand initialized")
+            print("Wiegand transmitter initialized")
         except Exception as e:
-            print(f"Card hardware initialization failed: {e}")
+            print(f"Wiegand initialization failed: {e}")
     
     def authenticate_with_card(self, card_id: int) -> tuple[bool, Optional[str], Optional[str]]:
         """Authenticate user with card ID and face matching"""
@@ -513,43 +502,62 @@ def main():
     parser.add_argument('-c', '--camera', help='Camera number (-1 for autodetect)', type=int, default=-1)
     args = parser.parse_args()
     
-    port = "COM9"
-
-    # linux or windows
-    import platform
-    if platform.system() == "Windows":
-        port = "COM9"
-    else:  # Linux, macOS, etc.
-        port = "/dev/ttyACM0"
-
+    # Determine port (same logic as viewer_host_mode_with_db.py)
+    if args.port is None:
+        devices = rsid_py.discover_devices()
+        if len(devices) == 0:
+            # Try default port based on OS
+            if platform.system() == "Windows":
+                port = "COM9"
+            else:
+                port = "/dev/ttyACM0"
+            print(f"No devices auto-detected. Trying default port: {port}")
+        else:
+            port = devices[0]
+            print(f"Auto-detected device on port: {port}")
+    else:
+        port = args.port
+        print(f"Using specified port: {port}")
+    
     camera_index = args.camera
-    # if args.port is None:
-    #     devices = rsid_py.discover_devices()
-    #     if len(devices) == 0:
-    #         print('Error: No rsid devices were found and no port was specified.')
-    #         exit(1)
-    #     port = devices[0]
-    # else:
-    #     port = args.port
     
     # Discover device type
+    print(f"Discovering device type on port: {port}...")
     try:
         device_type = rsid_py.discover_device_type(port)
         print(f"Device type: {device_type}")
     except Exception as e:
         print(f"Could not connect to device on port {port}: {e}")
+        print("\nTroubleshooting tips:")
+        print("  - Make sure the RealSense ID device is connected")
+        print("  - Check that no other application is using the port")
+        print("  - Try unplugging and replugging the device")
+        print("  - Run without debugger breakpoints (native library timing issue)")
+        traceback.print_exc()
         sys.exit(1)
     
-    # Configure device
-    try:
-        with rsid_py.FaceAuthenticator(device_type, str(port)) as f:
+    # Configure device (same pattern as viewer_host_mode_with_db.py)
+    config = None
+    print("Configuring device...")
+    with rsid_py.FaceAuthenticator(device_type, str(port)) as f:
+        try:
             config = copy.copy(f.query_device_config())
             config.dump_mode = rsid_py.DumpMode.Disable
             f.set_device_config(config)
-    except Exception as e:
-        print(f"Device configuration error: {e}")
-        traceback.print_exc()
-        sys.exit(1)
+            print("Device configured successfully")
+        except Exception as e:
+            print(f"Device configuration error: {e}")
+            traceback.print_exc(file=sys.stdout)
+            os._exit(1)
+        finally:
+            f.disconnect()
+    
+    print(f"Using port: {port} ({device_type})")
+    print(f"Using camera index: {camera_index}")
+    
+    # Initialize card reader before starting controller (same as viewer)
+    initialize_card_reader()
+    print("Card reader initialized")
     
     # Create Qt application
     app = QApplication(sys.argv)
