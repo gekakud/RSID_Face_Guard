@@ -10,6 +10,8 @@ import copy
 import os
 import platform
 import queue
+import re
+import subprocess
 import sys
 import threading
 import traceback
@@ -18,6 +20,13 @@ from typing import Optional
 # Configuration
 SIMULATE_HW = True
 CUSTOM_THRESHOLD = 400
+
+# Set to True for RPi5 with small 800x480 screen (fullscreen mode)
+RUN_SMALL_SCREEN = False
+
+# Small display resolution settings
+SMALL_W = 800
+SMALL_H = 480
 
 # Card API support
 if SIMULATE_HW:
@@ -67,6 +76,35 @@ except ImportError:
     sys.exit(1)
 
 from user_db import UserDatabase
+
+
+def _find_display_xy_by_resolution(prefer_w=800, prefer_h=480):
+    """
+    Return (x, y) offset of the first connected display with resolution prefer_w x prefer_h.
+    Uses xrandr output (works under X11/XWayland). Returns None if not found / not available.
+    """
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        out = subprocess.check_output(["xrandr"], text=True)
+        # Example:
+        # XWAYLAND0 connected 800x480+1920+0 inverted ...
+        pat = re.compile(r"connected\s+(?P<w>\d+)x(?P<h>\d+)\+(?P<x>\d+)\+(?P<y>\d+)")
+        for line in out.splitlines():
+            if " connected " not in line:
+                continue
+            m = pat.search(line)
+            if not m:
+                continue
+            w = int(m.group("w"))
+            h = int(m.group("h"))
+            x = int(m.group("x"))
+            y = int(m.group("y"))
+            if w == prefer_w and h == prefer_h:
+                return (x, y)
+    except Exception as e:
+        print("xrandr detect failed:", e)
+    return None
 
 
 class AuthSignals(QObject):
@@ -312,11 +350,39 @@ class MainWindow(QMainWindow):
         # Start preview thread
         self.preview_controller.start()
     
+    def _place_on_correct_display(self):
+        """Place window on the small display if connected (Linux only via xrandr)"""
+        pos = _find_display_xy_by_resolution(SMALL_W, SMALL_H)
+        if pos is not None:
+            x, y = pos
+            try:
+                # Move to the small display
+                self.move(x, y)
+                print(f"GUI moved to small display at {x},{y}")
+                # Go fullscreen
+                self.showFullScreen()
+            except Exception as e:
+                print("Failed placing window:", e)
+        else:
+            # No small display found -> stay on primary (0,0)
+            try:
+                self.move(0, 0)
+                print("Small display not found -> using primary screen")
+            except Exception:
+                pass
+    
     def init_ui(self):
         """Initialize the user interface"""
         self.setWindowTitle("RealSense ID - Host Mode")
-        self.setMinimumSize(600, 700)
-        self.resize(720, 900)
+        
+        # Small screen mode for RPi5 with 800x480 display
+        if RUN_SMALL_SCREEN:
+            self.resize(SMALL_W, SMALL_H)
+            self.setCursor(Qt.BlankCursor)  # Hide cursor on small screen
+            self._place_on_correct_display()
+        else:
+            self.setMinimumSize(600, 700)
+            self.resize(720, 900)
         
         # Central widget
         central_widget = QWidget()
@@ -324,10 +390,14 @@ class MainWindow(QMainWindow):
         
         # Main layout
         layout = QVBoxLayout(central_widget)
-        layout.setSpacing(10)
-        layout.setContentsMargins(10, 10, 10, 10)
+        if RUN_SMALL_SCREEN:
+            layout.setSpacing(5)
+            layout.setContentsMargins(5, 5, 5, 5)
+        else:
+            layout.setSpacing(10)
+            layout.setContentsMargins(10, 10, 10, 10)
         
-        # Video preview frame
+        # Video preview frame (with overlay for result indicator)
         video_frame = QFrame()
         video_frame.setFrameStyle(QFrame.Box | QFrame.Sunken)
         video_frame.setStyleSheet("background-color: black;")
@@ -336,40 +406,52 @@ class MainWindow(QMainWindow):
         
         self.video_label = QLabel()
         self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setMinimumSize(640, 480)
+        if RUN_SMALL_SCREEN:
+            self.video_label.setMinimumSize(SMALL_W - 20, SMALL_H - 80)
+        else:
+            self.video_label.setMinimumSize(640, 480)
         self.video_label.setStyleSheet("background-color: black;")
         video_layout.addWidget(self.video_label)
         
         layout.addWidget(video_frame, stretch=1)
         
-        # Status label
-        self.status_label = QLabel("Ready")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.setFont(QFont("Arial", 14))
-        self.status_label.setStyleSheet("""
+        # Result overlay label (big ✓ or ✗)
+        self.result_label = QLabel(self)
+        self.result_label.setAlignment(Qt.AlignCenter)
+        if RUN_SMALL_SCREEN:
+            self.result_label.setFont(QFont("Arial", 150, QFont.Bold))
+        else:
+            self.result_label.setFont(QFont("Arial", 200, QFont.Bold))
+        self.result_label.setStyleSheet("""
             QLabel {
-                background-color: #333;
-                color: #ccc;
-                padding: 15px;
-                border-radius: 5px;
+                background-color: rgba(0, 0, 0, 180);
+                border-radius: 20px;
             }
         """)
-        self.status_label.setMinimumHeight(50)
-        layout.addWidget(self.status_label)
+        self.result_label.hide()
+        
+        # Timer to hide result label
+        self.result_timer = QTimer()
+        self.result_timer.setSingleShot(True)
+        self.result_timer.timeout.connect(self.hide_result)
         
         # Button layout
         button_layout = QHBoxLayout()
         
         self.auth_button = QPushButton("Authenticate")
-        self.auth_button.setFont(QFont("Arial", 16, QFont.Bold))
-        self.auth_button.setMinimumHeight(60)
+        if RUN_SMALL_SCREEN:
+            self.auth_button.setFont(QFont("Arial", 24, QFont.Bold))
+            self.auth_button.setMinimumHeight(100)
+        else:
+            self.auth_button.setFont(QFont("Arial", 32, QFont.Bold))
+            self.auth_button.setMinimumHeight(120)
         self.auth_button.setStyleSheet("""
             QPushButton {
                 background-color: #2196F3;
                 color: white;
                 border: none;
-                border-radius: 8px;
-                padding: 15px 30px;
+                border-radius: 15px;
+                padding: 30px 60px;
             }
             QPushButton:hover {
                 background-color: #1976D2;
@@ -437,30 +519,52 @@ class MainWindow(QMainWindow):
             print(f"Video update error: {e}")
     
     def update_status(self, message: str):
-        """Update status label (thread-safe via signal)"""
-        # Determine color based on message content
-        if "Success" in message or "Authenticated" in message:
-            color = "#4CAF50"  # Green
-        elif "failed" in message.lower() or "error" in message.lower() or "not found" in message.lower():
-            color = "#F44336"  # Red
+        """Update status - no-op, kept for compatibility"""
+        pass
+    
+    def show_result(self, success: bool):
+        """Show big ✓ or ✗ overlay for 3 seconds"""
+        if success:
+            self.result_label.setText("✓")
+            self.result_label.setStyleSheet("""
+                QLabel {
+                    background-color: rgba(0, 0, 0, 180);
+                    color: #4CAF50;
+                    border-radius: 20px;
+                }
+            """)
         else:
-            color = "#ccc"  # Gray (default)
+            self.result_label.setText("✗")
+            self.result_label.setStyleSheet("""
+                QLabel {
+                    background-color: rgba(0, 0, 0, 180);
+                    color: #F44336;
+                    border-radius: 20px;
+                }
+            """)
         
-        self.status_label.setStyleSheet(f"""
-            QLabel {{
-                background-color: #333;
-                color: {color};
-                padding: 15px;
-                border-radius: 5px;
-            }}
-        """)
-        self.status_label.setText(message)
+        # Center the result label on the window
+        label_size = 300 if RUN_SMALL_SCREEN else 400
+        self.result_label.setFixedSize(label_size, label_size)
+        x = (self.width() - label_size) // 2
+        y = (self.height() - label_size) // 2
+        self.result_label.move(x, y)
+        self.result_label.show()
+        self.result_label.raise_()
+        
+        # Start timer to hide after 3 seconds
+        self.result_timer.start(3000)
+    
+    def hide_result(self):
+        """Hide the result overlay"""
+        self.result_label.hide()
     
     def on_auth_complete(self, success: bool, message: str):
         """Handle authentication completion"""
         self.auth_in_progress = False
         self.auth_button.setEnabled(True)
-        self.update_status(message)
+        self.show_result(success)
+        print(message)  # Log to console
     
     def on_authenticate_clicked(self):
         """Handle authenticate button click"""
