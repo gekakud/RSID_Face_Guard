@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import traceback
 from typing import Optional
 
@@ -24,6 +25,9 @@ CUSTOM_THRESHOLD = 400
 
 # Set to True for RPi5 with small 800x480 screen (fullscreen mode)
 RUN_ON_REAL_DEVICE = False
+
+# Set to True to enable card reader monitoring (auto-authenticate when card is detected)
+RUN_WITH_CARD_READER = False
 
 # Small display resolution settings
 SMALL_W = 800
@@ -300,6 +304,7 @@ class GUI(tk.Tk):
         self.scaled_image = None
         self.video_update_handle = None
         self.result_hide_handle = None
+        self.running = True
         
         # Initialize services
         self.preview_controller = PreviewController(port, camera_index, device_type)
@@ -307,6 +312,11 @@ class GUI(tk.Tk):
         
         # Authentication state
         self.auth_in_progress = False
+        
+        # Card reader thread
+        self.card_reader_thread = None
+        if RUN_WITH_CARD_READER:
+            self.card_reader_thread = threading.Thread(target=self._card_reader_loop, daemon=True)
         
         # Window setup
         if RUN_ON_REAL_DEVICE:
@@ -365,6 +375,11 @@ class GUI(tk.Tk):
         
         # Start preview
         self.preview_controller.start()
+        
+        # Start card reader thread if enabled
+        if RUN_WITH_CARD_READER and self.card_reader_thread:
+            self.card_reader_thread.start()
+            print("Card reader monitoring started")
         
         # Start video update loop
         self.after(50, self.update_video)
@@ -522,8 +537,54 @@ class GUI(tk.Tk):
         self.auth_button.state(['!disabled'])
         self.show_result(success)
     
+    def _card_reader_loop(self):
+        """Monitor card reader for authentication requests (similar to host_mode_cli.py)"""
+        print("Card reader monitoring active")
+        last_card_id = None
+        card_cooldown = 2.0  # seconds before same card can be read again
+        last_read_time = 0
+        
+        while self.running:
+            try:
+                card_id = get_card_id(timeout=0.5)
+                
+                if card_id is not None:
+                    current_time = time.time()
+                    
+                    # Check if it's the same card within cooldown period
+                    if card_id == last_card_id and (current_time - last_read_time) < card_cooldown:
+                        continue
+                    
+                    # Skip if already authenticating
+                    if self.auth_in_progress:
+                        continue
+                    
+                    print(f"Card detected: {card_id}")
+                    self.auth_in_progress = True
+                    
+                    # Run authentication with card
+                    success, user_name, permission = self.host_service.authenticate_with_card(card_id)
+                    
+                    if success:
+                        print(f"✅ Access granted to {user_name} ({permission})")
+                    else:
+                        print(f"❌ Access denied for card {card_id}: {permission}")
+                    
+                    # Update GUI in main thread
+                    self.after(0, lambda s=success: self._on_auth_complete(s))
+                    
+                    last_card_id = card_id
+                    last_read_time = current_time
+                    
+            except Exception as e:
+                print(f"Card reader error: {e}")
+                time.sleep(1)
+        
+        print("Card reader monitoring stopped")
+    
     def exit_app(self):
         """Exit the application"""
+        self.running = False  # Stop card reader loop
         if self.video_update_handle:
             self.after_cancel(self.video_update_handle)
         self.preview_controller.stop()
