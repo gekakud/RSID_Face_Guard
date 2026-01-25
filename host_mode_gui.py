@@ -22,7 +22,7 @@ SIMULATE_HW = True
 CUSTOM_THRESHOLD = 400
 
 # Set to True for RPi5 with small 800x480 screen (fullscreen mode)
-RUN_SMALL_SCREEN = False
+RUN_ON_REAL_DEVICE = False
 
 # Small display resolution settings
 SMALL_W = 800
@@ -376,7 +376,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("RealSense ID - Host Mode")
         
         # Small screen mode for RPi5 with 800x480 display
-        if RUN_SMALL_SCREEN:
+        if RUN_ON_REAL_DEVICE:
             self.resize(SMALL_W, SMALL_H)
             self.setCursor(Qt.BlankCursor)  # Hide cursor on small screen
             self._place_on_correct_display()
@@ -390,7 +390,7 @@ class MainWindow(QMainWindow):
         
         # Main layout
         layout = QVBoxLayout(central_widget)
-        if RUN_SMALL_SCREEN:
+        if RUN_ON_REAL_DEVICE:
             layout.setSpacing(5)
             layout.setContentsMargins(5, 5, 5, 5)
         else:
@@ -406,7 +406,7 @@ class MainWindow(QMainWindow):
         
         self.video_label = QLabel()
         self.video_label.setAlignment(Qt.AlignCenter)
-        if RUN_SMALL_SCREEN:
+        if RUN_ON_REAL_DEVICE:
             self.video_label.setMinimumSize(SMALL_W - 20, SMALL_H - 80)
         else:
             self.video_label.setMinimumSize(640, 480)
@@ -418,7 +418,7 @@ class MainWindow(QMainWindow):
         # Result overlay label (big ✓ or ✗)
         self.result_label = QLabel(self)
         self.result_label.setAlignment(Qt.AlignCenter)
-        if RUN_SMALL_SCREEN:
+        if RUN_ON_REAL_DEVICE:
             self.result_label.setFont(QFont("Arial", 150, QFont.Bold))
         else:
             self.result_label.setFont(QFont("Arial", 200, QFont.Bold))
@@ -439,7 +439,7 @@ class MainWindow(QMainWindow):
         button_layout = QHBoxLayout()
         
         self.auth_button = QPushButton("Authenticate")
-        if RUN_SMALL_SCREEN:
+        if RUN_ON_REAL_DEVICE:
             self.auth_button.setFont(QFont("Arial", 24, QFont.Bold))
             self.auth_button.setMinimumHeight(100)
         else:
@@ -544,7 +544,7 @@ class MainWindow(QMainWindow):
             """)
         
         # Center the result label on the window
-        label_size = 300 if RUN_SMALL_SCREEN else 400
+        label_size = 300 if RUN_ON_REAL_DEVICE else 400
         self.result_label.setFixedSize(label_size, label_size)
         x = (self.width() - label_size) // 2
         y = (self.height() - label_size) // 2

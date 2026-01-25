@@ -23,7 +23,7 @@ SIMULATE_HW = True
 CUSTOM_THRESHOLD = 400
 
 # Set to True for RPi5 with small 800x480 screen (fullscreen mode)
-RUN_SMALL_SCREEN = True
+RUN_ON_REAL_DEVICE = False
 
 # Small display resolution settings
 SMALL_W = 800
@@ -172,6 +172,57 @@ class HostModeService:
         except Exception as e:
             print(f"Wiegand initialization failed: {e}")
     
+    def authenticate_with_card(self, card_id: int) -> tuple[bool, Optional[str], Optional[str]]:
+        """Authenticate user with card ID and face matching"""
+        # Check if card ID exists in database
+        user_info = self.user_db.get_user(str(card_id))
+        if not user_info:
+            return False, None, "Card not registered"
+        
+        auth_status = None
+        extracted_prints = None
+        
+        def on_fp_auth_result(status, new_prints):
+            nonlocal auth_status, extracted_prints
+            auth_status = status
+            extracted_prints = new_prints
+        
+        try:
+            with rsid_py.FaceAuthenticator(self.port) as authenticator:
+                authenticator.extract_faceprints_for_auth(on_result=on_fp_auth_result)
+                
+                if auth_status != rsid_py.AuthenticateStatus.Success or not extracted_prints:
+                    return False, None, f"Face extraction failed: {auth_status}"
+                
+                # Perform host-side matching
+                fp = user_info.get('faceprints')
+                if not fp:
+                    return False, None, "No faceprints on file"
+                
+                # Reconstruct faceprints object
+                db_faceprints = rsid_py.Faceprints()
+                db_faceprints.version = fp['version']
+                db_faceprints.features_type = fp['features_type']
+                db_faceprints.flags = fp['flags']
+                db_faceprints.adaptive_descriptor_nomask = fp['adaptive_descriptor_nomask']
+                db_faceprints.adaptive_descriptor_withmask = fp['adaptive_descriptor_withmask']
+                db_faceprints.enroll_descriptor = fp['enroll_descriptor']
+                
+                # Match faceprints
+                updated_faceprints = rsid_py.Faceprints()
+                match_result = authenticator.match_faceprints(
+                    extracted_prints, db_faceprints, updated_faceprints
+                )
+                
+                if match_result.success or (match_result.score is not None and match_result.score >= CUSTOM_THRESHOLD):
+                    send_w32(card_id)
+                    return True, user_info['name'], user_info['permission_level']
+                else:
+                    return False, None, f"Face match failed (score: {match_result.score})"
+                    
+        except Exception as e:
+            return False, None, str(e)
+    
     def authenticate_all_users(self) -> tuple[bool, Optional[str], Optional[str]]:
         """Authenticate by matching against all users in database"""
         all_users = self.user_db.get_all_users()
@@ -258,7 +309,7 @@ class GUI(tk.Tk):
         self.auth_in_progress = False
         
         # Window setup
-        if RUN_SMALL_SCREEN:
+        if RUN_ON_REAL_DEVICE:
             self.geometry(f"{SMALL_W}x{SMALL_H}")
             self.config(cursor="none")
             self._place_on_correct_display()
@@ -296,7 +347,7 @@ class GUI(tk.Tk):
             style.theme_use('clam')
         
         # Configure big button style
-        if RUN_SMALL_SCREEN:
+        if RUN_ON_REAL_DEVICE:
             style.configure('Big.TButton', font=('Arial', 20, 'bold'), padding=(20, 30))
         else:
             style.configure('Big.TButton', font=('Arial', 28, 'bold'), padding=(30, 40))
@@ -307,7 +358,7 @@ class GUI(tk.Tk):
             command=self.authenticate,
             style='Big.TButton'
         )
-        if RUN_SMALL_SCREEN:
+        if RUN_ON_REAL_DEVICE:
             self.auth_button.grid(row=0, column=0, sticky="ew", ipady=20)
         else:
             self.auth_button.grid(row=0, column=0, sticky="ew", ipady=30)
@@ -395,7 +446,7 @@ class GUI(tk.Tk):
             self.canvas.delete(self.canvas_result_id)
         
         # Draw semi-transparent background
-        box_size = 300 if RUN_SMALL_SCREEN else 400
+        box_size = 300 if RUN_ON_REAL_DEVICE else 400
         x1 = (canvas_w - box_size) // 2
         y1 = (canvas_h - box_size) // 2
         x2 = x1 + box_size
@@ -411,7 +462,7 @@ class GUI(tk.Tk):
         # Draw checkmark or X
         symbol = "✓" if success else "✗"
         color = '#4CAF50' if success else '#F44336'  # Green or Red
-        font_size = 150 if RUN_SMALL_SCREEN else 200
+        font_size = 150 if RUN_ON_REAL_DEVICE else 200
         
         self.canvas_result_id = self.canvas.create_text(
             canvas_w // 2, canvas_h // 2,
