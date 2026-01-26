@@ -547,7 +547,10 @@ class GUI(tk.Tk):
         while self.running:
             try:
                 card_id = get_card_id(timeout=0.5)
-                
+                if RUN_WITH_CARD_READER and SIMULATE_HW:
+                    print(f"[Card Reader] Read card ID: {card_id}")
+                    card_id = 1230007405  # For simulation
+                    
                 if card_id is not None:
                     current_time = time.time()
                     
@@ -565,6 +568,9 @@ class GUI(tk.Tk):
                     # Run authentication with card
                     success, user_name, permission = self.host_service.authenticate_with_card(card_id)
                     
+                    if SIMULATE_HW:
+                        time.sleep(5)  # Simulate delay between reads
+
                     if success:
                         print(f"✅ Access granted to {user_name} ({permission})")
                     else:
