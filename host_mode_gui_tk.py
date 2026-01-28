@@ -183,46 +183,51 @@ class HostModeService:
         if not user_info:
             return False, None, "Card not registered"
         
-        auth_status = None
-        extracted_prints = None
+        # Use list to allow mutation from nested callback function
+        result = [None]
         
-        def on_fp_auth_result(status, new_prints):
-            nonlocal auth_status, extracted_prints
-            auth_status = status
-            extracted_prints = new_prints
+        def on_fp_auth_result(status, new_prints, authenticator):
+            """Perform matching INSIDE the callback while faceprints are valid"""
+            if status != rsid_py.AuthenticateStatus.Success or not new_prints:
+                result[0] = (False, None, f"Face extraction failed: {status}")
+                return
+            
+            # Perform host-side matching
+            fp = user_info.get('faceprints')
+            if not fp:
+                result[0] = (False, None, "No faceprints on file")
+                return
+            
+            # Reconstruct faceprints object
+            db_faceprints = rsid_py.Faceprints()
+            db_faceprints.version = fp['version']
+            db_faceprints.features_type = fp['features_type']
+            db_faceprints.flags = fp['flags']
+            db_faceprints.adaptive_descriptor_nomask = fp['adaptive_descriptor_nomask']
+            db_faceprints.adaptive_descriptor_withmask = fp['adaptive_descriptor_withmask']
+            db_faceprints.enroll_descriptor = fp['enroll_descriptor']
+            
+            # Match faceprints
+            updated_faceprints = rsid_py.Faceprints()
+            match_result = authenticator.match_faceprints(
+                new_prints, db_faceprints, updated_faceprints
+            )
+            
+            if match_result.success or (match_result.score is not None and match_result.score >= CUSTOM_THRESHOLD):
+                send_w32(card_id)
+                result[0] = (True, user_info['name'], user_info['permission_level'])
+            else:
+                result[0] = (False, None, f"Face match failed (score: {match_result.score})")
         
         try:
             with rsid_py.FaceAuthenticator(self.port) as authenticator:
-                authenticator.extract_faceprints_for_auth(on_result=on_fp_auth_result)
-                
-                if auth_status != rsid_py.AuthenticateStatus.Success or not extracted_prints:
-                    return False, None, f"Face extraction failed: {auth_status}"
-                
-                # Perform host-side matching
-                fp = user_info.get('faceprints')
-                if not fp:
-                    return False, None, "No faceprints on file"
-                
-                # Reconstruct faceprints object
-                db_faceprints = rsid_py.Faceprints()
-                db_faceprints.version = fp['version']
-                db_faceprints.features_type = fp['features_type']
-                db_faceprints.flags = fp['flags']
-                db_faceprints.adaptive_descriptor_nomask = fp['adaptive_descriptor_nomask']
-                db_faceprints.adaptive_descriptor_withmask = fp['adaptive_descriptor_withmask']
-                db_faceprints.enroll_descriptor = fp['enroll_descriptor']
-                
-                # Match faceprints
-                updated_faceprints = rsid_py.Faceprints()
-                match_result = authenticator.match_faceprints(
-                    extracted_prints, db_faceprints, updated_faceprints
+                authenticator.extract_faceprints_for_auth(
+                    on_result=lambda status, new_prints: on_fp_auth_result(status, new_prints, authenticator)
                 )
                 
-                if match_result.success or (match_result.score is not None and match_result.score >= CUSTOM_THRESHOLD):
-                    send_w32(card_id)
-                    return True, user_info['name'], user_info['permission_level']
-                else:
-                    return False, None, f"Face match failed (score: {match_result.score})"
+                if result[0] is None:
+                    return False, None, "Authentication callback not invoked"
+                return result[0]
                     
         except Exception as e:
             return False, None, str(e)
@@ -233,53 +238,57 @@ class HostModeService:
         if not all_users:
             return False, None, "No users in database"
         
-        auth_status = None
-        extracted_prints = None
+        # Use list to allow mutation from nested callback function
+        result = [None]
         
-        def on_fp_auth_result(status, new_prints):
-            nonlocal auth_status, extracted_prints
-            auth_status = status
-            extracted_prints = new_prints
+        def on_fp_auth_result(status, new_prints, authenticator):
+            """Perform all matching INSIDE the callback while faceprints are valid"""
+            if status != rsid_py.AuthenticateStatus.Success or not new_prints:
+                result[0] = (False, None, f"Face extraction failed: {status}")
+                return
+            
+            max_score = -100
+            selected_user_id = None
+            selected_user_info = None
+            
+            for user_id, user_info in all_users.items():
+                fp = user_info.get('faceprints')
+                if not fp:
+                    continue
+                
+                db_faceprints = rsid_py.Faceprints()
+                db_faceprints.version = fp['version']
+                db_faceprints.features_type = fp['features_type']
+                db_faceprints.flags = fp['flags']
+                db_faceprints.adaptive_descriptor_nomask = fp['adaptive_descriptor_nomask']
+                db_faceprints.adaptive_descriptor_withmask = fp['adaptive_descriptor_withmask']
+                db_faceprints.enroll_descriptor = fp['enroll_descriptor']
+                
+                updated_faceprints = rsid_py.Faceprints()
+                match_result = authenticator.match_faceprints(
+                    new_prints, db_faceprints, updated_faceprints
+                )
+                
+                if match_result.success and match_result.score > max_score:
+                    max_score = match_result.score
+                    selected_user_id = user_id
+                    selected_user_info = user_info
+            
+            if selected_user_id:
+                send_w32(int(selected_user_id))
+                result[0] = (True, selected_user_info['name'], selected_user_info['permission_level'])
+            else:
+                result[0] = (False, None, "No match found")
         
         try:
             with rsid_py.FaceAuthenticator(self.port) as authenticator:
-                authenticator.extract_faceprints_for_auth(on_result=on_fp_auth_result)
+                authenticator.extract_faceprints_for_auth(
+                    on_result=lambda status, new_prints: on_fp_auth_result(status, new_prints, authenticator)
+                )
                 
-                if auth_status != rsid_py.AuthenticateStatus.Success or not extracted_prints:
-                    return False, None, f"Face extraction failed: {auth_status}"
-                
-                max_score = -100
-                selected_user_id = None
-                selected_user_info = None
-                
-                for user_id, user_info in all_users.items():
-                    fp = user_info.get('faceprints')
-                    if not fp:
-                        continue
-                    
-                    db_faceprints = rsid_py.Faceprints()
-                    db_faceprints.version = fp['version']
-                    db_faceprints.features_type = fp['features_type']
-                    db_faceprints.flags = fp['flags']
-                    db_faceprints.adaptive_descriptor_nomask = fp['adaptive_descriptor_nomask']
-                    db_faceprints.adaptive_descriptor_withmask = fp['adaptive_descriptor_withmask']
-                    db_faceprints.enroll_descriptor = fp['enroll_descriptor']
-                    
-                    updated_faceprints = rsid_py.Faceprints()
-                    match_result = authenticator.match_faceprints(
-                        extracted_prints, db_faceprints, updated_faceprints
-                    )
-                    
-                    if match_result.success and match_result.score > max_score:
-                        max_score = match_result.score
-                        selected_user_id = user_id
-                        selected_user_info = user_info
-                
-                if selected_user_id:
-                    send_w32(int(selected_user_id))
-                    return True, selected_user_info['name'], selected_user_info['permission_level']
-                else:
-                    return False, None, "No match found"
+                if result[0] is None:
+                    return False, None, "Authentication callback not invoked"
+                return result[0]
                     
         except Exception as e:
             return False, None, str(e)
@@ -287,8 +296,9 @@ class HostModeService:
     def cleanup(self):
         """Cleanup resources"""
         try:
-            disconnect_card_reader()
-            close_wiegand_tx()
+            if RUN_WITH_CARD_READER:
+                disconnect_card_reader()
+                close_wiegand_tx()
         except:
             pass
 
@@ -649,7 +659,8 @@ def main():
     print(f"Using camera index: {camera_index}")
     
     # Initialize card reader
-    initialize_card_reader()
+    if RUN_WITH_CARD_READER:
+        initialize_card_reader()
     print("Card reader initialized")
     
     # Create and run GUI
