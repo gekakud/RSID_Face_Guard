@@ -12,7 +12,7 @@ import threading
 import time
 from typing import Optional
 
-from PIL import Image, ImageDraw, ImageOps, ImageTk
+from PIL import Image, ImageOps, ImageTk
 import tkinter as tk
 import tkinter.ttk as ttk
 
@@ -134,7 +134,6 @@ class GUI(tk.Tk):
 
         # Start loops
         self.after(50, self.update_video)
-        self.after(200, self.update_app_icon)
 
         # Re-assert placement after window exists and keep asserting it so
         # the WM or an HDMI reconnect can't push the window to the primary.
@@ -243,18 +242,6 @@ class GUI(tk.Tk):
             y = (sh - config.WINDOW_HEIGHT) // 2
             self.geometry(f"{config.WINDOW_WIDTH}x{config.WINDOW_HEIGHT}+{x}+{y}")
             self.update_idletasks()
-
-    def update_app_icon(self):
-        """Generate a minimal 50x50 window icon and apply it to the title bar."""
-        icon = Image.new("RGB", (50, 50))
-        op = ImageDraw.Draw(icon)
-        # PIL text signature in your env may not accept font_size kwarg
-        try:
-            op.text((10, 0), "R", fill="white")
-        except Exception:
-            pass
-        self.icon = ImageTk.PhotoImage(icon)
-        self.wm_iconphoto(False, self.icon)
 
     def schedule_auto_auth(self):
         """Schedule next automatic authentication (only when WITH_BUTTON=False)."""
