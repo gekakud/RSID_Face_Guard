@@ -1,0 +1,262 @@
+"""
+Face authentication business logic (HostModeService).
+
+Pure business logic -- no Tkinter/GUI dependency. Talks to the
+RealSense ID device via rsid_py, the unified UserDatabase for user
+records, hardware.card_reader_api for Wiegand send, and
+hardware.relay_api for the door strike.
+"""
+
+import logging
+import threading
+import time
+from typing import Optional, Tuple
+
+import rsid_py
+
+import config
+from db import UserDatabase
+from hardware.card_reader_api import send_w32, initialize_wiegand_tx, disconnect_card_reader, close_wiegand_tx
+from hardware.relay_api import open_door
+
+log = logging.getLogger("face_guard")
+
+class HostModeService:
+    """Business logic for host mode authentication."""
+
+    def __init__(self, port: str):
+        """Connect to the RealSense ID device and initialise the Wiegand transmitter.
+
+        Args:
+            port: Serial port path (e.g. '/dev/ttyACM0').
+        """
+        self.port = port
+        self.user_db = UserDatabase(
+            config.USER_DB_FILE,
+            server_url=config.SERVER_URL,
+            remote_timeout_sec=config.REMOTE_TIMEOUT_SEC,
+        )
+        self._error_backoff_until = 0.0  # epoch time; auth is blocked until this passes
+        self.on_reconnect = None  # optional callback fired after successful reconnect
+
+        self._authenticator = rsid_py.FaceAuthenticator(port)
+        try:
+            self._authenticator.connect(self.port)
+            log.info("FaceAuthenticator connected")
+        except Exception as e:
+            log.error("FaceAuthenticator connect failed: %s", e)
+
+        try:
+            initialize_wiegand_tx()
+            log.info("Wiegand transmitter initialized")
+        except Exception as e:
+            log.warning("Wiegand initialization failed: %s", e)
+
+    def _reconnect(self):
+        """Reset the serial connection after an error, with retries and backoff.
+
+        After a USB disconnect the device may re-enumerate on a different ACM
+        port (e.g. ttyACM1 -> ttyACM0), so we use whatever discover_devices()
+        returns rather than insisting on the original port.
+        """
+        try:
+            self._authenticator.disconnect()
+        except Exception:
+            pass
+
+        delay = 1
+        attempt = 0
+        while True:
+            time.sleep(delay)
+            attempt += 1
+            devices = []
+            try:
+                devices = rsid_py.discover_devices()
+            except Exception:
+                pass
+
+            if not devices:
+                log.warning("Reconnect attempt %d: no devices found (retry in %ds)", attempt, min(delay * 2, 16))
+                delay = min(delay * 2, 16)
+                continue
+
+            new_port = devices[0]
+            if new_port != self.port:
+                log.info("Device re-enumerated on %s (was %s)", new_port, self.port)
+                self.port = new_port
+
+            try:
+                self._authenticator.connect(self.port)
+                log.info("FaceAuthenticator reconnected on %s after %d attempt(s)", self.port, attempt)
+                self._error_backoff_until = 0.0
+                if self.on_reconnect:
+                    self.on_reconnect()
+                return
+            except Exception as e:
+                log.error("Reconnect attempt %d failed: %s (retry in %ds)", attempt, e, min(delay * 2, 16))
+                delay = min(delay * 2, 16)
+
+    @staticmethod
+    def _to_rsid_faceprints(fp: dict) -> rsid_py.Faceprints:
+        db_faceprints = rsid_py.Faceprints()
+        db_faceprints.version = fp['version']
+        db_faceprints.features_type = fp['features_type']
+        db_faceprints.flags = fp['flags']
+        db_faceprints.adaptive_descriptor_nomask = fp['adaptive_descriptor_nomask']
+        db_faceprints.adaptive_descriptor_withmask = fp['adaptive_descriptor_withmask']
+        db_faceprints.enroll_descriptor = fp['enroll_descriptor']
+        return db_faceprints
+
+    def authenticate_with_card(self, card_id: int) -> Tuple[bool, Optional[str], Optional[str]]:
+        """Authenticate using a Wiegand card ID combined with a live face scan.
+
+        Looks up the card ID in the local DB, extracts a live faceprint from the
+        camera, and matches it against the stored faceprint. On success, fires
+        send_w32 and optionally opens the relay.
+
+        Returns:
+            (success, user_name, permission_level_or_error_message)
+        """
+        user_info = self.user_db.get_user(str(card_id))
+        if not user_info:
+            return False, None, "Card not registered"
+
+        result = [None]
+
+        def on_fp_auth_result(status, new_prints):
+            if status != rsid_py.AuthenticateStatus.Success or not new_prints:
+                result[0] = (False, None, f"Face extraction failed: {status}")
+                return
+
+            fp = user_info.get('faceprints')
+            if not fp:
+                result[0] = (False, None, "No faceprints on file")
+                return
+
+            db_faceprints = self._to_rsid_faceprints(fp)
+            updated_faceprints = rsid_py.Faceprints()
+            match_result = self._authenticator.match_faceprints(
+                new_prints, db_faceprints, updated_faceprints
+            )
+
+            if match_result.success or (match_result.score is not None and match_result.score >= config.CUSTOM_THRESHOLD):
+                send_w32(card_id)
+                if config.RUN_WITH_RELAY:
+                    threading.Thread(target=open_door, args=(3.0,), daemon=True).start()
+                result[0] = (True, user_info['name'], user_info['permission_level'])
+            else:
+                result[0] = (False, None, f"Face match failed (score: {match_result.score})")
+
+        try:
+            self._authenticator.extract_faceprints_for_auth(on_result=on_fp_auth_result)
+            if result[0] is None:
+                return False, None, "Authentication callback not invoked"
+            return result[0]
+        except Exception as e:
+            self._reconnect()
+            return False, None, str(e)
+
+    def authenticate_all_users(self) -> Tuple[bool, Optional[str], Optional[str]]:
+        """Extract a live faceprint and match it against every user in the DB.
+
+        The highest-scoring match above CUSTOM_THRESHOLD is selected. On
+        success, fires send_w32 with the winning user's numeric ID and
+        optionally opens the relay.
+
+        Returns:
+            (success, user_name, permission_level_or_error_message)
+        """
+        remaining = self._error_backoff_until - time.monotonic()
+        if remaining > 0:
+            log.debug("Serial backoff active -- skipping auth (%.0fs remaining)", remaining)
+            return False, None, "Device recovering"
+
+        all_users = self.user_db.get_all_users()
+        if not all_users:
+            return False, None, "No users in database"
+
+        result = [None]
+
+        def on_fp_auth_result(status, new_prints):
+            if status != rsid_py.AuthenticateStatus.Success or not new_prints:
+                result[0] = (False, None, f"Face extraction failed: {status}")
+                return
+
+            max_score = -100
+            selected_user_id = None
+            selected_user_info = None
+
+            for user_id, user_info in all_users.items():
+                fp = user_info.get('faceprints')
+                if not fp:
+                    continue
+
+                try:
+                    db_faceprints = self._to_rsid_faceprints(fp)
+                    updated_faceprints = rsid_py.Faceprints()
+                    match_result = self._authenticator.match_faceprints(
+                        new_prints, db_faceprints, updated_faceprints
+                    )
+                except Exception as e:
+                    log.warning("Skipping user %s: bad faceprints (%s)", user_id, e)
+                    continue
+
+                is_match = match_result.success or (
+                    match_result.score is not None and match_result.score >= config.CUSTOM_THRESHOLD
+                )
+                if is_match and match_result.score > max_score:
+                    max_score = match_result.score
+                    selected_user_id = user_id
+                    selected_user_info = user_info
+
+            if selected_user_id:
+                try:
+                    send_w32(int(selected_user_id))
+                except (ValueError, TypeError):
+                    pass  # non-numeric user ID (e.g. MongoDB ObjectId), skip Wiegand send
+                if config.RUN_WITH_RELAY:
+                    threading.Thread(target=open_door, args=(3.0,), daemon=True).start()
+                result[0] = (True, selected_user_info['name'], selected_user_info['permission_level'])
+            else:
+                result[0] = (False, None, "No match found")
+
+        try:
+            self._authenticator.extract_faceprints_for_auth(on_result=on_fp_auth_result)
+            if result[0] is None:
+                return False, None, "Authentication callback not invoked"
+            return result[0]
+        except Exception as e:
+            log.exception("authenticate_all_users error")
+            # Block further auth attempts for 20s while reconnect runs in background
+            self._error_backoff_until = time.monotonic() + 20.0
+            threading.Thread(target=self._reconnect, daemon=True).start()
+            return False, None, str(e)
+
+    def reload_db(self):
+        """Reload the user database from the local cache.
+
+        Called after a remote sync writes updated records so that the next
+        authentication attempt uses fresh data.
+        """
+        self.user_db.reload()
+        log.info("Auth DB reloaded (%d users)", self.user_db.count())
+
+    def sync_db_from_remote(self) -> int:
+        """Pull users from the remote provider and merge into the local cache.
+
+        Returns the number of users updated.
+        """
+        return self.user_db.sync_from_remote()
+
+    def cleanup(self):
+        """Disconnect from the device and release card-reader / Wiegand resources."""
+        try:
+            self._authenticator.disconnect()
+        except Exception:
+            pass
+        try:
+            if config.RUN_WITH_CARD_READER:
+                disconnect_card_reader()
+                close_wiegand_tx()
+        except Exception:
+            pass
