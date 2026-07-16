@@ -9,11 +9,14 @@ cloud server. Internally:
     merges/persists it into the local provider.
 """
 
+import logging
 import threading
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 from .local_provider import LocalUserDataProvider
 from .remote_provider import RemoteUserDataProvider
+
+log = logging.getLogger("face_guard")
 
 
 class UserDatabase:
@@ -26,6 +29,9 @@ class UserDatabase:
         self._remote = RemoteUserDataProvider(server_url, remote_timeout_sec) if server_url else None
         self.users: Dict[str, dict] = {}
         self.reload()
+
+        self._sync_stop_event = threading.Event()
+        self._sync_thread: Optional[threading.Thread] = None
 
     # =====================================================
     # Load / persist local cache
@@ -66,7 +72,45 @@ class UserDatabase:
 
         if updated_count > 0:
             self._save()
+            self.reload()
         return updated_count
+
+    def start_auto_sync(self, interval_sec: float, on_updated: Optional[Callable[[int], None]] = None):
+        """Start a background daemon thread that periodically calls
+        sync_from_remote() every interval_sec seconds.
+
+        Fully self-contained: the database is responsible for keeping
+        itself fresh. Safe to call even if no remote provider is
+        configured (sync_from_remote() will just no-op each tick).
+        """
+        if self._sync_thread is not None:
+            return  # already running
+
+        self._sync_stop_event.clear()
+
+        def _loop():
+            log.info("UserDatabase auto-sync started (interval=%ds)", interval_sec)
+            while not self._sync_stop_event.wait(interval_sec):
+                try:
+                    updated = self.sync_from_remote()
+                    if updated > 0:
+                        log.info("UserDatabase auto-sync: %d user(s) updated", updated)
+                        if on_updated:
+                            on_updated(updated)
+                except Exception as e:
+                    log.error("UserDatabase auto-sync error: %s", e)
+            log.info("UserDatabase auto-sync stopped")
+
+        self._sync_thread = threading.Thread(target=_loop, daemon=True)
+        self._sync_thread.start()
+
+    def stop_auto_sync(self):
+        """Stop the background auto-sync thread (if running)."""
+        if self._sync_thread is None:
+            return
+        self._sync_stop_event.set()
+        self._sync_thread.join(timeout=2)
+        self._sync_thread = None
 
     # =====================================================
     # Getters

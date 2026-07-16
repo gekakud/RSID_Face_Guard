@@ -51,16 +51,12 @@ class GUI(tk.Tk):
         self.result_hide_handle = None
         self.auto_auth_handle = None
         self.running = True
-        self.db_sync_in_progress = False
         self.auth_in_progress = False
 
         # Initialize services
         self.preview_controller = PreviewController(port, camera_index, device_type)
         self.host_service = HostModeService(port)
         self.host_service.on_reconnect = self.preview_controller.restart
-
-        # Authentication state
-        self.auth_in_progress = False
 
         # Card reader thread
         self.card_reader_thread = None
@@ -120,10 +116,6 @@ class GUI(tk.Tk):
             else:
                 self.auth_button.grid(row=0, column=0, sticky="ew", ipady=30)
 
-        # --- DB Sync ---
-        self._start_db_sync()
-        self.schedule_db_sync()
-
         # Start preview
         self.preview_controller.start()
 
@@ -143,51 +135,6 @@ class GUI(tk.Tk):
         # Start auto-auth loop if button is disabled
         if not config.WITH_BUTTON:
             self.schedule_auto_auth()
-
-    # =====================================================
-    # DB SYNC
-    # =====================================================
-
-    def schedule_db_sync(self):
-        """Queue the next DB sync tick after DB_SYNC_INTERVAL_SEC seconds."""
-        if not self.running:
-            return
-
-        self.after(config.DB_SYNC_INTERVAL_SEC * 1000, self._db_sync_tick)
-
-    def _db_sync_tick(self):
-        """Timer callback: kick off a sync if no auth is running, then reschedule."""
-        if self.auth_in_progress:
-            log.debug("Skipping DB sync (authentication running)")
-        elif not self.db_sync_in_progress:
-            self._start_db_sync()
-
-        self.schedule_db_sync()
-
-    def _start_db_sync(self):
-        """Spawn a background thread for a DB sync if one is not already running."""
-        if self.db_sync_in_progress:
-            return
-
-        threading.Thread(target=self._run_db_sync, daemon=True).start()
-
-    def _run_db_sync(self):
-        """Background thread body: pull remote users and reload auth DB if changed."""
-        try:
-            self.db_sync_in_progress = True
-            log.info("DB sync started")
-
-            updated = self.host_service.sync_db_from_remote()
-
-            if updated > 0:
-                log.info("Reloading DB (%d users updated)", updated)
-                self.host_service.reload_db()
-
-        except Exception as e:
-            log.error("DB sync error: %s", e)
-
-        finally:
-            self.db_sync_in_progress = False
 
     # =====================================================
     # DISPLAY PLACEMENT

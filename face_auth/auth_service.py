@@ -52,6 +52,13 @@ class HostModeService:
         except Exception as e:
             log.warning("Wiegand initialization failed: %s", e)
 
+        # The DB is fully responsible for keeping itself fresh; nothing
+        # above this layer needs to know about sync scheduling.
+        self.user_db.start_auto_sync(
+            config.DB_SYNC_INTERVAL_SEC,
+            on_updated=lambda n: log.info("Auth DB refreshed (%d users)", self.user_db.count()),
+        )
+
     def _reconnect(self):
         """Reset the serial connection after an error, with retries and backoff.
 
@@ -232,24 +239,9 @@ class HostModeService:
             threading.Thread(target=self._reconnect, daemon=True).start()
             return False, None, str(e)
 
-    def reload_db(self):
-        """Reload the user database from the local cache.
-
-        Called after a remote sync writes updated records so that the next
-        authentication attempt uses fresh data.
-        """
-        self.user_db.reload()
-        log.info("Auth DB reloaded (%d users)", self.user_db.count())
-
-    def sync_db_from_remote(self) -> int:
-        """Pull users from the remote provider and merge into the local cache.
-
-        Returns the number of users updated.
-        """
-        return self.user_db.sync_from_remote()
-
     def cleanup(self):
         """Disconnect from the device and release card-reader / Wiegand resources."""
+        self.user_db.stop_auto_sync()
         try:
             self._authenticator.disconnect()
         except Exception:
