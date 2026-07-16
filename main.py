@@ -3,9 +3,9 @@
 """
 Entry point for the RealSense ID Host Mode application.
 
-Parses CLI args, discovers and configures the RealSense ID device, sets
-up display rotation on the kiosk touchscreen, initialises hardware
-(card reader, relay), then constructs and runs the GUI.
+Parses CLI args, discovers and configures the RealSense ID device,
+initialises hardware (card reader, relay), then constructs and runs
+the GUI.
 
 The application is split into focused packages/modules:
     config.py       - all tunable settings/flags
@@ -80,7 +80,6 @@ except ImportError:
     log.critical("Failed importing tkinter.")
     sys.exit(1)
 
-from gui.display_utils import setup_display_rotation
 from gui.main_window import GUI
 from hardware.card_reader_api import initialize_card_reader
 from hardware.relay_api import initialize_relay
@@ -133,10 +132,6 @@ def main():
 
     log.info("Using port: %s (%s)", port, device_type)
     log.info("Using camera index: %d", camera_index)
-
-    # Ensure the Waveshare display is rotated to portrait before the GUI starts.
-    if config.RUN_ON_REAL_DEVICE:
-        setup_display_rotation(config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
 
     # Initialize card reader
     if config.RUN_WITH_CARD_READER:

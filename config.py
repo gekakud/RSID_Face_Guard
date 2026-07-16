@@ -12,7 +12,7 @@ USER_DB_FILE = "user_database.json"
 # Simulate card reader / relay hardware (useful for dev off the Pi)
 SIMULATE_HW = True
 
-# Set True on RPi5 with the small 800x480 (portrait 480x800) screen
+# Set True on RPi5 with the small 720x720 touch screen
 RUN_ON_REAL_DEVICE = True
 
 # Enable card reader monitoring (auto-authenticate when a card is tapped)
@@ -85,8 +85,8 @@ CARD_WRITER_ACTIVE_HIGH = True
 # Display
 # =====================================================
 
-WINDOW_WIDTH = 480
-WINDOW_HEIGHT = 800
+WINDOW_WIDTH = 720
+WINDOW_HEIGHT = 720
 
 WELCOME_DURATION_MS = 3000
 FAIL_DURATION_MS = 3000

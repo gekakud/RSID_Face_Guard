@@ -1,6 +1,6 @@
 """
 Display placement helpers for kiosk-mode deployment on the small
-Waveshare touchscreen (xrandr rotation, positioning, wmctrl fallback).
+touchscreen (positioning, wmctrl fallback).
 """
 
 import logging
@@ -57,45 +57,6 @@ def find_small_display_xy(prefer_w=800, prefer_h=480) -> Optional[Tuple[int, int
         if w == prefer_w and h == prefer_h:
             return (x, y, name)
     return None
-
-def setup_display_rotation(window_width: int, window_height: int):
-    """Ensure the small display is in portrait orientation via xrandr.
-
-    When the Waveshare is the only display it reports its native landscape
-    resolution (800x480). We need to rotate it left so it appears as
-    480x800 to the window manager and Tkinter, matching window_width x
-    window_height. Called once at startup, before the GUI is created.
-    """
-    if not sys.platform.startswith("linux"):
-        return
-    if not is_command_available("xrandr"):
-        return
-
-    # Already in portrait -- nothing to do.
-    if find_small_display_xy(window_width, window_height) is not None:
-        log.info("Small display already in portrait orientation (%dx%d).", window_width, window_height)
-        return
-
-    # Look for the display in landscape (native 800x480 when we want 480x800).
-    displays = parse_xrandr_connected()
-    for name, w, h, x, y in displays:
-        if w == window_height and h == window_width:
-            log.info(
-                "Display %s found in landscape (%dx%d) -- applying portrait rotation.",
-                name, w, h,
-            )
-            try:
-                subprocess.run(
-                    ["xrandr", "--output", name, "--rotate", "left"],
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-                log.info("Portrait rotation applied to %s.", name)
-                time.sleep(0.8)  # allow the rotation to take effect
-            except Exception as e:
-                log.warning("xrandr rotation failed for %s: %s", name, e)
-            return
 
 def wmctrl_force_move_resize(win, x: int, y: int, w: int, h: int, window_name: str):
     """Fallback: force move/resize using wmctrl if available."""

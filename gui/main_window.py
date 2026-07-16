@@ -23,7 +23,6 @@ from hardware.card_reader_api import get_card_id
 
 from .display_utils import (
     find_small_display_xy,
-    setup_display_rotation,
     wmctrl_force_move_resize,
 )
 
@@ -232,34 +231,18 @@ class GUI(tk.Tk):
             wmctrl_force_move_resize(self, x, y, config.WINDOW_WIDTH, config.WINDOW_HEIGHT, WINDOW_NAME)
 
         else:
-            # Portrait display not found -- check if it's still in landscape (rotation failed).
-            landscape = find_small_display_xy(config.WINDOW_HEIGHT, config.WINDOW_WIDTH)
-            if landscape is not None:
-                lx, ly, lname = landscape
-                log.warning(
-                    "Display %s still in landscape (%dx%d) -- filling it as-is.",
-                    lname, config.WINDOW_HEIGHT, config.WINDOW_WIDTH,
-                )
-                try:
-                    self.overrideredirect(config.KIOSK_BORDERLESS)
-                except Exception:
-                    pass
-                self.geometry(f"{config.WINDOW_HEIGHT}x{config.WINDOW_WIDTH}+{lx}+{ly}")
-                self.update_idletasks()
-                self.lift()
-            else:
-                # Not found at all -- center on primary display.
-                log.info("Small display not detected -> centering on primary display.")
-                try:
-                    self.overrideredirect(config.KIOSK_BORDERLESS)
-                except Exception:
-                    pass
-                sw = self.winfo_screenwidth()
-                sh = self.winfo_screenheight()
-                x = (sw - config.WINDOW_WIDTH) // 2
-                y = (sh - config.WINDOW_HEIGHT) // 2
-                self.geometry(f"{config.WINDOW_WIDTH}x{config.WINDOW_HEIGHT}+{x}+{y}")
-                self.update_idletasks()
+            # Not found at all -- center on primary display.
+            log.info("Small display not detected -> centering on primary display.")
+            try:
+                self.overrideredirect(config.KIOSK_BORDERLESS)
+            except Exception:
+                pass
+            sw = self.winfo_screenwidth()
+            sh = self.winfo_screenheight()
+            x = (sw - config.WINDOW_WIDTH) // 2
+            y = (sh - config.WINDOW_HEIGHT) // 2
+            self.geometry(f"{config.WINDOW_WIDTH}x{config.WINDOW_HEIGHT}+{x}+{y}")
+            self.update_idletasks()
 
     def update_app_icon(self):
         """Generate a minimal 50x50 window icon and apply it to the title bar."""
