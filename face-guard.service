@@ -1,0 +1,29 @@
+[Unit]
+Description=Face Guard - RealSense ID Host Mode GUI
+After=network-online.target graphical.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mahat
+Group=mahat
+WorkingDirectory=/home/mahat/RSID_Face_Guard
+
+# Display access for Tkinter (XWayland)
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/mahat/.Xauthority
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+
+ExecStart=/usr/bin/python3 /home/mahat/RSID_Face_Guard/host_mode_gui_tk.py
+
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+
+# Hardware access
+SupplementaryGroups=dialout gpio video plugdev
+
+[Install]
+WantedBy=graphical.target

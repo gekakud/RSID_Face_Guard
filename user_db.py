@@ -1,84 +1,83 @@
-#!/usr/bin/env python3
-"""
-Shared User Database module for RealSense ID Face Guard
-Thread-safe JSON-based user storage
-"""
-
 import json
 import os
 import threading
-from typing import Optional, Dict, Any
 
 
 class UserDatabase:
-    """Thread-safe user database manager for JSON file storage"""
-    
-    def __init__(self, filename: str = 'user_database.json'):
-        self.filename = filename
-        self.lock = threading.Lock()
-        self.users = self.load_users()
-    
-    def load_users(self) -> Dict[str, Dict[str, Any]]:
-        """Load users from JSON file"""
-        if os.path.exists(self.filename):
+    """
+    Simple thread-safe JSON user database.
+    """
+
+    def __init__(self, db_file="user_database.json"):
+        self.db_file = db_file
+        self._lock = threading.Lock()
+        self.users = {}
+        self.load()
+
+    # =====================================================
+    # Load DB
+    # =====================================================
+
+    def load(self):
+        with self._lock:
+            if not os.path.exists(self.db_file):
+                print("ℹ No user DB found. Creating empty DB.")
+                self.users = {}
+                return
+
             try:
-                with open(self.filename, 'r') as f:
-                    users = json.load(f)
-                    print(f"Loaded {len(users)} users from {self.filename}")
-                    return users
+                with open(self.db_file, "r") as f:
+                    self.users = json.load(f)
             except Exception as e:
-                print(f"Error loading user database: {e}")
-                return {}
-        print(f"No user database found at {self.filename}")
-        return {}
-    
-    def save_users(self) -> bool:
-        """Save users to JSON file"""
-        try:
-            with open(self.filename, 'w') as f:
-                json.dump(self.users, f, indent=2)
-            return True
-        except Exception as e:
-            print(f"Error saving user database: {e}")
-            return False
-    
-    def add_user(self, user_id: str, name: str, permission_level: str, 
-                 faceprints: Optional[Dict[str, Any]] = None) -> bool:
-        """Add a new user to the database"""
-        with self.lock:
-            self.users[user_id] = {
-                'name': name,
-                'id': user_id,
-                'permission_level': permission_level,
-                'faceprints': faceprints
-            }
-            return self.save_users()
-    
-    def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get user details by ID"""
-        with self.lock:
-            return self.users.get(user_id, None)
-    
-    def delete_user(self, user_id: str) -> bool:
-        """Delete a user from the database"""
-        with self.lock:
-            if user_id in self.users:
-                del self.users[user_id]
-                return self.save_users()
-            return False
-    
-    def clear_all(self) -> bool:
-        """Clear all users from the database"""
-        with self.lock:
+                print("❌ Failed loading DB:", e)
+                self.users = {}
+
+    # =====================================================
+    # Save DB (atomic write)
+    # =====================================================
+
+    def save(self):
+        with self._lock:
+
+            tmp_file = self.db_file + ".tmp"
+
+            try:
+                with open(tmp_file, "w") as f:
+                    json.dump(self.users, f, indent=2)
+
+                os.replace(tmp_file, self.db_file)
+
+            except Exception as e:
+                print("❌ Failed saving DB:", e)
+
+    # =====================================================
+    # Getters
+    # =====================================================
+
+    def get_user(self, badge_id):
+        with self._lock:
+            return self.users.get(str(badge_id))
+
+    def get_all_users(self):
+        with self._lock:
+            return dict(self.users)
+
+    def count(self):
+        with self._lock:
+            return len(self.users)
+
+    # =====================================================
+    # Setters
+    # =====================================================
+
+    def set_user(self, badge_id, user_data):
+        with self._lock:
+            self.users[str(badge_id)] = user_data
+
+    def remove_user(self, badge_id):
+        with self._lock:
+            self.users.pop(str(badge_id), None)
+
+    def clear(self):
+        with self._lock:
             self.users = {}
-            return self.save_users()
-    
-    def get_all_users(self) -> Dict[str, Dict[str, Any]]:
-        """Get all users (returns a copy for thread safety)"""
-        with self.lock:
-            return self.users.copy()
-    
-    def reload(self) -> None:
-        """Reload users from file"""
-        with self.lock:
-            self.users = self.load_users()
