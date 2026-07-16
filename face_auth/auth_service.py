@@ -10,14 +10,16 @@ hardware.relay_api for the door strike.
 import logging
 import threading
 import time
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 import rsid_py
 
 import config
 from db import UserDatabase
-from hardware.card_reader_api import send_w32, initialize_wiegand_tx, disconnect_card_reader, close_wiegand_tx
-from hardware.relay_api import open_door
+from hardware.card_reader_api import (
+    send_w32, initialize_wiegand_tx, disconnect_card_reader, close_wiegand_tx, get_card_id,
+)
+from hardware.relay_api import open_door, disconnect_relay
 
 log = logging.getLogger("face_guard")
 
@@ -38,6 +40,12 @@ class HostModeService:
         )
         self._error_backoff_until = 0.0  # epoch time; auth is blocked until this passes
         self.on_reconnect = None  # optional callback fired after successful reconnect
+
+        self._card_monitor_thread: Optional[threading.Thread] = None
+        self._card_monitor_stop_event = threading.Event()
+        self._card_auth_in_progress = threading.Event()
+        self.on_before_card_auth = None  # optional callback (e.g. pause camera preview)
+        self.on_after_card_auth = None   # optional callback (e.g. resume camera preview)
 
         self._authenticator = rsid_py.FaceAuthenticator(port)
         try:
@@ -239,9 +247,86 @@ class HostModeService:
             threading.Thread(target=self._reconnect, daemon=True).start()
             return False, None, str(e)
 
+    def start_card_monitoring(self, on_result: Callable[[bool, Optional[str], Optional[str]], None]):
+        """Start a background daemon thread polling the Wiegand card reader.
+
+        Enforces a cooldown between consecutive reads of the same card to
+        avoid duplicate auth attempts, and skips reads while an auth is
+        already in progress. on_result is invoked with
+        (success, user_name, permission) after each card-triggered auth
+        attempt (from the monitoring thread -- caller must marshal back to
+        the GUI thread if needed).
+        """
+        if self._card_monitor_thread is not None:
+            return  # already running
+
+        self._card_monitor_stop_event.clear()
+
+        def _loop():
+            log.info("Card reader monitoring active")
+            last_card_id = None
+            card_cooldown = 2.0
+            last_read_time = 0.0
+
+            while not self._card_monitor_stop_event.is_set():
+                try:
+                    card_id = get_card_id(timeout=0.5)
+                    if config.SIMULATE_HW:
+                        log.debug("[Card Reader] Read card ID: %s", card_id)
+
+                    if card_id is not None:
+                        current_time = time.time()
+
+                        if card_id == last_card_id and (current_time - last_read_time) < card_cooldown:
+                            continue
+
+                        if self._card_auth_in_progress.is_set():
+                            continue
+
+                        log.info("Card detected: %s", card_id)
+                        self._card_auth_in_progress.set()
+                        if self.on_before_card_auth:
+                            self.on_before_card_auth()
+
+                        success, user_name, permission = self.authenticate_with_card(card_id)
+
+                        if self.on_after_card_auth:
+                            self.on_after_card_auth()
+                        if config.SIMULATE_HW:
+                            time.sleep(5)
+
+                        if success:
+                            log.info("Access granted to %s (%s)", user_name, permission)
+                        else:
+                            log.warning("Access denied for card %s: %s", card_id, permission)
+
+                        on_result(success, user_name, permission)
+                        self._card_auth_in_progress.clear()
+
+                        last_card_id = card_id
+                        last_read_time = current_time
+
+                except Exception as e:
+                    log.error("Card reader error: %s", e)
+                    time.sleep(1)
+
+            log.info("Card reader monitoring stopped")
+
+        self._card_monitor_thread = threading.Thread(target=_loop, daemon=True)
+        self._card_monitor_thread.start()
+
+    def stop_card_monitoring(self):
+        """Stop the background card-reader monitoring thread (if running)."""
+        if self._card_monitor_thread is None:
+            return
+        self._card_monitor_stop_event.set()
+        self._card_monitor_thread.join(timeout=2)
+        self._card_monitor_thread = None
+
     def cleanup(self):
-        """Disconnect from the device and release card-reader / Wiegand resources."""
+        """Disconnect from the device and release card-reader / Wiegand / relay resources."""
         self.user_db.stop_auto_sync()
+        self.stop_card_monitoring()
         try:
             self._authenticator.disconnect()
         except Exception:
@@ -252,3 +337,8 @@ class HostModeService:
                 close_wiegand_tx()
         except Exception:
             pass
+        if config.RUN_WITH_RELAY:
+            try:
+                disconnect_relay()
+            except Exception:
+                pass

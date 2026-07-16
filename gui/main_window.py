@@ -19,7 +19,6 @@ import tkinter.ttk as ttk
 import config
 from face_auth import HostModeService
 from hardware.camera_preview import PreviewController
-from hardware.card_reader_api import get_card_id
 
 from .display_utils import (
     find_small_display_xy,
@@ -57,11 +56,8 @@ class GUI(tk.Tk):
         self.preview_controller = PreviewController(port, camera_index, device_type)
         self.host_service = HostModeService(port)
         self.host_service.on_reconnect = self.preview_controller.restart
-
-        # Card reader thread
-        self.card_reader_thread = None
-        if config.RUN_WITH_CARD_READER:
-            self.card_reader_thread = threading.Thread(target=self._card_reader_loop, daemon=True)
+        self.host_service.on_before_card_auth = self.preview_controller.pause
+        self.host_service.on_after_card_auth = self.preview_controller.resume
 
         # Window setup
         if config.RUN_ON_REAL_DEVICE:
@@ -119,10 +115,11 @@ class GUI(tk.Tk):
         # Start preview
         self.preview_controller.start()
 
-        # Start card reader thread if enabled
-        if config.RUN_WITH_CARD_READER and self.card_reader_thread:
-            self.card_reader_thread.start()
-            log.info("Card reader monitoring started")
+        # Start card reader monitoring if enabled (owned by HostModeService)
+        if config.RUN_WITH_CARD_READER:
+            self.host_service.start_card_monitoring(
+                on_result=lambda s, n, p: self.after(0, lambda: self._on_auth_complete(s, n))
+            )
 
         # Start loops
         self.after(50, self.update_video)
@@ -417,59 +414,6 @@ class GUI(tk.Tk):
             if success:
                 self.show_result(True, name)
 
-    def _card_reader_loop(self):
-        """Background thread: poll the Wiegand card reader and trigger authentication on a new card tap.
-
-        Enforces a 2-second cooldown between consecutive reads of the same card
-        to avoid duplicate auth attempts. Skips reads while an auth is already
-        in progress.
-        """
-        log.info("Card reader monitoring active")
-        last_card_id = None
-        card_cooldown = 2.0
-        last_read_time = 0
-
-        while self.running:
-            try:
-                card_id = get_card_id(timeout=0.5)
-                if config.SIMULATE_HW:
-                    log.debug("[Card Reader] Read card ID: %s", card_id)
-
-                if card_id is not None:
-                    current_time = time.time()
-
-                    if card_id == last_card_id and (current_time - last_read_time) < card_cooldown:
-                        continue
-
-                    if self.auth_in_progress:
-                        continue
-
-                    log.info("Card detected: %s", card_id)
-                    self.auth_in_progress = True
-                    self.preview_controller.pause()
-
-                    success, user_name, permission = self.host_service.authenticate_with_card(card_id)
-
-                    self.preview_controller.resume()
-                    if config.SIMULATE_HW:
-                        time.sleep(5)
-
-                    if success:
-                        log.info("Access granted to %s (%s)", user_name, permission)
-                    else:
-                        log.warning("Access denied for card %s: %s", card_id, permission)
-
-                    self.after(0, lambda s=success, n=user_name: self._on_auth_complete(s, n))
-
-                    last_card_id = card_id
-                    last_read_time = current_time
-
-            except Exception as e:
-                log.error("Card reader error: %s", e)
-                time.sleep(1)
-
-        log.info("Card reader monitoring stopped")
-
     def exit_app(self):
         """Gracefully shut down all threads and services, then destroy the window."""
         self.running = False
@@ -484,12 +428,5 @@ class GUI(tk.Tk):
 
         self.preview_controller.stop()
         self.host_service.cleanup()
-
-        if config.RUN_WITH_RELAY:
-            try:
-                from hardware.relay_api import disconnect_relay
-                disconnect_relay()
-            except Exception:
-                pass
 
         self.quit()
