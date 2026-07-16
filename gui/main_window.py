@@ -498,9 +498,8 @@ class GUI(tk.Tk):
         while self.running:
             try:
                 card_id = get_card_id(timeout=0.5)
-                if config.RUN_WITH_CARD_READER and config.SIMULATE_HW:
+                if config.SIMULATE_HW:
                     log.debug("[Card Reader] Read card ID: %s", card_id)
-                    card_id = 1230007405
 
                 if card_id is not None:
                     current_time = time.time()

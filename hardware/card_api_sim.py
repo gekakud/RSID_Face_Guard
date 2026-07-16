@@ -11,10 +11,15 @@ def initialize_card_reader():
     print('[SIMULATE_HW] Card reader initialized (simulated)')
 
 
+# Fake card ID returned by get_card_id() when card-reader simulation is
+# active, so the auth flow can be exercised without physical hardware.
+SIMULATED_CARD_ID = 1230007405
+
+
 def get_card_id(timeout=1.0):
-    """Simulated card ID read - returns None (no card present)"""
+    """Simulated card ID read - returns a fixed fake card ID."""
     time.sleep(0.1)
-    return None
+    return SIMULATED_CARD_ID
 
 
 def disconnect_card_reader():
