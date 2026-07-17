@@ -32,8 +32,9 @@ WITH_BUTTON = False
 # Auto-auth interval (seconds) when WITH_BUTTON=False
 AUTO_AUTH_INTERVAL_SEC = 5.0
 
-# Borderless "kiosk-like" window. Required to prevent the WM from moving
-# the window to the primary display on a multi-monitor setup.
+# Kiosk mode switch (governs BOTH the Qt-widgets and web front-ends):
+#   True  -> fullscreen, no title bar / border on the small display (kiosk).
+#   False -> normal draggable, bordered window (handy for editor-side debugging).
 KIOSK_BORDERLESS = False
 
 # =====================================================
@@ -72,6 +73,16 @@ RELAY_DEFAULT_OFF = True
 
 WINDOW_WIDTH = 720
 WINDOW_HEIGHT = 720
+
+# =====================================================
+# Web UI (gui_web / main_web.py)
+# =====================================================
+
+# Folder holding the designer-provided web UI (index.html, app.js, styles.css)
+WEB_UI_DIR = "demo_ui"
+
+# Loopback port the web UI + MJPEG camera stream are served on.
+WEB_FRAME_PORT = 8791
 
 WELCOME_DURATION_MS = 3000
 FAIL_DURATION_MS = 3000
