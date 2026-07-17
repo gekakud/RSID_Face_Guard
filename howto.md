@@ -180,3 +180,108 @@ architecture) was present in the repo under `rpi_py_build_lib/`, but:
       }
     ]
   }
+  ```
+
+---
+
+## 7. QtWebEngine (web UI) setup
+
+The project can render the designer-provided web UI in `demo_ui/` inside a
+`QWebEngineView` (embedded Chromium via PySide6). Getting QtWebEngine to run on
+a fresh Raspberry Pi 5 (Raspberry Pi OS **bookworm**, aarch64) requires a few
+one-time fixes. The smoke test `test_webengine_ui.py` validates all of this.
+
+### Symptom-by-symptom fixes
+
+QtWebEngine ships inside `PySide6` (`PySide6-Addons`), but on bookworm it fails
+to import because Qt was built against older library sonames than bookworm
+ships. Fix by symlinking the newer libs to the names QtWebEngine expects:
+
+1. **`ImportError: libwebp.so.6: cannot open shared object file`**
+   (bookworm ships `libwebp.so.7`):
+
+   ```bash
+   sudo ln -sf /usr/lib/aarch64-linux-gnu/libwebp.so.7 \
+               /usr/lib/aarch64-linux-gnu/libwebp.so.6
+   ```
+
+2. **`ImportError: libtiff.so.5: cannot open shared object file`**
+   (bookworm ships `libtiff.so.6`):
+
+   ```bash
+   sudo ln -sf /usr/lib/aarch64-linux-gnu/libtiff.so.6 \
+               /usr/lib/aarch64-linux-gnu/libtiff.so.5
+   ```
+
+   > These two symlinks are a pragmatic workaround (the ABIs are compatible for
+   > QtWebEngine's usage). If the linked-to soname version differs on your
+   > machine, adjust the target — check with:
+   > `ls /usr/lib/aarch64-linux-gnu/libwebp.so.* /usr/lib/aarch64-linux-gnu/libtiff.so.*`
+
+   Verify the import now works:
+
+   ```bash
+   .venv/bin/python -c "from PySide6.QtWebEngineWidgets import QWebEngineView; print('OK')"
+   ```
+
+### Runtime requirements (already baked into `test_webengine_ui.py` / the app)
+
+These environment variables MUST be set **before** QtWebEngine / QApplication
+initializes. They are set at the top of `test_webengine_ui.py`; the real web
+front-end sets them the same way.
+
+- **Run as root → disable Chromium sandbox.** Chromium's zygote refuses to run
+  as root with the sandbox on (this kiosk runs as root):
+  `ERROR:zygote_host_impl_linux.cc … Running as root without --no-sandbox is not supported`
+
+  ```python
+  os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--no-sandbox --disable-gpu --disable-gpu-compositing --in-process-gpu"
+  ```
+
+- **Force software OpenGL.** The Pi's GL stack under X cannot back Chromium's
+  GPU process; without this the page **silently never finishes loading**
+  (`loadFinished` never fires — the window stays blank):
+
+  ```python
+  os.environ["QT_OPENGL"] = "software"
+  os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
+  ```
+
+  Harmless console noise you can ignore under software GL:
+  `ERROR:gbm_wrapper.cc … Failed to export buffer to dma_buf`.
+
+### Running the smoke test
+
+```bash
+DISPLAY=:0 .venv/bin/python test_webengine_ui.py
+```
+
+Expected: a 720x720 window shows the `demo_ui` web interface cycling through
+screensaver → camera → success → failed. A log is written to
+`/tmp/webengine_ui_test.txt`; a successful run contains:
+
+```
+page loaded ok=True
+typeof window.deviceUI = object
+after success() body.dataset.state = success
+```
+
+- `page loaded ok=True` → QtWebEngine rendered `demo_ui/index.html`.
+- `typeof window.deviceUI = object` → the UI's JS integration API is present.
+- `after success() … = success` → Python drove the UI via
+  `runJavaScript("window.deviceUI.success(...)")`.
+
+### Known non-issue: camera
+
+The web UI's browser `getUserMedia()` **cannot** access the RealSense UVC
+camera (it is owned by `rsid_py`, and the firmware needs exclusive access
+during a scan). So `js: Camera could not start: DOMException` in the console is
+**expected** during the smoke test. In the real integration, camera frames are
+pushed from Python (the existing `rsid_py` `PreviewController`) into the page
+instead of using `getUserMedia()`.
+
+### Deployment note
+
+The `libwebp` / `libtiff` symlinks above are manual. For a reproducible image,
+fold them into a provisioning/install script (or ship the matching libraries)
+so a freshly-flashed Pi isn't missing them.
