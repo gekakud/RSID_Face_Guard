@@ -3,6 +3,12 @@ numpy
 
 tk
 
+# Qt6 GUI variant (main_qt.py). PyQt6 has no prebuilt aarch64 wheel and
+# fails to build from source without qmake/Qt6 dev headers on Raspberry
+# Pi OS bookworm, so we use PySide6 instead (same Qt6, official
+# prebuilt wheels for aarch64 via piwheels/PyPI).
+PySide6
+
 # led - also need install pyaudio headers
 pyaudio
 lgpio

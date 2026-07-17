@@ -28,7 +28,7 @@ AUTO_AUTH_INTERVAL_SEC = 5.0
 
 # Borderless "kiosk-like" window. Required to prevent the WM from moving
 # the window to the primary display on a multi-monitor setup.
-KIOSK_BORDERLESS = True
+KIOSK_BORDERLESS = False
 
 # =====================================================
 # Remote Sync
