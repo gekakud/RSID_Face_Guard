@@ -33,9 +33,10 @@ class HostModeService:
             port: Serial port path (e.g. '/dev/ttyACM0').
         """
         self.port = port
+        use_remote = config.DB_MODE == "remote"
         self.user_db = UserDatabase(
             config.USER_DB_FILE,
-            server_url=config.SERVER_URL,
+            server_url=config.SERVER_URL if use_remote else None,
             remote_timeout_sec=config.REMOTE_TIMEOUT_SEC,
         )
         self._error_backoff_until = 0.0  # epoch time; auth is blocked until this passes
@@ -61,11 +62,17 @@ class HostModeService:
             log.warning("Wiegand initialization failed: %s", e)
 
         # The DB is fully responsible for keeping itself fresh; nothing
-        # above this layer needs to know about sync scheduling.
-        self.user_db.start_auto_sync(
-            config.DB_SYNC_INTERVAL_SEC,
-            on_updated=lambda n: log.info("Auth DB refreshed (%d users)", self.user_db.count()),
-        )
+        # above this layer needs to know about sync scheduling. In "local"
+        # mode there's no remote provider, so auto-sync is skipped entirely
+        # (UserDatabase.sync_from_remote() would just no-op anyway, but
+        # skipping avoids spinning up a pointless background thread).
+        if use_remote:
+            self.user_db.start_auto_sync(
+                config.DB_SYNC_INTERVAL_SEC,
+                on_updated=lambda n: log.info("Auth DB refreshed (%d users)", self.user_db.count()),
+            )
+        else:
+            log.info("DB_MODE=local -- using local JSON file only, no remote sync")
 
     def _reconnect(self):
         """Reset the serial connection after an error, with retries and backoff.
