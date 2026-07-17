@@ -223,7 +223,14 @@ journalctl -u face-guard.service -f   # follow logs
 ## 9. (Optional) Web UI (`main_web.py`) — NOT needed for `main_qt.py`
 
 Only required if you use the QtWebEngine-based `main_web.py` instead of
-`main_qt.py`. On Bookworm/trixie you need library symlinks:
+`main_qt.py`. It additionally needs `Pillow` (used by
+`gui_web/frame_server.py` to JPEG-encode camera frames for the web view):
+
+```bash
+.venv/bin/pip install Pillow
+```
+
+On Bookworm/trixie you also need library symlinks:
 
 ```bash
 sudo ln -sf /usr/lib/aarch64-linux-gnu/libwebp.so.7 /usr/lib/aarch64-linux-gnu/libwebp.so.6

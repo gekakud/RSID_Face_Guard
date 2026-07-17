@@ -4,6 +4,11 @@
 numpy
 requests
 
+# Needed by gui_web/frame_server.py (main_web.py) for JPEG encoding of
+# camera frames served over the web UI. Not needed for main_qt.py, but
+# also happens to be needed by the Tkinter GUI variant (see below).
+Pillow
+
 # Qt6 GUI variant (main_qt.py). PyQt6 has no prebuilt aarch64 wheel and
 # fails to build from source without qmake/Qt6 dev headers on Raspberry
 # Pi OS bookworm/trixie, so we use PySide6 instead (same Qt6, official
@@ -18,8 +23,8 @@ lgpio
 # =====================================================
 
 # Tkinter GUI variant (host_mode_gui_tk.py / gui/main_window.py). Not used
-# by main_qt.py.
-Pillow
+# by main_qt.py. (Pillow itself is now listed above since main_web.py also
+# needs it; tk is still Tkinter-only.)
 tk
 
 # LED control - only used by the standalone other/led_control.py and
