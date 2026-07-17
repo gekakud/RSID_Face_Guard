@@ -144,8 +144,8 @@ Not installed (not needed for `main_qt.py` as currently configured):
 `pyaudio`, `rpi_ws281x`, `adafruit-blinka`, `neopixel`, `Pillow`, `tk`,
 `gpiozero` — these are only used by other entry points / LED code paths.
 
-If you later enable `RUN_WITH_CARD_READER = True` and set
-`SIMULATE_HW = False` in `config.py` to use the real Wiegand card reader
+If you later enable `AUTH_ONLY_ON_CARD = True` and set
+`SIMULATE_CARD_READER = False` in `config.py` to use the real Wiegand card reader
 hardware (`card_api/`), you will additionally need `lgpio` (already
 installed above) and should double check `card_api/card_reader_api.py`'s
 imports work as a package (it currently has a non-relative import that may

@@ -159,13 +159,15 @@ class GUIQt(QMainWindow):
         self.video_timer.timeout.connect(self._update_video)
         self.video_timer.start(30)
 
-        self.auto_auth_timer = QTimer(self)
-        self.auto_auth_timer.timeout.connect(self._auto_auth_tick)
-        self.auto_auth_timer.start(int(config.AUTO_AUTH_INTERVAL_SEC * 1000))
+        self.auto_auth_timer = None
+        if not config.AUTH_ONLY_ON_CARD:
+            self.auto_auth_timer = QTimer(self)
+            self.auto_auth_timer.timeout.connect(self._auto_auth_tick)
+            self.auto_auth_timer.start(int(config.AUTO_AUTH_INTERVAL_SEC * 1000))
 
         self.preview_controller.start()
 
-        if config.RUN_WITH_CARD_READER:
+        if config.AUTH_ONLY_ON_CARD:
             self.host_service.start_card_monitoring(
                 on_result=lambda s, n, p: self._bridge.auth_result.emit(s, n)
             )

@@ -16,13 +16,13 @@ DB_MODE = "local"
 # =====================================================
 
 # Simulate card reader / relay hardware (useful for dev off the Pi)
-SIMULATE_HW = False
+SIMULATE_CARD_READER = True
 
 # Set True on RPi5 with the small 720x720 touch screen
 RUN_ON_REAL_SCREEN = True
 
 # Enable card reader monitoring (auto-authenticate when a card is tapped)
-RUN_WITH_CARD_READER = False
+AUTH_ONLY_ON_CARD = False
 
 # Auto-auth interval (seconds): the app periodically re-authenticates on its own.
 AUTO_AUTH_INTERVAL_SEC = 5.0

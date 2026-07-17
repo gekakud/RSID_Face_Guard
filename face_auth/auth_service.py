@@ -278,7 +278,7 @@ class HostModeService:
             while not self._card_monitor_stop_event.is_set():
                 try:
                     card_id = get_card_id(timeout=0.5)
-                    if config.SIMULATE_HW:
+                    if config.SIMULATE_CARD_READER:
                         log.debug("[Card Reader] Read card ID: %s", card_id)
 
                     if card_id is not None:
@@ -299,7 +299,7 @@ class HostModeService:
 
                         if self.on_after_card_auth:
                             self.on_after_card_auth()
-                        if config.SIMULATE_HW:
+                        if config.SIMULATE_CARD_READER:
                             time.sleep(5)
 
                         if success:
@@ -339,7 +339,7 @@ class HostModeService:
         except Exception:
             pass
         try:
-            if config.RUN_WITH_CARD_READER:
+            if config.AUTH_ONLY_ON_CARD:
                 disconnect_card_reader()
                 close_wiegand_tx()
         except Exception:

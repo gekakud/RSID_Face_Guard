@@ -2,7 +2,7 @@
 Unified card reader / writer hardware API.
 
 Selects real GPIO-backed Wiegand hardware (card_api package) or the
-simulated stand-in (card_api_sim module) based on config.SIMULATE_HW,
+simulated stand-in (card_api_sim module) based on config.SIMULATE_CARD_READER,
 so callers (face_auth, GUI) never need to branch on that flag
 themselves -- they just import from here.
 
@@ -19,7 +19,7 @@ import sys
 
 import config
 
-if config.SIMULATE_HW:
+if config.SIMULATE_CARD_READER:
     from .card_api_sim import (
         initialize_card_reader as _initialize_card_reader,
         get_card_id as _get_card_id,

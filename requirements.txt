@@ -30,5 +30,5 @@ adafruit-circuitpython-neopixel
 adafruit-blinka
 
 # Real (non-simulated) card reader / GPIO helpers not on the main_qt.py
-# import path when config.SIMULATE_HW = True.
+# import path when config.SIMULATE_CARD_READER = True.
 gpiozero
