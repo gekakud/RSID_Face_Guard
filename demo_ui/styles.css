@@ -1,0 +1,754 @@
+/* ============================================================
+   ITSU · Facial Recognition Device UI
+   Screen content only — camera, purple overlay, icon, text.
+   ============================================================ */
+
+:root {
+  /* Refined enterprise violet — success */
+  --purple-dark:  41  35  86;  /* rgb #292356 — deep base (top of gradient) */
+  --purple-light: 126 104 214;  /* rgb — airy violet (bottom of gradient)   */
+
+  /* Soft muted rose — failed. Pinkish-red, desaturated so it reads as
+     "declined", not an alarm; same light-to-deep structure as the violet. */
+  --rose-dark:  122  28  52;  /* rgb #7a1c34 — rich deep rose-red (top)    */
+  --rose-light: 228  80 104;  /* rgb #e45068 — vibrant rosy red (bottom)   */
+
+  /* Soft two-tone overlay: darker at the top, lighter toward the bottom.
+     Semi-transparent so the live camera still reads through it, but opaque
+     enough to give the icon and text strong, focused contrast. */
+  --overlay-alpha-top: 0.74;
+  --overlay-alpha-bottom: 0.64;
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --transition: 520ms var(--ease);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* The [hidden] attribute must win over the display rules below */
+[hidden] { display: none !important; }
+
+html, body {
+  height: 100%;
+  width: 100%;
+  background: #000;
+  overflow: hidden;
+  font-family: "Quicksand", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* The device screen surface */
+.screen {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #05040a;
+}
+
+/* -------------------------------------------------- Camera */
+.camera {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Mirror so the user sees themselves as in a mirror */
+  transform: scaleX(-1);
+  background: #05040a;
+}
+
+/* -------------------------------------------------- Code-route backdrop
+   A solid field that sits just above the camera for the whole code-entry flow
+   (keypad → code result). Its opacity is 1 in every code-flow state, so it
+   never re-transitions when those screens swap — the camera stays fully hidden
+   through each cross-fade, instead of flickering through the momentary gap. It
+   only fades when entering from / returning to the live-camera screen. */
+.code-backdrop {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgb(var(--purple-dark)) 0%, rgb(var(--purple-light)) 100%);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--transition), visibility var(--transition);
+}
+body[data-state="keypad"] .code-backdrop,
+body[data-state="code-success"] .code-backdrop,
+body[data-state="code-failed"]  .code-backdrop {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* -------------------------------------------------- Overlay */
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6vmin;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--transition), visibility var(--transition);
+
+  /* Soft, premium violet gradient: deep #292356 fading to an airy violet. */
+  background:
+    linear-gradient(
+      180deg,
+      rgb(var(--grad-top) / var(--overlay-alpha-top)) 0%,
+      rgb(var(--grad-bottom) / var(--overlay-alpha-bottom)) 100%
+    );
+  /* No backdrop-filter: re-blurring the live video every frame saturates the
+     GPU and makes the icon reveal stutter. The gradient alone keeps the camera
+     visible and reads as a light, elegant purple. */
+  --grad-top: var(--purple-dark);
+  --grad-bottom: var(--purple-light);
+}
+
+/* Show overlay on any result state */
+body[data-state="success"] .overlay,
+body[data-state="failed"]  .overlay,
+body[data-state="code-success"] .overlay,
+body[data-state="code-failed"]  .overlay {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Code-entry results reuse the recognition overlay, but the person came in by
+   code — there is no camera match to show behind it. Make the gradient fully
+   opaque so it reads as a solid result screen, not a live-camera overlay. */
+body[data-state="code-success"] .overlay,
+body[data-state="code-failed"]  .overlay {
+  --overlay-alpha-top: 1;
+  --overlay-alpha-bottom: 1;
+}
+
+/* Success keeps the violet gradient (set on the base .overlay).
+   Failed swaps only the two gradient colors to muted red — same gradient
+   direction, same opacity, same transparency, so the camera still reads through. */
+body[data-state="failed"] .overlay,
+body[data-state="code-failed"] .overlay {
+  --grad-top: var(--rose-dark);
+  --grad-bottom: var(--rose-light);
+}
+
+.overlay__content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: clamp(18px, 4.5vmin, 40px);
+  transform: translateY(10px) scale(0.96);
+  opacity: 0;
+  transition: transform var(--transition), opacity var(--transition);
+}
+
+body[data-state="success"] .overlay__content,
+body[data-state="failed"]  .overlay__content,
+body[data-state="code-success"] .overlay__content,
+body[data-state="code-failed"]  .overlay__content {
+  transform: translateY(0) scale(1);
+  opacity: 1;
+}
+
+/* -------------------------------------------------- Icon */
+.icon {
+  width: clamp(64px, 17vmin, 128px);
+  height: auto;
+  display: flex;
+  filter: drop-shadow(0 4px 18px rgba(0, 0, 0, 0.28));
+}
+.icon svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+/* ---- Icon reveal: dots pop in, then the mouth is drawn L→R (~1950ms) ---- */
+.icon .dot {
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+
+/* The mouth is a solid, fixed shape; a round-capped stroke is "drawn" along its
+   centerline as a moving reveal mask, so it appears like a brush drawing the shape.
+   Thickness never changes.
+
+   The stroke has round caps so the reveal fully covers the mouth's rounded tips at
+   the end of the draw. Two subtleties drive the numbers below:
+     1. The mouth's rounded terminals extend ~one half-width (6 user units) BEYOND the
+        centerline's endpoints, so a reveal stroke the same length as the path can
+        never over-cover them — its feathered edge lands right on the tips (fuzzy).
+     2. The mask is feathered, so the leading/trailing edges must clear the tips by a
+        margin or the blur softens them.
+   Fix: make the "on" dash LONGER than the path (130 units vs pathLength 100) so the
+   stroke body over-hangs the mouth on both sides, and drive the offset so that:
+     - hidden = 170 → the whole stroke (incl. its round caps + feather) sits off the
+                path start, so nothing leaks through the mask at rest.
+     - drawn  = 12  → the mouth sits deep inside the solid stroke body, both feathered
+                ends off in empty space beyond the tips, so every tip is crisp.
+   The long dash gap (130 300) keeps the next dash segment far away so only this one
+   segment is ever near the path. */
+.icon .smile-draw,
+.icon .frown-draw {
+  stroke-dasharray: 130 300;
+  stroke-dashoffset: 170;     /* hidden: whole stroke parked off the path */
+  will-change: stroke-dashoffset;
+}
+
+/* Icon 01 · Success — left dot → right dot → smile is drawn L→R
+   (same sequence and timing as the failed state).
+   The code-approved screen shares this exact reveal. */
+body[data-state="success"] .dot--left,
+body[data-state="code-success"] .dot--left {
+  animation: itsu-dot-in 420ms var(--ease) 0ms both;
+}
+body[data-state="success"] .dot--right,
+body[data-state="code-success"] .dot--right {
+  animation: itsu-dot-in 450ms var(--ease) 420ms both;
+}
+body[data-state="success"] .smile-draw,
+body[data-state="code-success"] .smile-draw {
+  animation: itsu-mouth-draw 1050ms var(--ease) 900ms both;
+}
+
+/* Icon 02 · Failed — left dot → right dot → frown is drawn L→R.
+   The wrong-code screen shares this exact reveal. */
+body[data-state="failed"] .dot--left,
+body[data-state="code-failed"] .dot--left {
+  animation: itsu-dot-in 420ms var(--ease) 0ms both;
+}
+body[data-state="failed"] .dot--right,
+body[data-state="code-failed"] .dot--right {
+  animation: itsu-dot-in 450ms var(--ease) 420ms both;
+}
+body[data-state="failed"] .frown-draw,
+body[data-state="code-failed"] .frown-draw {
+  animation: itsu-mouth-draw 1050ms var(--ease) 900ms both;
+}
+
+@keyframes itsu-dot-in {
+  from { opacity: 0; transform: scale(0.2); }
+  60%  { opacity: 1; }
+  to   { opacity: 1; transform: scale(1); }
+}
+/* The reveal front travels along the mouth's centerline. Its round linecap keeps
+   the leading edge fully rounded; the mask's feather softens it. Same duration,
+   delay and easing as before — only the reveal method changed. */
+@keyframes itsu-mouth-draw {
+  from { stroke-dashoffset: 170; }  /* hidden — whole stroke off the path */
+  to   { stroke-dashoffset: 12; }   /* fully drawn — mouth deep inside the stroke */
+}
+
+/* -------------------------------------------------- Text */
+.message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(2px, 1vmin, 8px);
+  color: #fff;
+}
+
+.message__primary {
+  font-weight: 600;
+  font-size: clamp(26px, 7vmin, 52px);
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+  text-shadow: 0 2px 16px rgba(0, 0, 0, 0.30);
+}
+
+.message__secondary {
+  font-weight: 400;
+  font-size: clamp(16px, 3.6vmin, 26px);
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.82);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.26);
+}
+
+/* Success text matches the failed state exactly — same size, same weight.
+   (No override: both use the base .message__primary style.) */
+
+/* Failed state: the message reads as an alert — deemphasise the hint */
+body[data-state="failed"] .message__secondary,
+body[data-state="code-failed"] .message__secondary { color: rgba(255, 255, 255, 0.72); }
+
+/* -------------------------------------------------- Screensaver · Ambient Depth
+   Resting state, composed for the round display. A centred lockup — brand smile,
+   clock, and a whispered tap line — floats over a radial violet field that
+   slowly breathes between a darker and a lighter tone, giving the idle screen a
+   subtle sense of life without implying any single tap target (the whole surface
+   is tappable). The host logo anchors the lower band; the optional Check In /
+   Check Out control sits beside it as a quiet secondary element. The live camera
+   runs underneath, fully covered until a tap wakes the device. */
+.screensaver {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Void behind the round display; the circle itself carries the gradient. */
+  background: #000;
+  color: #fff;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--transition), visibility var(--transition);
+}
+/* Both idle variants share the exact same resting surface — the only difference
+   is whether the attendance toggle is present (see .screensaver[data-attendance]). */
+body[data-state="screensaver"] .screensaver,
+body[data-state="screensaver-basic"] .screensaver {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* The round display surface — the largest circle that fits the screen. On the
+   physical device this circle IS the screen; in a rectangular preview the
+   surrounding void shows where the round bezel crops. */
+.saver {
+  position: relative;
+  width: min(100vw, 100vh);
+  height: min(100vw, 100vh);
+  border-radius: 50%;
+  overflow: hidden;
+  text-align: center;
+  /* Mid-violet base beneath the mesh. Any gaps between the drifting blobs read
+     as a deep violet valley, never black. */
+  background: radial-gradient(125% 125% at 50% 45%, #241a4e 0%, #160e33 100%);
+}
+/* Whisper-thin edge so the round boundary reads even against a bright room. */
+.saver::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  pointer-events: none;
+}
+
+/* Living mesh gradient — large, soft purple blobs that each drift and scale
+   along their own slow, closed-loop path. Every blob has a different duration
+   (29–45s) and a different route, so the composite never lands on an obvious
+   repeat; their feathered radial falloffs melt into one another as an organic
+   mesh. Purple palette only — deep violet, brand violet, lavender, and a dark
+   plum that carves the shadowed valleys. No waves, rings, or geometry. */
+.saver__mesh {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  /* A little blur melts the region blobs into one another, so what reads is
+     soft organic shapes rather than discs. */
+  filter: blur(2.5vmin);
+}
+/* Region-sized blobs, each anchored to a different area of the circle (via
+   left/top) so at any instant there is real spatial variation — light lobes,
+   deep valleys — that drifts. Smaller than the display so shapes stay distinct. */
+.blob {
+  position: absolute;
+  width: 76vmin;
+  height: 76vmin;
+  margin-left: -38vmin;
+  margin-top: -38vmin;
+  border-radius: 50%;
+  will-change: transform;
+}
+/* Palette spans deep violet → brand violet → lavender highlight, plus a dark
+   plum that carves shadowed valleys — the contrast that makes the shapes read. */
+.blob--1 { left: 50%; top: 50%; background: radial-gradient(circle at 50% 50%, rgba(186, 170, 249, 0.85) 0%, rgba(186, 170, 249, 0) 62%); animation: itsu-drift-1 25s ease-in-out infinite; } /* lavender highlight */
+.blob--2 { left: 50%; top: 50%; background: radial-gradient(circle at 50% 50%, rgba(126, 104, 214, 0.92) 0%, rgba(126, 104, 214, 0) 64%); animation: itsu-drift-2 22s ease-in-out infinite; } /* brand violet */
+.blob--3 { left: 50%; top: 50%; background: radial-gradient(circle at 50% 50%, rgba(96, 74, 196, 0.90) 0%, rgba(96, 74, 196, 0) 64%);   animation: itsu-drift-3 23s ease-in-out infinite; } /* mid violet */
+.blob--4 { left: 50%; top: 50%; background: radial-gradient(circle at 50% 50%, rgba(58, 42, 128, 0.92) 0%, rgba(58, 42, 128, 0) 62%);   animation: itsu-drift-4 28s ease-in-out infinite; } /* deep indigo */
+.blob--5 { left: 50%; top: 50%; background: radial-gradient(circle at 50% 50%, rgba(20, 12, 46, 0.95) 0%, rgba(20, 12, 46, 0) 60%);     animation: itsu-drift-5 26s ease-in-out infinite; } /* dark plum valley */
+
+/* Wide roaming orbits, each starting in a different quadrant and sweeping right
+   out to the rim through all four quadrants, so every blob crosses the entire
+   circle each cycle. Closed loops (0% == 100%) keep each cycle seamless; the
+   different periods and phases keep the composite from ever visibly repeating. */
+@keyframes itsu-drift-1 {
+  0%   { transform: translate(26vmin, -22vmin) scale(1.10); }
+  25%  { transform: translate(30vmin, 20vmin)  scale(1.26); }
+  50%  { transform: translate(-8vmin, 32vmin)  scale(1.04); }
+  75%  { transform: translate(-28vmin, -6vmin) scale(1.20); }
+  100% { transform: translate(26vmin, -22vmin) scale(1.10); }
+}
+@keyframes itsu-drift-2 {
+  0%   { transform: translate(-24vmin, -20vmin) scale(1.14); }
+  25%  { transform: translate(8vmin, -30vmin)   scale(1.30); }
+  50%  { transform: translate(30vmin, 6vmin)    scale(1.06); }
+  75%  { transform: translate(4vmin, 28vmin)    scale(1.22); }
+  100% { transform: translate(-24vmin, -20vmin) scale(1.14); }
+}
+@keyframes itsu-drift-3 {
+  0%   { transform: translate(20vmin, 24vmin)   scale(1.10); }
+  25%  { transform: translate(-18vmin, 26vmin)  scale(1.26); }
+  50%  { transform: translate(-30vmin, -8vmin)  scale(1.02); }
+  75%  { transform: translate(2vmin, -28vmin)   scale(1.20); }
+  100% { transform: translate(20vmin, 24vmin)   scale(1.10); }
+}
+@keyframes itsu-drift-4 {
+  0%   { transform: translate(-28vmin, 10vmin)  scale(1.14); }
+  25%  { transform: translate(-6vmin, -28vmin)  scale(1.32); }
+  50%  { transform: translate(28vmin, -14vmin)  scale(1.08); }
+  75%  { transform: translate(16vmin, 24vmin)   scale(1.24); }
+  100% { transform: translate(-28vmin, 10vmin)  scale(1.14); }
+}
+@keyframes itsu-drift-5 {
+  0%   { transform: translate(30vmin, -10vmin)  scale(1.18); }
+  33%  { transform: translate(-12vmin, 30vmin)  scale(1.36); }
+  66%  { transform: translate(-30vmin, -18vmin) scale(1.10); }
+  100% { transform: translate(30vmin, -10vmin)  scale(1.18); }
+}
+
+/* Soft centre scrim — a gentle darkening behind the lockup so the clock and
+   brand stay legible as lighter blobs drift through the middle. */
+.saver__scrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 44%, rgba(18, 11, 38, 0.50) 0%, rgba(18, 11, 38, 0.22) 30%, transparent 50%);
+}
+
+/* Centred lockup — the visual hero. Nudged a touch above the true centre so the
+   composition balances against the weight of the lower band. */
+.saver__core {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(10px, 2.4vmin, 22px);
+  padding-bottom: clamp(40px, 11vmin, 96px);
+}
+
+/* ITSU brand mark — the smile with two dots (static SVG injected by app.js).
+   Nudged up 20px and sized 15% larger. */
+.saver__brand { display: flex; transform: translateY(-20px); }
+.saver__brand svg {
+  width: clamp(44px, 9.7vmin, 67px);
+  height: auto;
+  display: block;
+  filter: drop-shadow(0 3px 14px rgba(0, 0, 0, 0.32));
+}
+
+/* Clock — glanceable, deliberately not oversized. */
+.saver__clock {
+  font-weight: 600;
+  font-size: clamp(46px, 13vmin, 96px);
+  line-height: 1;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* Whispered tap line — ambient instruction, not a button. It breathes gently.
+   Kept a touch brighter than a true whisper so it stays easy to read. */
+.saver__hint {
+  font-weight: 500;
+  font-size: clamp(12px, 2.7vmin, 16px);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.72);
+  animation: itsu-hint 3.6s var(--ease) infinite;
+}
+@keyframes itsu-hint {
+  0%, 100% { opacity: 0.72; }
+  50%      { opacity: 0.9; }
+}
+
+/* Lower band — the host logo, and (when enabled) the attendance control above
+   it. Anchored to the lower pole; grows upward when attendance appears, so the
+   hero lockup never shifts between the two configurations. */
+.saver__lower {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: clamp(48px, 13vmin, 118px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: clamp(14px, 3.2vmin, 26px);
+}
+
+/* Company logo slot — swap the placeholder for an <img> or call deviceUI.setLogo() */
+.screensaver__logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: clamp(76px, 19vmin, 144px);
+  min-height: clamp(38px, 8.5vmin, 56px);
+}
+.screensaver__logo-img {
+  max-width: min(42vw, 220px);
+  max-height: clamp(38px, 9.5vmin, 72px);
+  object-fit: contain;
+}
+/* Dashed placeholder — only visible while no logo has been supplied */
+.screensaver__logo[data-empty="true"] {
+  border: 1.5px dashed rgba(255, 255, 255, 0.20);
+  border-radius: 12px;
+  padding: clamp(8px, 1.9vmin, 15px) clamp(14px, 3.2vmin, 26px);
+}
+.screensaver__logo-placeholder {
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  font-size: clamp(11px, 2.3vmin, 15px);
+  color: rgba(255, 255, 255, 0.38);
+}
+.screensaver__logo[data-empty="false"] .screensaver__logo-placeholder { display: none; }
+
+/* -------------------------------------------------- Employee attendance toggle
+   A sliding Check In / Check Out control. Deliberately quiet — it reads as a
+   natural part of the lower band, not the focus of the screen. Shown only when
+   the admin/device-management system enables it (data-attendance="enabled");
+   otherwise it is removed from the layout entirely. */
+.attendance {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  padding: clamp(3px, 0.7vmin, 5px);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+/* Hidden completely unless the admin system turns attendance on, and always
+   hidden in the "basic" idle variant (the same screen without attendance). */
+.screensaver[data-attendance="disabled"] .attendance,
+body[data-state="screensaver-basic"] .attendance { display: none; }
+
+/* The sliding highlight — sits behind the two options and glides between them. */
+.attendance__thumb {
+  position: absolute;
+  z-index: 0;
+  top: clamp(3px, 0.7vmin, 5px);
+  bottom: clamp(3px, 0.7vmin, 5px);
+  left: clamp(3px, 0.7vmin, 5px);
+  width: calc(50% - clamp(3px, 0.7vmin, 5px));
+  border-radius: 999px;
+  background: linear-gradient(180deg, #3a2f78 0%, rgb(var(--purple-light)) 100%);
+  box-shadow: 0 5px 16px rgba(60, 40, 130, 0.4);
+  transition: transform 300ms var(--ease);
+}
+.attendance[data-mode="out"] .attendance__thumb { transform: translateX(100%); }
+
+.attendance__opt {
+  position: relative;
+  z-index: 1;
+  min-width: clamp(78px, 21vmin, 116px);
+  font-family: inherit;
+  font-weight: 600;
+  font-size: clamp(12px, 2.5vmin, 15px);
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.55);
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  padding: clamp(8px, 1.8vmin, 12px) clamp(14px, 3.4vmin, 24px);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 220ms var(--ease);
+}
+.attendance__opt.is-active { color: #fff; }
+
+/* -------------------------------------------------- Code button (camera state)
+   A discreet on-screen action shown only while the camera is live. */
+.code-btn {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(28px, 8vmin, 72px);
+  transform: translateX(-50%);
+  z-index: 20;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: clamp(15px, 3.4vmin, 20px);
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: rgba(20, 15, 38, 0.55);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  padding: clamp(12px, 2.4vmin, 18px) clamp(26px, 6vmin, 44px);
+  cursor: pointer;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--transition), visibility var(--transition),
+    background 160ms ease, transform 120ms ease;
+}
+.code-btn:hover { background: rgba(30, 22, 54, 0.7); }
+.code-btn:active { transform: translateX(-50%) scale(0.97); }
+/* Only tappable in the camera (idle) state */
+body[data-state="idle"] .code-btn {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+/* -------------------------------------------------- Code entry (keypad) */
+.keypad-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(20px, 5vmin, 40px);
+  padding: 8vmin clamp(20px, 6vmin, 48px);
+  /* Same violet gradient as the result (success) screen: deep #292356 fading
+     to an airy violet. */
+  background: linear-gradient(180deg, rgb(var(--purple-dark)) 0%, rgb(var(--purple-light)) 100%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--transition), visibility var(--transition);
+}
+body[data-state="keypad"] .keypad-screen {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+/* Centred beneath the keypad, set a little apart from the number grid. */
+.keypad__back {
+  margin-top: clamp(12px, 4vmin, 28px);
+  width: clamp(52px, 13vmin, 72px);
+  height: clamp(52px, 13vmin, 72px);
+  font-family: inherit;
+  font-size: clamp(22px, 5.5vmin, 30px);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+.keypad__back:hover { background: rgba(255, 255, 255, 0.14); }
+
+/* Display area — shows the code as it is typed */
+.keypad__display {
+  min-height: clamp(48px, 12vmin, 72px);
+  min-width: clamp(220px, 60vw, 340px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 clamp(16px, 4vmin, 28px);
+  font-weight: 600;
+  font-size: clamp(34px, 9vmin, 56px);
+  letter-spacing: 0.28em;
+  text-indent: 0.28em; /* balance the trailing letter-spacing */
+  color: #fff;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.18);
+  font-variant-numeric: tabular-nums;
+}
+.keypad__display[data-empty="true"] {
+  letter-spacing: normal;
+  text-indent: 0;
+}
+.keypad__display[data-empty="true"]::before {
+  content: "Enter code";
+  font-weight: 400;
+  font-size: clamp(16px, 4vmin, 22px);
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.keypad__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: clamp(12px, 3vmin, 20px);
+  width: min(88vw, 340px);
+}
+.keypad__key {
+  font-family: inherit;
+  font-weight: 500;
+  font-size: clamp(24px, 6vmin, 34px);
+  color: #fff;
+  aspect-ratio: 1;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background 140ms ease, transform 100ms ease;
+}
+.keypad__key:hover { background: rgb(var(--purple-light) / 0.9); border-color: transparent; }
+.keypad__key:active { transform: scale(0.94); }
+.keypad__key--action { font-size: clamp(20px, 5vmin, 28px); }
+.keypad__key--ok {
+  font-size: clamp(18px, 4.5vmin, 24px);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: rgb(var(--purple-dark));
+  background: #fff;
+  border-color: transparent;
+}
+.keypad__key--ok:hover { color: rgb(var(--purple-dark)); background: rgba(255, 255, 255, 0.85); }
+
+/* -------------------------------------------------- Camera error */
+.camera-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 8vmin;
+  color: #fff;
+  background: radial-gradient(120% 120% at 50% 40%, #241d3a 0%, #0a0812 100%);
+}
+.camera-error__title { font-weight: 600; font-size: clamp(20px, 5vmin, 30px); }
+.camera-error__hint  { margin-top: 10px; font-weight: 400; font-size: clamp(14px, 3vmin, 18px); color: rgba(255,255,255,0.6); }
+
+/* -------------------------------------------------- Dev / preview panel */
+.devpanel {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(18, 14, 32, 0.72);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  font-size: 13px;
+  z-index: 50;
+}
+.devpanel__label { color: rgba(255,255,255,0.55); font-weight: 600; padding-right: 4px; }
+.devpanel__hint  { color: rgba(255,255,255,0.35); font-weight: 400; padding-left: 4px; }
+.devpanel button {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 999px;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: background 160ms ease, transform 120ms ease;
+}
+.devpanel button:hover { background: rgba(255,255,255,0.16); }
+.devpanel button:active { transform: scale(0.96); }
+
+/* Respect reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .overlay, .overlay__content { transition-duration: 1ms; }
+  .icon .dot { animation: none !important; opacity: 1; transform: none; }
+  .icon .smile-draw, .icon .frown-draw { animation: none !important; stroke-dashoffset: 12; }
+  /* Screensaver stays perfectly still — the mesh rests, the hint holds. */
+  .blob { animation: none !important; }
+  .saver__hint { animation: none !important; opacity: 0.9; }
+}

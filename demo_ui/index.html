@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <title>ITSU · Facial Recognition</title>
+
+  <!-- Quicksand -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="styles.css?v=ambient12" />
+</head>
+<body data-state="idle">
+  <!-- Live camera feed — always running, always visible -->
+  <main class="screen">
+    <video id="camera" class="camera" autoplay playsinline muted></video>
+
+    <!-- Opaque backdrop for the code-entry route. Stays fully opaque across every
+         code-flow state (keypad · code result), so the live camera never bleeds
+         through while those screens cross-fade into one another. -->
+    <div class="code-backdrop" aria-hidden="true"></div>
+
+    <!-- Semi-transparent purple overlay (shown only on recognition result) -->
+    <div id="overlay" class="overlay" aria-live="polite">
+      <div class="overlay__content">
+        <div id="icon" class="icon"></div>
+        <div class="message">
+          <p id="line-primary" class="message__primary"></p>
+          <p id="line-secondary" class="message__secondary"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Camera-state action: opens the code-entry screen -->
+    <button id="code-btn" class="code-btn" type="button">Enter a code</button>
+
+    <!-- Screensaver — "Ambient Depth" resting state, composed for the round
+         display. A centred lockup (brand · clock · whispered tap line) floats
+         over a radial violet field that slowly breathes between darker and
+         lighter tones; the host logo and the optional attendance control sit in
+         the lower band. data-attendance is
+         driven by the admin/device-management system: when "disabled" (the
+         real-world default) the Check In / Check Out control is not shown at
+         all. Call deviceUI.setAttendanceEnabled(true) to reveal it. -->
+    <div id="screensaver" class="screensaver" data-attendance="enabled">
+      <!-- The round display surface -->
+      <div class="saver">
+        <!-- Living mesh gradient — drifting purple blobs (see styles.css) -->
+        <div class="saver__mesh" aria-hidden="true">
+          <span class="blob blob--1"></span>
+          <span class="blob blob--2"></span>
+          <span class="blob blob--3"></span>
+          <span class="blob blob--4"></span>
+          <span class="blob blob--5"></span>
+        </div>
+        <div class="saver__scrim" aria-hidden="true"></div>
+
+        <!-- Hero lockup — identical whether or not attendance is enabled -->
+        <div class="saver__core">
+          <!-- ITSU brand mark: the smile with two dots (static). -->
+          <div id="screensaver-brand" class="saver__brand" aria-hidden="true"></div>
+          <div id="clock" class="saver__clock" aria-hidden="true">00:00</div>
+          <p class="saver__hint">Tap the display to enter</p>
+        </div>
+
+        <!-- Lower band — attendance (optional) sits quietly above the logo -->
+        <div class="saver__lower">
+          <!-- Employee attendance — a sliding Check In / Check Out control.
+               Shown only while data-attendance="enabled" on #screensaver. -->
+          <div id="attendance" class="attendance" role="group" aria-label="Employee attendance" data-mode="in">
+            <span class="attendance__thumb" aria-hidden="true"></span>
+            <button class="attendance__opt is-active" data-mode="in" type="button" aria-pressed="true">Check In</button>
+            <button class="attendance__opt" data-mode="out" type="button" aria-pressed="false">Check Out</button>
+          </div>
+
+          <!-- Company logo slot. Replace the placeholder span with an <img>, or call
+               deviceUI.setLogo("logo.svg") to drop in a per-company logo at runtime. -->
+          <div id="company-logo" class="screensaver__logo" data-empty="true" aria-label="Company logo">
+            <span class="screensaver__logo-placeholder">YOUR&nbsp;LOGO</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Code entry — number keypad + typed-code display -->
+    <div id="keypad" class="keypad-screen">
+      <div id="code-display" class="keypad__display" data-empty="true" aria-live="polite"></div>
+      <div id="keypad-grid" class="keypad__grid">
+        <button class="keypad__key" data-key="1" type="button">1</button>
+        <button class="keypad__key" data-key="2" type="button">2</button>
+        <button class="keypad__key" data-key="3" type="button">3</button>
+        <button class="keypad__key" data-key="4" type="button">4</button>
+        <button class="keypad__key" data-key="5" type="button">5</button>
+        <button class="keypad__key" data-key="6" type="button">6</button>
+        <button class="keypad__key" data-key="7" type="button">7</button>
+        <button class="keypad__key" data-key="8" type="button">8</button>
+        <button class="keypad__key" data-key="9" type="button">9</button>
+        <button class="keypad__key keypad__key--action" data-key="back" type="button" aria-label="Delete">&#9003;</button>
+        <button class="keypad__key" data-key="0" type="button">0</button>
+        <button class="keypad__key keypad__key--ok" data-key="ok" type="button" aria-label="Confirm">OK</button>
+      </div>
+      <button id="keypad-back" class="keypad__back" type="button" aria-label="Back">&larr;</button>
+    </div>
+
+    <!-- Shown if the camera cannot start -->
+    <div id="camera-error" class="camera-error" hidden>
+      <div class="camera-error__inner">
+        <p class="camera-error__title">Camera unavailable</p>
+        <p class="camera-error__hint">Grant camera access to start recognition.</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Discreet developer/preview panel — toggle with the "H" key. Hidden by default. -->
+  <aside id="devpanel" class="devpanel" hidden>
+    <span class="devpanel__label">Preview</span>
+    <button data-cmd="screensaver">Idle · Attendance</button>
+    <button data-cmd="screensaver-basic">Idle · No Attendance</button>
+    <button data-cmd="idle">Camera</button>
+    <button data-cmd="keypad">Code</button>
+    <button data-cmd="success">Success</button>
+    <button data-cmd="failed">Failed</button>
+    <span class="devpanel__hint">keys 0 · 9 · 1 · c · 2 · 3 &nbsp;|&nbsp; A attendance · H hide</span>
+  </aside>
+
+  <script src="app.js?v=ambient12"></script>
+</body>
+</html>
