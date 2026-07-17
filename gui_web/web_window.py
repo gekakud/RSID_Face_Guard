@@ -190,18 +190,16 @@ class GUIWeb(QMainWindow):
         page.loadFinished.connect(self._on_load_finished)
 
         # Window placement (same logic as GUIQt).
-        if config.RUN_ON_REAL_DEVICE:
+        if config.RUN_ON_REAL_SCREEN:
             self.setCursor(Qt.CursorShape.BlankCursor)
             self._place_on_small_display()
         else:
             self.resize(config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
 
         # Auto-auth timer (no on-screen button in the web UI).
-        self.auto_auth_timer = None
-        if not config.WITH_BUTTON:
-            self.auto_auth_timer = QTimer(self)
-            self.auto_auth_timer.timeout.connect(self._auto_auth_tick)
-            self.auto_auth_timer.start(int(config.AUTO_AUTH_INTERVAL_SEC * 1000))
+        self.auto_auth_timer = QTimer(self)
+        self.auto_auth_timer.timeout.connect(self._auto_auth_tick)
+        self.auto_auth_timer.start(int(config.AUTO_AUTH_INTERVAL_SEC * 1000))
 
         # Start hardware, streamer, server, then load the page over http://.
         self.preview_controller.start()
@@ -250,7 +248,7 @@ class GUIWeb(QMainWindow):
         (positioned on the small display) for editor-side debugging.
 
         Called from main_web.py in place of a bare .show()."""
-        if not config.RUN_ON_REAL_DEVICE:
+        if not config.RUN_ON_REAL_SCREEN:
             self.show()
             return
 
@@ -328,15 +326,21 @@ class GUIWeb(QMainWindow):
             self.device_ui.success(str(name))
         elif success:
             self.device_ui.success()
-        else:
-            if config.WITH_BUTTON:
-                self.device_ui.failed()
 
     # =====================================================
     # SHUTDOWN
     # =====================================================
 
-    def closeEvent(self, event):
+    def shutdown(self):
+        """Ordered, idempotent teardown (safe from closeEvent or a signal).
+
+        Stop timers/servers, fully stop the preview (blocking) BEFORE
+        disconnecting the device, so the native preview-stop doesn't race the
+        authenticator disconnect (which aborts the process).
+        """
+        if getattr(self, "_cleaned_up", False):
+            return
+        self._cleaned_up = True
         self.running = False
         if self.auto_auth_timer:
             self.auto_auth_timer.stop()
@@ -350,6 +354,9 @@ class GUIWeb(QMainWindow):
             pass
         self.preview_controller.stop()
         self.host_service.cleanup()
+
+    def closeEvent(self, event):
+        self.shutdown()
         super().closeEvent(event)
 
     def keyPressEvent(self, event):

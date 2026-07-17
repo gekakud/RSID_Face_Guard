@@ -15,7 +15,7 @@ import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal, QObject
 from PySide6.QtGui import QImage, QPixmap, QFont, QPainter, QColor
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QLabel, QVBoxLayout, QPushButton,
+    QApplication, QMainWindow, QWidget, QLabel, QVBoxLayout,
     QSizePolicy,
 )
 
@@ -70,16 +70,16 @@ class ResultOverlay(QWidget):
 
         if self._success and self._name:
             box_w = int(w * 0.88)
-            box_h = 180 if config.RUN_ON_REAL_DEVICE else 220
+            box_h = 180 if config.RUN_ON_REAL_SCREEN else 220
             x1 = (w - box_w) // 2
             y1 = (h - box_h) // 2
             painter.setBrush(QColor(0, 0, 0, 140))
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawRect(x1, y1, box_w, box_h)
 
-            welcome_size = 28 if config.RUN_ON_REAL_DEVICE else 36
-            name_size = 40 if config.RUN_ON_REAL_DEVICE else 64
-            gap = 38 if config.RUN_ON_REAL_DEVICE else 48
+            welcome_size = 28 if config.RUN_ON_REAL_SCREEN else 36
+            name_size = 40 if config.RUN_ON_REAL_SCREEN else 64
+            gap = 38 if config.RUN_ON_REAL_SCREEN else 48
             color = QColor("#4CAF50")
             painter.setPen(color)
 
@@ -91,7 +91,7 @@ class ResultOverlay(QWidget):
             painter.drawText(0, cy + gap - name_size, w, name_size * 2,
                               Qt.AlignmentFlag.AlignCenter, self._name.upper())
         else:
-            box_size = 300 if config.RUN_ON_REAL_DEVICE else 400
+            box_size = 300 if config.RUN_ON_REAL_SCREEN else 400
             x1 = (w - box_size) // 2
             y1 = (h - box_size) // 2
             painter.setBrush(QColor(0, 0, 0, 140))
@@ -100,7 +100,7 @@ class ResultOverlay(QWidget):
 
             symbol = "OK" if self._success else "X"
             color = QColor("#4CAF50") if self._success else QColor("#F44336")
-            font_size = 150 if config.RUN_ON_REAL_DEVICE else 200
+            font_size = 150 if config.RUN_ON_REAL_SCREEN else 200
 
             painter.setPen(color)
             painter.setFont(QFont("Arial", font_size, QFont.Weight.Bold))
@@ -118,6 +118,9 @@ class GUIQt(QMainWindow):
         self.port = port
         self.auth_in_progress = False
         self.running = True
+        self._shutting_down = False
+        self._auth_thread = None
+        self._cleaned_up = False
 
         self._bridge = _SignalBridge()
         self._bridge.auth_result.connect(self._on_auth_complete)
@@ -143,17 +146,8 @@ class GUIQt(QMainWindow):
 
         self.result_overlay = ResultOverlay(self.video_label)
 
-        self.auth_button: Optional[QPushButton] = None
-        if config.WITH_BUTTON:
-            self.auth_button = QPushButton("Authenticate", central)
-            font = QFont("Arial", 20 if config.RUN_ON_REAL_DEVICE else 28, QFont.Weight.Bold)
-            self.auth_button.setFont(font)
-            self.auth_button.setMinimumHeight(70 if config.RUN_ON_REAL_DEVICE else 100)
-            self.auth_button.clicked.connect(self.authenticate)
-            layout.addWidget(self.auth_button)
-
         # Window placement
-        if config.RUN_ON_REAL_DEVICE:
+        if config.RUN_ON_REAL_SCREEN:
             self.setCursor(Qt.CursorShape.BlankCursor)
             self._place_on_small_display()
         else:
@@ -165,11 +159,9 @@ class GUIQt(QMainWindow):
         self.video_timer.timeout.connect(self._update_video)
         self.video_timer.start(30)
 
-        self.auto_auth_timer: Optional[QTimer] = None
-        if not config.WITH_BUTTON:
-            self.auto_auth_timer = QTimer(self)
-            self.auto_auth_timer.timeout.connect(self._auto_auth_tick)
-            self.auto_auth_timer.start(int(config.AUTO_AUTH_INTERVAL_SEC * 1000))
+        self.auto_auth_timer = QTimer(self)
+        self.auto_auth_timer.timeout.connect(self._auto_auth_tick)
+        self.auto_auth_timer.start(int(config.AUTO_AUTH_INTERVAL_SEC * 1000))
 
         self.preview_controller.start()
 
@@ -240,14 +232,13 @@ class GUIQt(QMainWindow):
     # =====================================================
 
     def authenticate(self):
-        if self.auth_in_progress:
+        if self.auth_in_progress or self._shutting_down:
             return
         self.auth_in_progress = True
-        if self.auth_button is not None:
-            self.auth_button.setEnabled(False)
 
         import threading
-        threading.Thread(target=self._run_authentication, daemon=True).start()
+        self._auth_thread = threading.Thread(target=self._run_authentication, daemon=True)
+        self._auth_thread.start()
 
     def _run_authentication(self):
         self.preview_controller.pause()
@@ -265,16 +256,13 @@ class GUIQt(QMainWindow):
             self.preview_controller.resume()
 
     def _auto_auth_tick(self):
-        if not self.auth_in_progress:
+        if not self.auth_in_progress and not self._shutting_down:
             self.authenticate()
 
     def _on_auth_complete(self, success: bool, name: Optional[str]):
         self.auth_in_progress = False
-        if self.auth_button is not None:
-            self.auth_button.setEnabled(True)
 
-        show = success or config.WITH_BUTTON
-        if show:
+        if success:
             self.result_overlay.setGeometry(self.video_label.rect())
             self.result_overlay.show_result(success, name)
             duration = config.WELCOME_DURATION_MS if success else config.FAIL_DURATION_MS
@@ -284,14 +272,40 @@ class GUIQt(QMainWindow):
     # SHUTDOWN
     # =====================================================
 
-    def closeEvent(self, event):
+    def shutdown(self):
+        """Ordered, idempotent teardown. Safe to call from closeEvent or a
+        signal handler.
+
+        Ordering matters: stop timers and block new auth, wait for any
+        in-flight auth to finish, fully stop the preview (blocking join), and
+        only THEN disconnect the device. Doing the device disconnect while the
+        native preview stream is still stopping causes the C++ library to
+        abort the process ("terminate called without an active exception").
+        """
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
+        self._shutting_down = True
         self.running = False
+
         if self.video_timer:
             self.video_timer.stop()
         if self.auto_auth_timer:
             self.auto_auth_timer.stop()
+
+        # Wait for any in-flight authentication to complete before we touch
+        # the device from the shutdown path.
+        auth_thread = self._auth_thread
+        if auth_thread is not None and auth_thread.is_alive():
+            auth_thread.join(timeout=6.0)
+
+        # Fully stop the preview stream (blocks until the native thread ends)
+        # BEFORE disconnecting the authenticator.
         self.preview_controller.stop()
         self.host_service.cleanup()
+
+    def closeEvent(self, event):
+        self.shutdown()
         super().closeEvent(event)
 
     def keyPressEvent(self, event):

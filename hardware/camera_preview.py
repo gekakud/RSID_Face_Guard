@@ -40,6 +40,7 @@ class PreviewController(threading.Thread):
         self._restart_event = threading.Event()
         self._pause_event = threading.Event()
         self._paused_ack = threading.Event()
+        self._stopped_ack = threading.Event()
 
     def on_image(self, image):
         """Callback invoked by rsid_py for each decoded preview frame.
@@ -101,6 +102,10 @@ class PreviewController(threading.Thread):
 
             if self._restart_event.wait(0.05):
                 self._restart_event.clear()
+                # If we're shutting down, don't restart the stream -- just fall
+                # through so the loop exits and tears the preview down once.
+                if not self.running:
+                    break
                 if self.preview:
                     # Do NOT call self.preview.stop() -- the USB device already
                     # disconnected, so libusb's internal mutex is gone. Calling
@@ -118,8 +123,12 @@ class PreviewController(threading.Thread):
                         log.error("Preview restart failed: %s", e)
 
         if self.preview:
-            self.preview.stop()
+            try:
+                self.preview.stop()
+            except Exception as e:
+                log.warning("Preview stop on exit failed: %s", e)
             self.preview = None
+        self._stopped_ack.set()
         log.info("Preview controller thread exited")
 
     def restart(self):
@@ -148,6 +157,23 @@ class PreviewController(threading.Thread):
                 log.error("Preview resume failed: %s", e)
 
     def stop(self):
-        """Signal the preview thread to exit its run loop and stop the UVC stream."""
+        """Signal the preview thread to exit its run loop, stop the UVC stream,
+        and block until the native stream is fully torn down.
+
+        Blocking here is essential: the RealSense/UVC native stop must complete
+        *before* the FaceAuthenticator is disconnected during shutdown,
+        otherwise the two native calls race and the C++ library aborts the
+        process ("terminate called without an active exception").
+        """
+        if not self.running and self._stopped_ack.is_set():
+            return  # already stopped (idempotent)
         self.running = False
-        self._paused_ack.set()  # unblock any pause() call waiting on ack
+        self._paused_ack.set()   # unblock any pause() call waiting on ack
+        # NOTE: do NOT set _restart_event here -- that branch would try to
+        # re-open the UVC stream ("uvc_open ... Busy") during shutdown and
+        # crash. The run loop polls `running` every 50 ms and will exit on its
+        # own; we just wait for it below.
+        # Wait for run() to finish its final preview.stop() and set the ack.
+        if self.is_alive():
+            self._stopped_ack.wait(timeout=4.0)
+            self.join(timeout=4.0)

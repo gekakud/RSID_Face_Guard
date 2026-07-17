@@ -51,6 +51,8 @@ class GUI(tk.Tk):
         self.auto_auth_handle = None
         self.running = True
         self.auth_in_progress = False
+        self._shutting_down = False
+        self._cleaned_up = False
 
         # Initialize services
         self.preview_controller = PreviewController(port, camera_index, device_type)
@@ -60,7 +62,7 @@ class GUI(tk.Tk):
         self.host_service.on_after_card_auth = self.preview_controller.resume
 
         # Window setup
-        if config.RUN_ON_REAL_DEVICE:
+        if config.RUN_ON_REAL_SCREEN:
             self.config(cursor="none")
             self._place_on_small_display_strict()
         else:
@@ -96,7 +98,7 @@ class GUI(tk.Tk):
             else:
                 style.theme_use('clam')
 
-            if config.RUN_ON_REAL_DEVICE:
+            if config.RUN_ON_REAL_SCREEN:
                 style.configure('Big.TButton', font=('Arial', 20, 'bold'), padding=(20, 30))
             else:
                 style.configure('Big.TButton', font=('Arial', 28, 'bold'), padding=(30, 40))
@@ -107,7 +109,7 @@ class GUI(tk.Tk):
                 command=self.authenticate,
                 style='Big.TButton'
             )
-            if config.RUN_ON_REAL_DEVICE:
+            if config.RUN_ON_REAL_SCREEN:
                 self.auth_button.grid(row=0, column=0, sticky="ew", ipady=20)
             else:
                 self.auth_button.grid(row=0, column=0, sticky="ew", ipady=30)
@@ -126,7 +128,7 @@ class GUI(tk.Tk):
 
         # Re-assert placement after window exists and keep asserting it so
         # the WM or an HDMI reconnect can't push the window to the primary.
-        if config.RUN_ON_REAL_DEVICE:
+        if config.RUN_ON_REAL_SCREEN:
             self.after(300, self._keep_on_small_display)
 
         # Start auto-auth loop if button is disabled
@@ -293,7 +295,7 @@ class GUI(tk.Tk):
 
         if success and name:
             box_w = int(canvas_w * 0.88)
-            box_h = 180 if config.RUN_ON_REAL_DEVICE else 220
+            box_h = 180 if config.RUN_ON_REAL_SCREEN else 220
             x1 = (canvas_w - box_w) // 2
             y1 = (canvas_h - box_h) // 2
             x2 = x1 + box_w
@@ -304,10 +306,10 @@ class GUI(tk.Tk):
                 fill='black', stipple='gray50', outline=''
             )
 
-            welcome_size = 28 if config.RUN_ON_REAL_DEVICE else 36
-            name_size = 40 if config.RUN_ON_REAL_DEVICE else 64
+            welcome_size = 28 if config.RUN_ON_REAL_SCREEN else 36
+            name_size = 40 if config.RUN_ON_REAL_SCREEN else 64
             color = '#4CAF50'
-            gap = 38 if config.RUN_ON_REAL_DEVICE else 48
+            gap = 38 if config.RUN_ON_REAL_SCREEN else 48
 
             welcome_text = self.canvas.create_text(
                 cx, cy - gap,
@@ -324,7 +326,7 @@ class GUI(tk.Tk):
             self.canvas_result_ids = [bg, welcome_text, name_text]
 
         else:
-            box_size = 300 if config.RUN_ON_REAL_DEVICE else 400
+            box_size = 300 if config.RUN_ON_REAL_SCREEN else 400
             x1 = (canvas_w - box_size) // 2
             y1 = (canvas_h - box_size) // 2
             x2 = x1 + box_size
@@ -337,7 +339,7 @@ class GUI(tk.Tk):
 
             symbol = "OK" if success else "X"
             color = '#4CAF50' if success else '#F44336'
-            font_size = 150 if config.RUN_ON_REAL_DEVICE else 200
+            font_size = 150 if config.RUN_ON_REAL_SCREEN else 200
 
             sym = self.canvas.create_text(
                 cx, cy,
@@ -415,7 +417,17 @@ class GUI(tk.Tk):
                 self.show_result(True, name)
 
     def exit_app(self):
-        """Gracefully shut down all threads and services, then destroy the window."""
+        """Gracefully shut down all threads and services, then destroy the window.
+
+        Ordering matters: block new auth, cancel timers, fully stop the preview
+        (blocking) BEFORE disconnecting the device -- otherwise the native
+        preview-stop races the authenticator disconnect and the C++ library
+        aborts the process. Idempotent so it's safe to call more than once.
+        """
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
+        self._shutting_down = True
         self.running = False
 
         if self.video_update_handle:

@@ -16,20 +16,15 @@ DB_MODE = "local"
 # =====================================================
 
 # Simulate card reader / relay hardware (useful for dev off the Pi)
-SIMULATE_HW = True
+SIMULATE_HW = False
 
 # Set True on RPi5 with the small 720x720 touch screen
-RUN_ON_REAL_DEVICE = True
+RUN_ON_REAL_SCREEN = True
 
 # Enable card reader monitoring (auto-authenticate when a card is tapped)
 RUN_WITH_CARD_READER = False
 
-# UI mode:
-#   True  -> manual auth via on-screen button
-#   False -> periodic auto-auth (no button shown)
-WITH_BUTTON = False
-
-# Auto-auth interval (seconds) when WITH_BUTTON=False
+# Auto-auth interval (seconds): the app periodically re-authenticates on its own.
 AUTO_AUTH_INTERVAL_SEC = 5.0
 
 # Kiosk mode switch (governs BOTH the Qt-widgets and web front-ends):

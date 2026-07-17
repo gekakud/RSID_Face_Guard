@@ -14,6 +14,7 @@ import copy
 import logging
 import os
 import platform
+import signal
 import sys
 from logging.handlers import RotatingFileHandler
 
@@ -55,6 +56,7 @@ except ImportError:
 
 try:
     from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import QTimer
 except ImportError:
     log.critical("Failed importing PySide6. Please install it (pip install PySide6).")
     sys.exit(1)
@@ -123,7 +125,49 @@ def main():
     app = QApplication(sys.argv)
     window = GUIQt(port, camera_index, device_type)
     window.show()
-    sys.exit(app.exec())
+
+    # Ctrl+C (SIGINT) is normally swallowed by the Qt event loop. Install a
+    # handler that triggers an orderly window shutdown (stop preview, wait for
+    # in-flight auth, disconnect device) instead of letting native threads race
+    # during interpreter teardown -- which otherwise aborts the process with
+    # "terminate called without an active exception".
+    def _handle_signal(signum, _frame):
+        log.info("Received signal %s -- shutting down cleanly", signum)
+        # Failsafe: if graceful cleanup blocks (native threads can hang), a
+        # watchdog thread force-exits after a short grace period so Ctrl+C
+        # always terminates the process promptly.
+        import threading as _t
+
+        def _watchdog():
+            os._exit(0)
+        wd = _t.Timer(6.0, _watchdog)
+        wd.daemon = True
+        wd.start()
+        try:
+            window.shutdown()
+        except Exception:
+            log.exception("Error during signal shutdown")
+        # Hard-exit after cleanup. The native RealSense/UVC library can leave
+        # background threads that hang or throw during interpreter teardown
+        # ("terminate/FATAL"); os._exit bypasses those destructors entirely and
+        # lets the OS reclaim resources, guaranteeing a prompt, clean exit.
+        os._exit(0)
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    # Let the Python interpreter run periodically so the signal handler above
+    # can actually fire while the Qt C++ event loop is blocking.
+    _sig_timer = QTimer()
+    _sig_timer.start(200)
+    _sig_timer.timeout.connect(lambda: None)
+
+    try:
+        exit_code = app.exec()
+    finally:
+        # Ensure cleanup even if the loop exits by other means (idempotent).
+        window.shutdown()
+    sys.exit(exit_code)
 
 if __name__ == '__main__':
     main()
