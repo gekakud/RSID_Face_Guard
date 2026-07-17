@@ -1,23 +1,35 @@
-Pillow
+# =====================================================
+# Core requirements for main_qt.py (verified minimal set)
+# =====================================================
 numpy
-
-tk
+requests
 
 # Qt6 GUI variant (main_qt.py). PyQt6 has no prebuilt aarch64 wheel and
 # fails to build from source without qmake/Qt6 dev headers on Raspberry
-# Pi OS bookworm, so we use PySide6 instead (same Qt6, official
+# Pi OS bookworm/trixie, so we use PySide6 instead (same Qt6, official
 # prebuilt wheels for aarch64 via piwheels/PyPI).
 PySide6
 
-# led - also need install pyaudio headers
-pyaudio
+# Relay (hardware/relay_api.py, config.RUN_WITH_RELAY = True)
 lgpio
 
+# =====================================================
+# Optional: only needed if the corresponding feature/config is enabled
+# =====================================================
+
+# Tkinter GUI variant (host_mode_gui_tk.py / gui/main_window.py). Not used
+# by main_qt.py.
+Pillow
+tk
+
+# LED control - only used by the standalone other/led_control.py and
+# other/led_test.py scripts (not imported by main_qt.py/main.py/main_web.py
+# or any of the shared gui/face_auth/hardware/db/card_api packages).
+# pyaudio and rpi_ws281x were removed: verified unused anywhere in the repo.
 Adafruit-Blinka-Raspberry-Pi5-Neopixel
 adafruit-circuitpython-neopixel
-rpi_ws281x
-
 adafruit-blinka
 
-# gpio
+# Real (non-simulated) card reader / GPIO helpers not on the main_qt.py
+# import path when config.SIMULATE_HW = True.
 gpiozero

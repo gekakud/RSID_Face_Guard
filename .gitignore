@@ -1,4 +1,5 @@
 .env
+.venv
 datadir
 __pycache__
 face_guard.log

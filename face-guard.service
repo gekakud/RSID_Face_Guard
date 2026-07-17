@@ -1,20 +1,20 @@
 [Unit]
-Description=Face Guard - RealSense ID Host Mode GUI
+Description=Face Guard - RealSense ID Host Mode GUI (Qt)
 After=network-online.target graphical.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=mahat
-Group=mahat
-WorkingDirectory=/home/mahat/RSID_Face_Guard
+User=geka
+Group=geka
+WorkingDirectory=/home/geka/RSID_Face_Guard
 
-# Display access for Tkinter (XWayland)
+# Display access for the Qt GUI (XWayland/X11)
 Environment=DISPLAY=:0
-Environment=XAUTHORITY=/home/mahat/.Xauthority
+Environment=XAUTHORITY=/home/geka/.Xauthority
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 
-ExecStart=/usr/bin/python3 /home/mahat/RSID_Face_Guard/host_mode_gui_tk.py
+ExecStart=/home/geka/RSID_Face_Guard/.venv/bin/python /home/geka/RSID_Face_Guard/main_qt.py
 
 Restart=always
 RestartSec=5
