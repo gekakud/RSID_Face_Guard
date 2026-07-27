@@ -75,12 +75,26 @@ class QRCodeReader(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_frame)
 
+    @staticmethod
+    def _camera_backend() -> int:
+        if sys.platform.startswith("win"):
+            return cv2.CAP_DSHOW
+        if sys.platform.startswith("linux"):
+            return cv2.CAP_V4L2
+        return cv2.CAP_ANY
+
     def start_camera(self) -> None:
         if self.camera is not None and self.camera.isOpened():
             return
 
         # Try camera index 0. Change this to 1, 2, etc. for another camera.
-        self.camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        self.camera = cv2.VideoCapture(0, self._camera_backend())
+
+        if not self.camera.isOpened():
+            self.camera.release()
+            # Fall back to the default backend in case the platform-specific
+            # backend is unavailable or unsupported for this device.
+            self.camera = cv2.VideoCapture(0)
 
         if not self.camera.isOpened():
             self.camera.release()
@@ -89,7 +103,9 @@ class QRCodeReader(QMainWindow):
             QMessageBox.critical(
                 self,
                 "Camera Error",
-                "Could not open the camera.",
+                "Could not open the camera. Check that it is connected "
+                "(on Linux, verify with 'ls /dev/video*' or "
+                "'v4l2-ctl --list-devices').",
             )
             return
 

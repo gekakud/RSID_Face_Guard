@@ -99,7 +99,8 @@ def main():
         try:
             device_config = copy.copy(f.query_device_config())
             device_config.dump_mode = rsid_py.DumpMode.Disable
-            f.set_device_config(device_config)
+     # NOT WORKING AFTER FW UPDATE
+     #        f.set_device_config(device_config)
             log.info("Device configured successfully")
         except Exception as e:
             log.exception("Device configuration error: %s", e)
