@@ -24,8 +24,14 @@ RUN_ON_REAL_SCREEN = True
 # Enable card reader monitoring (auto-authenticate when a card is tapped)
 AUTH_ONLY_ON_CARD = False
 
-# Auto-auth interval (seconds): the app periodically re-authenticates on its own.
-AUTO_AUTH_INTERVAL_SEC = 5.0
+# Session-based authentication: the camera preview stays OFF while idle and
+# only turns on for an active auth "session" -- triggered by a screen
+# tap/click (AUTH_ONLY_ON_CARD=False) or a valid card tap (AUTH_ONLY_ON_CARD=True).
+# During a session, a face-match attempt is retried every AUTH_RETRY_INTERVAL_SEC
+# until either a match succeeds or AUTH_SESSION_TIMEOUT_SEC elapses, at which
+# point the preview is paused and the UI returns silently to idle.
+AUTH_RETRY_INTERVAL_SEC = 3.0
+AUTH_SESSION_TIMEOUT_SEC = 30.0
 
 # Kiosk mode switch (governs BOTH the Qt-widgets and web front-ends):
 #   True  -> fullscreen, no title bar / border on the small display (kiosk).

@@ -129,6 +129,12 @@ class HostModeService:
         db_faceprints.enroll_descriptor = fp['enroll_descriptor']
         return db_faceprints
 
+    def card_is_registered(self, card_id) -> bool:
+        """Fast DB-only check -- no camera access -- used to reject unknown
+        cards before starting an auth session (avoids spinning up the preview
+        for a card that could never succeed)."""
+        return self.user_db.get_user(str(card_id)) is not None
+
     def authenticate_with_card(self, card_id: int) -> Tuple[bool, Optional[str], Optional[str]]:
         """Authenticate using a Wiegand card ID combined with a live face scan.
 
@@ -254,15 +260,18 @@ class HostModeService:
             threading.Thread(target=self._reconnect, daemon=True).start()
             return False, None, str(e)
 
-    def start_card_monitoring(self, on_result: Callable[[bool, Optional[str], Optional[str]], None]):
+    def start_card_monitoring(self, on_card_detected: Callable[[object], None]):
         """Start a background daemon thread polling the Wiegand card reader.
 
-        Enforces a cooldown between consecutive reads of the same card to
-        avoid duplicate auth attempts, and skips reads while an auth is
-        already in progress. on_result is invoked with
-        (success, user_name, permission) after each card-triggered auth
-        attempt (from the monitoring thread -- caller must marshal back to
-        the GUI thread if needed).
+        This thread only *detects* card taps -- it does not touch the camera.
+        Registered cards are reported once via on_card_detected(card_id) (from
+        the monitoring thread -- caller must marshal back to the GUI thread if
+        needed) so the GUI can drive a full auth session (preview on, retry
+        loop, timeout). Unregistered cards are logged and ignored -- no camera
+        spin-up for a card that could never succeed. Enforces a cooldown
+        between consecutive reads of the same card, and skips reads while a
+        session is already flagged in progress via mark_card_session_active()/
+        mark_card_session_done() (called by the GUI around the session).
         """
         if self._card_monitor_thread is not None:
             return  # already running
@@ -290,28 +299,16 @@ class HostModeService:
                         if self._card_auth_in_progress.is_set():
                             continue
 
+                        if not self.card_is_registered(card_id):
+                            log.warning("Card %s not registered -- ignoring", card_id)
+                            last_card_id = card_id
+                            last_read_time = current_time
+                            continue
+
                         log.info("Card detected: %s", card_id)
-                        self._card_auth_in_progress.set()
-                        if self.on_before_card_auth:
-                            self.on_before_card_auth()
-
-                        success, user_name, permission = self.authenticate_with_card(card_id)
-
-                        if self.on_after_card_auth:
-                            self.on_after_card_auth()
-                        if config.SIMULATE_CARD_READER:
-                            time.sleep(5)
-
-                        if success:
-                            log.info("Access granted to %s (%s)", user_name, permission)
-                        else:
-                            log.warning("Access denied for card %s: %s", card_id, permission)
-
-                        on_result(success, user_name, permission)
-                        self._card_auth_in_progress.clear()
-
                         last_card_id = card_id
                         last_read_time = current_time
+                        on_card_detected(card_id)
 
                 except Exception as e:
                     log.error("Card reader error: %s", e)
@@ -321,6 +318,15 @@ class HostModeService:
 
         self._card_monitor_thread = threading.Thread(target=_loop, daemon=True)
         self._card_monitor_thread.start()
+
+    def mark_card_session_active(self):
+        """Call when a card-triggered auth session starts, to make the
+        monitoring loop skip further reads until mark_card_session_done()."""
+        self._card_auth_in_progress.set()
+
+    def mark_card_session_done(self):
+        """Call when a card-triggered auth session ends (success or timeout)."""
+        self._card_auth_in_progress.clear()
 
     def stop_card_monitoring(self):
         """Stop the background card-reader monitoring thread (if running)."""

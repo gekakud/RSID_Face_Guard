@@ -23,6 +23,11 @@
          through while those screens cross-fade into one another. -->
     <div class="code-backdrop" aria-hidden="true"></div>
 
+    <!-- Camera-state action: opens the code-entry screen. Commented out — the
+         current flow has no PIN fallback, but kept for possible future states.
+    <button id="code-btn" class="code-btn" type="button">Enter a code</button>
+    -->
+
     <!-- Semi-transparent purple overlay (shown only on recognition result) -->
     <div id="overlay" class="overlay" aria-live="polite">
       <div class="overlay__content">
@@ -33,9 +38,6 @@
         </div>
       </div>
     </div>
-
-    <!-- Camera-state action: opens the code-entry screen -->
-    <button id="code-btn" class="code-btn" type="button">Enter a code</button>
 
     <!-- Screensaver — "Ambient Depth" resting state, composed for the round
          display. A centred lockup (brand · clock · whispered tap line) floats

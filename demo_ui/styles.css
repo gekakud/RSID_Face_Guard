@@ -558,7 +558,9 @@ body[data-state="screensaver-basic"] .attendance { display: none; }
 .attendance__opt.is-active { color: #fff; }
 
 /* -------------------------------------------------- Code button (camera state)
-   A discreet on-screen action shown only while the camera is live. */
+   A discreet on-screen action shown only while the camera is live.
+   Commented out — no PIN fallback in the current flow (the button was
+   removed from index.html); kept here in case a future system state needs it.
 .code-btn {
   position: absolute;
   left: 50%;
@@ -585,12 +587,12 @@ body[data-state="screensaver-basic"] .attendance { display: none; }
 }
 .code-btn:hover { background: rgba(30, 22, 54, 0.7); }
 .code-btn:active { transform: translateX(-50%) scale(0.97); }
-/* Only tappable in the camera (idle) state */
 body[data-state="idle"] .code-btn {
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
 }
+*/
 
 /* -------------------------------------------------- Code entry (keypad) */
 .keypad-screen {

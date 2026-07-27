@@ -88,8 +88,9 @@
     clock: document.getElementById("clock"),
     companyLogo: document.getElementById("company-logo"),
     attendance: document.getElementById("attendance"),
-    // Camera-state code button + code-entry keypad
-    codeBtn: document.getElementById("code-btn"),
+    // Camera-state code button (commented out in index.html -- kept here for
+    // possible future re-enable; getElementById returns null harmlessly).
+    // codeBtn: document.getElementById("code-btn"),
     codeDisplay: document.getElementById("code-display"),
     keypadGrid: document.getElementById("keypad-grid"),
     keypadBack: document.getElementById("keypad-back"),
@@ -302,8 +303,11 @@
   }
 
   function initCodeFlow() {
-    // Camera-state button opens the keypad.
-    els.codeBtn.addEventListener("click", () => setState("keypad"));
+    // Camera-state button opens the keypad. Commented out — the "Enter a
+    // code" button is currently removed from index.html (no PIN fallback in
+    // the current flow), so els.codeBtn is undefined. Re-enable both together
+    // if a PIN-entry state is needed again in the future.
+    // els.codeBtn.addEventListener("click", () => setState("keypad"));
 
     // Keypad taps.
     els.keypadGrid.addEventListener("click", (e) => {
@@ -314,10 +318,13 @@
     // Back out of the keypad to the camera state.
     els.keypadBack.addEventListener("click", () => setState("idle"));
 
-    // Tapping the screensaver acts as the physical wake button in this preview.
-    document
-      .getElementById("screensaver")
-      .addEventListener("click", () => setState("idle"));
+    // Tapping the screensaver used to act as the physical wake button in this
+    // preview. Commented out — waking is now driven entirely from Python via
+    // the tap listener installed by BRIDGE_SETUP_JS in gui_web/web_window.py,
+    // so the JS-side state and the Python session state can't get out of sync.
+    // document
+    //   .getElementById("screensaver")
+    //   .addEventListener("click", () => setState("idle"));
   }
 
   /* ---------------------------------------------- Camera */

@@ -2,13 +2,23 @@
 Web-based main window — recreated from the proven Windows POC
 (windows_working_ui/main.py), adapted to the Pi/RealSense stack.
 
+Session-based flow: the camera preview is OFF while idle and only turns on
+for a bounded auth "session" -- triggered by a tap anywhere on the page
+(AUTH_ONLY_ON_CARD=False) or a valid card tap (AUTH_ONLY_ON_CARD=True).
+During a session, face-match is retried every AUTH_RETRY_INTERVAL_SEC until
+either a match succeeds or AUTH_SESSION_TIMEOUT_SEC elapses, at which point
+the preview stops and the UI silently returns to its resting screensaver.
+This avoids the periodic camera-restart stutter of a fixed-interval
+always-on auto-auth design.
+
 Structure mirrors the Windows version:
   * WebServer + CameraStreamer serve demo_ui and an MJPEG feed on 127.0.0.1
     (page loads over http:// so the <img> stream is same-origin).
   * DeviceUI  -> Python->JS wrapper over the page's window.deviceUI API.
-  * Bridge    -> JS->Python via QWebChannel (keypad code submissions).
-  * BRIDGE_SETUP_JS wires window.deviceUI.onSubmitCode -> pyBridge.codeSubmitted
-    and installs the camera <img> shim once the page has loaded.
+  * Bridge    -> JS->Python via QWebChannel (keypad code submissions, tap-to-wake).
+  * BRIDGE_SETUP_JS wires window.deviceUI.onSubmitCode -> pyBridge.codeSubmitted,
+    a document-wide tap listener -> pyBridge.userTapped, and installs the
+    camera <img> shim once the page has loaded.
 
 The shared business/hardware layers (HostModeService, PreviewController,
 config) are reused unchanged, exactly like gui_qt.GUIQt.
@@ -70,7 +80,9 @@ BRIDGE_SETUP_JS = """
       .observe(err, { attributes: true, attributeFilter: ['hidden'] });
   }
 
-  // 2. Wire the QWebChannel bridge (JS -> Python) for keypad submissions.
+  // 2. Wire the QWebChannel bridge (JS -> Python) for keypad submissions and
+  //    tap-to-wake (no-card mode -- a tap anywhere while resting starts an
+  //    auth session; ignored while a session/keypad/result is already showing).
   var script = document.createElement('script');
   script.src = 'qrc:///qtwebchannel/qwebchannel.js';
   script.onload = function() {
@@ -81,6 +93,12 @@ BRIDGE_SETUP_JS = """
           window.pyBridge.codeSubmitted(code);
         };
       }
+      document.addEventListener('click', function() {
+        var state = document.body.dataset.state;
+        if (state === 'screensaver' || state === 'screensaver-basic') {
+          window.pyBridge.userTapped();
+        }
+      });
     });
   };
   document.head.appendChild(script);
@@ -125,10 +143,12 @@ class DeviceUI:
         self._call("setExpectedCode", str(code))
 
 class Bridge(QObject):
-    """JS -> Python. Keypad code submissions from the web UI.
+    """JS -> Python. Keypad code submissions and tap-to-wake from the web UI."""
 
-    Per project decision, keypad validation stays demo-only (the built-in
-    check), so this just mirrors the Windows POC placeholder."""
+    # Note: named differently from the userTapped() slot below (JS calls
+    # pyBridge.userTapped()) to avoid the slot definition shadowing this
+    # Signal class attribute.
+    tap_detected = Signal()
 
     def __init__(self, device_ui: DeviceUI):
         super().__init__()
@@ -142,9 +162,14 @@ class Bridge(QObject):
         else:
             self._device_ui.code_rejected(hold=3000)
 
+    @Slot()
+    def userTapped(self):
+        self.tap_detected.emit()
+
 class _SignalBridge(QObject):
     """Marshals background-thread auth callbacks onto the Qt main thread."""
     auth_result = Signal(bool, object)  # success, name
+    card_detected = Signal(object)      # card_id
 
 class GUIWeb(QMainWindow):
     """Main window hosting the web UI in a QWebEngineView."""
@@ -161,13 +186,18 @@ class GUIWeb(QMainWindow):
 
         self._bridge = _SignalBridge()
         self._bridge.auth_result.connect(self._on_auth_complete)
+        self._bridge.card_detected.connect(self._on_card_detected)
 
         # Shared, GUI-agnostic layers (same as GUIQt).
         self.preview_controller = PreviewController(port, camera_index, device_type)
         self.host_service = HostModeService(port)
         self.host_service.on_reconnect = self.preview_controller.restart
-        self.host_service.on_before_card_auth = self.preview_controller.pause
-        self.host_service.on_after_card_auth = self.preview_controller.resume
+
+        # Session state (see module docstring).
+        self._session_active = False
+        self._session_card_id = None
+        self.retry_timer = None
+        self.session_timeout_timer = None
 
         # Camera streamer + web/MJPEG server (serve the UI dir over http://).
         self.streamer = CameraStreamer(self.preview_controller)
@@ -184,6 +214,7 @@ class GUIWeb(QMainWindow):
 
         self.device_ui = DeviceUI(page)
         self.js_bridge = Bridge(self.device_ui)
+        self.js_bridge.tap_detected.connect(self._on_user_tapped)
         self.channel = QWebChannel()
         self.channel.registerObject("pyBridge", self.js_bridge)
         page.setWebChannel(self.channel)
@@ -196,15 +227,12 @@ class GUIWeb(QMainWindow):
         else:
             self.resize(config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
 
-        # Auto-auth timer (no on-screen button in the web UI).
-        self.auto_auth_timer = None
-        if not config.AUTH_ONLY_ON_CARD:
-            self.auto_auth_timer = QTimer(self)
-            self.auto_auth_timer.timeout.connect(self._auto_auth_tick)
-            self.auto_auth_timer.start(int(config.AUTO_AUTH_INTERVAL_SEC * 1000))
-
         # Start hardware, streamer, server, then load the page over http://.
+        # Preview thread stays alive for the whole app lifetime; pause it
+        # immediately so the camera is off while idle -- sessions
+        # resume()/pause() around this baseline.
         self.preview_controller.start()
+        self.preview_controller.pause()
         self.streamer.start()
         self.server.start()
 
@@ -214,7 +242,7 @@ class GUIWeb(QMainWindow):
 
         if config.AUTH_ONLY_ON_CARD:
             self.host_service.start_card_monitoring(
-                on_result=lambda s, n, p: self._bridge.auth_result.emit(s, n)
+                on_card_detected=lambda cid: self._bridge.card_detected.emit(cid)
             )
 
     # =====================================================
@@ -281,25 +309,77 @@ class GUIWeb(QMainWindow):
             return
         self._page_ready = True
         self.view.page().runJavaScript(BRIDGE_SETUP_JS)
-        # Leave the UI on its native screensaver; the user wakes it by tapping
-        # (or, later, the physical button). Auto-auth only runs on the live
-        # camera state (see _auto_auth_tick).
+        # UI rests on its native screensaver; the user wakes it by tapping
+        # (no-card mode) or the card monitor detects a registered card
+        # (card mode). Either path calls start_session().
+
+    # =====================================================
+    # SESSION MANAGEMENT
+    # =====================================================
+
+    def _on_user_tapped(self):
+        if not config.AUTH_ONLY_ON_CARD:
+            self.start_session()
+
+    def _on_card_detected(self, card_id):
+        # start_card_monitoring() already filters unregistered cards, so any
+        # card_id reaching here is valid and ready for a face-match session.
+        self.start_session(card_id=card_id)
+
+    def start_session(self, card_id=None):
+        """Begin a bounded auth session: show the live camera state, start the
+        preview, retry face-match on an interval, and time out back to the
+        screensaver if nothing matches."""
+        if self._session_active or not self._page_ready:
+            return
+        self._session_active = True
+        self._session_card_id = card_id
+
+        if card_id is not None:
+            self.host_service.mark_card_session_active()
+
+        self.device_ui.camera()  # switch to the live-camera ("idle") state
+        self.preview_controller.resume()
+
+        self.retry_timer = QTimer(self)
+        self.retry_timer.timeout.connect(self._session_auth_tick)
+        self.retry_timer.start(int(config.AUTH_RETRY_INTERVAL_SEC * 1000))
+        self._session_auth_tick()  # fire the first attempt immediately
+
+        self.session_timeout_timer = QTimer(self)
+        self.session_timeout_timer.setSingleShot(True)
+        self.session_timeout_timer.timeout.connect(self._session_timeout)
+        self.session_timeout_timer.start(int(config.AUTH_SESSION_TIMEOUT_SEC * 1000))
+
+    def _session_auth_tick(self):
+        if not self.auth_in_progress:
+            self.authenticate()
+
+    def _session_timeout(self):
+        if not self._session_active:
+            return
+        log.info("Auth session timed out with no match -- returning to screensaver")
+        self._end_session()
+        self.device_ui.screensaver()
+
+    def _end_session(self):
+        if not self._session_active:
+            return
+        self._session_active = False
+        if self.retry_timer:
+            self.retry_timer.stop()
+            self.retry_timer = None
+        if self.session_timeout_timer:
+            self.session_timeout_timer.stop()
+            self.session_timeout_timer = None
+        self.preview_controller.pause()
+        if self._session_card_id is not None:
+            self.host_service.mark_card_session_done()
+        self._session_card_id = None
 
     # =====================================================
     # AUTHENTICATION
     # =====================================================
-
-    def _auto_auth_tick(self):
-        if self.auth_in_progress or not self._page_ready:
-            return
-        # Only authenticate while the UI is on the live-camera ("idle") state.
-        self.view.page().runJavaScript(
-            "document.body.dataset.state", self._maybe_authenticate_for_state
-        )
-
-    def _maybe_authenticate_for_state(self, state):
-        if state == "idle" and not self.auth_in_progress:
-            self.authenticate()
 
     def authenticate(self):
         if self.auth_in_progress:
@@ -310,7 +390,10 @@ class GUIWeb(QMainWindow):
     def _run_authentication(self):
         self.preview_controller.pause()
         try:
-            success, name, permission = self.host_service.authenticate_all_users()
+            if self._session_card_id is not None:
+                success, name, permission = self.host_service.authenticate_with_card(self._session_card_id)
+            else:
+                success, name, permission = self.host_service.authenticate_all_users()
             if success:
                 log.info("Access granted: %s (%s)", name, permission)
             else:
@@ -320,14 +403,33 @@ class GUIWeb(QMainWindow):
             log.error("Authentication error: %s", e)
             self._bridge.auth_result.emit(False, None)
         finally:
-            self.preview_controller.resume()
+            if self._session_active:
+                self.preview_controller.resume()
 
     def _on_auth_complete(self, success: bool, name):
         self.auth_in_progress = False
-        if success and name:
-            self.device_ui.success(str(name))
-        elif success:
-            self.device_ui.success()
+        if success:
+            # Stop retrying immediately -- otherwise the still-running
+            # retry_timer/session_timeout_timer fire again during the welcome
+            # hold below (before the delayed _end_session() gets a chance to
+            # stop them), triggering a second, unwanted auth attempt.
+            if self.retry_timer:
+                self.retry_timer.stop()
+                self.retry_timer = None
+            if self.session_timeout_timer:
+                self.session_timeout_timer.stop()
+                self.session_timeout_timer = None
+
+            if name:
+                self.device_ui.success(str(name))
+            else:
+                self.device_ui.success()
+            # The web UI's built-in hold+then auto-dismiss defaults to the
+            # live-camera ("idle") screen, not the resting screensaver, so
+            # explicitly drive it back to the screensaver ourselves once the
+            # welcome hold ends, alongside tearing down the camera session.
+            QTimer.singleShot(config.WELCOME_DURATION_MS, self._end_session)
+            QTimer.singleShot(config.WELCOME_DURATION_MS, self.device_ui.screensaver)
 
     # =====================================================
     # SHUTDOWN
@@ -344,8 +446,10 @@ class GUIWeb(QMainWindow):
             return
         self._cleaned_up = True
         self.running = False
-        if self.auto_auth_timer:
-            self.auto_auth_timer.stop()
+        if self.retry_timer:
+            self.retry_timer.stop()
+        if self.session_timeout_timer:
+            self.session_timeout_timer.stop()
         try:
             self.server.stop()
         except Exception:

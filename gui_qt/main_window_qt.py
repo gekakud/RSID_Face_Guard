@@ -1,14 +1,23 @@
 """
 Main PySide6 (Qt6) GUI window for RealSense ID Host Mode.
 
-Mirrors gui/main_window.py's responsibilities (video canvas, result
-overlay, optional auth button, auto-auth timer) using Qt widgets and
-signals instead of Tkinter. Reuses the same business/hardware layers
-(HostModeService, PreviewController, config) unchanged.
+Session-based flow: the camera preview is OFF while idle and only turns on
+for a bounded auth "session" -- triggered by a click anywhere on the window
+(AUTH_ONLY_ON_CARD=False) or a valid card tap (AUTH_ONLY_ON_CARD=True).
+During a session, face-match is retried every AUTH_RETRY_INTERVAL_SEC until
+either a match succeeds or AUTH_SESSION_TIMEOUT_SEC elapses, at which point
+the preview stops and the UI silently returns to idle. This avoids the
+periodic camera-restart stutter of a fixed-interval always-on auto-auth
+design (RealSense hardware can't stream preview and authenticate at once,
+so any auth attempt briefly restarts the UVC stream -- restricting attempts
+to actual user/card-initiated sessions keeps the idle screen glitch-free).
+
+Reuses the same business/hardware layers (HostModeService, PreviewController,
+config) unchanged.
 """
 
 import logging
-import sys
+import threading
 from typing import Optional
 
 import numpy as np
@@ -33,7 +42,7 @@ class _SignalBridge(QObject):
     """Marshals callbacks from background threads (HostModeService,
     PreviewController) onto the Qt main thread via signals."""
     auth_result = Signal(bool, object)  # success, name
-
+    card_detected = Signal(object)      # card_id
 
 class ResultOverlay(QWidget):
     """Semi-transparent overlay drawn on top of the video canvas showing
@@ -107,7 +116,6 @@ class ResultOverlay(QWidget):
             painter.drawText(0, cy - font_size, w, font_size * 2,
                               Qt.AlignmentFlag.AlignCenter, symbol)
 
-
 class GUIQt(QMainWindow):
     """Main PySide6 window."""
 
@@ -124,13 +132,21 @@ class GUIQt(QMainWindow):
 
         self._bridge = _SignalBridge()
         self._bridge.auth_result.connect(self._on_auth_complete)
+        self._bridge.card_detected.connect(self._on_card_detected)
 
         # Services (shared, GUI-agnostic layers)
         self.preview_controller = PreviewController(port, camera_index, device_type)
         self.host_service = HostModeService(port)
         self.host_service.on_reconnect = self.preview_controller.restart
-        self.host_service.on_before_card_auth = self.preview_controller.pause
-        self.host_service.on_after_card_auth = self.preview_controller.resume
+
+        # Session state: the preview only runs while an auth session is
+        # active (started by a click or a valid card read), never while
+        # idle -- avoids the periodic camera-restart stutter of a fixed
+        # interval always-on preview/auto-auth design.
+        self._session_active = False
+        self._session_card_id = None
+        self.retry_timer = None
+        self.session_timeout_timer = None
 
         # Central widget / layout
         central = QWidget(self)
@@ -154,22 +170,23 @@ class GUIQt(QMainWindow):
             self.resize(720, 900)
             self.setMinimumSize(500, 600)
 
-        # Timers (replace Tkinter's self.after loops)
+        # Video render timer -- only meaningful while preview is running
+        # (paints nothing when the queue is empty, negligible cost while idle).
         self.video_timer = QTimer(self)
         self.video_timer.timeout.connect(self._update_video)
         self.video_timer.start(30)
 
-        self.auto_auth_timer = None
-        if not config.AUTH_ONLY_ON_CARD:
-            self.auto_auth_timer = QTimer(self)
-            self.auto_auth_timer.timeout.connect(self._auto_auth_tick)
-            self.auto_auth_timer.start(int(config.AUTO_AUTH_INTERVAL_SEC * 1000))
-
+        # Start the preview controller's background thread once (it must stay
+        # alive to service pause()/resume() requests), then immediately pause
+        # the actual UVC stream so the camera is off while idle. Sessions
+        # resume()/pause() around this idle baseline -- never start()/stop()
+        # again until app shutdown.
         self.preview_controller.start()
+        self.preview_controller.pause()
 
         if config.AUTH_ONLY_ON_CARD:
             self.host_service.start_card_monitoring(
-                on_result=lambda s, n, p: self._bridge.auth_result.emit(s, n)
+                on_card_detected=lambda cid: self._bridge.card_detected.emit(cid)
             )
 
     # =====================================================
@@ -207,7 +224,7 @@ class GUIQt(QMainWindow):
     # =====================================================
 
     def _update_video(self):
-        if not self.preview_controller.running:
+        if not self.preview_controller.running or not self._session_active:
             return
         array2d = None
         q = self.preview_controller.image_queue
@@ -230,6 +247,72 @@ class GUIQt(QMainWindow):
         self.video_label.setPixmap(scaled)
 
     # =====================================================
+    # SESSION MANAGEMENT
+    # =====================================================
+
+    def mousePressEvent(self, event):
+        if not config.AUTH_ONLY_ON_CARD:
+            self.start_session()
+        super().mousePressEvent(event)
+
+    def _on_card_detected(self, card_id):
+        # Only relevant in AUTH_ONLY_ON_CARD mode -- start_card_monitoring()
+        # already filters unregistered cards, so any card_id reaching here
+        # is valid and ready for a face-match session.
+        self.start_session(card_id=card_id)
+
+    def start_session(self, card_id=None):
+        """Begin a bounded auth session: start the preview, retry face-match
+        on an interval, and time out back to idle if nothing matches."""
+        if self._session_active or self._shutting_down:
+            return
+        self._session_active = True
+        self._session_card_id = card_id
+
+        if card_id is not None:
+            self.host_service.mark_card_session_active()
+
+        self.video_label.clear()
+        self.preview_controller.resume()
+
+        self.retry_timer = QTimer(self)
+        self.retry_timer.timeout.connect(self._session_auth_tick)
+        self.retry_timer.start(int(config.AUTH_RETRY_INTERVAL_SEC * 1000))
+        # Fire the first attempt immediately rather than waiting one interval.
+        self._session_auth_tick()
+
+        self.session_timeout_timer = QTimer(self)
+        self.session_timeout_timer.setSingleShot(True)
+        self.session_timeout_timer.timeout.connect(self._session_timeout)
+        self.session_timeout_timer.start(int(config.AUTH_SESSION_TIMEOUT_SEC * 1000))
+
+    def _session_auth_tick(self):
+        if not self.auth_in_progress and not self._shutting_down:
+            self.authenticate()
+
+    def _session_timeout(self):
+        if not self._session_active:
+            return
+        log.info("Auth session timed out with no match -- returning to idle")
+        self._end_session()
+
+    def _end_session(self):
+        if not self._session_active:
+            return
+        self._session_active = False
+        if self.retry_timer:
+            self.retry_timer.stop()
+            self.retry_timer = None
+        if self.session_timeout_timer:
+            self.session_timeout_timer.stop()
+            self.session_timeout_timer = None
+        self.preview_controller.pause()
+        self.video_label.clear()
+        if self._session_card_id is not None:
+            self.host_service.mark_card_session_done()
+        self._session_card_id = None
+
+    # =====================================================
     # AUTHENTICATION
     # =====================================================
 
@@ -238,14 +321,16 @@ class GUIQt(QMainWindow):
             return
         self.auth_in_progress = True
 
-        import threading
         self._auth_thread = threading.Thread(target=self._run_authentication, daemon=True)
         self._auth_thread.start()
 
     def _run_authentication(self):
         self.preview_controller.pause()
         try:
-            success, name, permission = self.host_service.authenticate_all_users()
+            if self._session_card_id is not None:
+                success, name, permission = self.host_service.authenticate_with_card(self._session_card_id)
+            else:
+                success, name, permission = self.host_service.authenticate_all_users()
             if success:
                 log.info("Access granted: %s (%s)", name, permission)
             else:
@@ -255,20 +340,29 @@ class GUIQt(QMainWindow):
             log.error("Authentication error: %s", e)
             self._bridge.auth_result.emit(False, None)
         finally:
-            self.preview_controller.resume()
-
-    def _auto_auth_tick(self):
-        if not self.auth_in_progress and not self._shutting_down:
-            self.authenticate()
+            if self._session_active:
+                self.preview_controller.resume()
 
     def _on_auth_complete(self, success: bool, name: Optional[str]):
         self.auth_in_progress = False
 
         if success:
+            # Stop retrying immediately -- otherwise the still-running
+            # retry_timer/session_timeout_timer fire again during the welcome
+            # hold below (before the delayed _end_session() gets a chance to
+            # stop them), triggering a second, unwanted auth attempt.
+            if self.retry_timer:
+                self.retry_timer.stop()
+                self.retry_timer = None
+            if self.session_timeout_timer:
+                self.session_timeout_timer.stop()
+                self.session_timeout_timer = None
+
             self.result_overlay.setGeometry(self.video_label.rect())
             self.result_overlay.show_result(success, name)
-            duration = config.WELCOME_DURATION_MS if success else config.FAIL_DURATION_MS
-            QTimer.singleShot(duration, self.result_overlay.hide_result)
+            QTimer.singleShot(config.WELCOME_DURATION_MS, self.result_overlay.hide_result)
+            # Successful match ends the session (after the welcome hold).
+            QTimer.singleShot(config.WELCOME_DURATION_MS, self._end_session)
 
     # =====================================================
     # SHUTDOWN
@@ -292,8 +386,10 @@ class GUIQt(QMainWindow):
 
         if self.video_timer:
             self.video_timer.stop()
-        if self.auto_auth_timer:
-            self.auto_auth_timer.stop()
+        if self.retry_timer:
+            self.retry_timer.stop()
+        if self.session_timeout_timer:
+            self.session_timeout_timer.stop()
 
         # Wait for any in-flight authentication to complete before we touch
         # the device from the shutdown path.
