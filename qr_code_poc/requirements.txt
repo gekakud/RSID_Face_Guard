@@ -1,0 +1,4 @@
+opencv-python>=4.8
+PyQt6>=6.6
+qrcode>=7.4
+Pillow>=10.0
