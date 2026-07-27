@@ -1,6 +1,5 @@
 """
-Web-based main window — recreated from the proven Windows POC
-(windows_working_ui/main.py), adapted to the Pi/RealSense stack.
+Web-based main window for RealSense ID Host Mode.
 
 Session-based flow: the camera preview is OFF while idle and only turns on
 for a bounded auth "session" -- triggered by a tap anywhere on the page
@@ -11,7 +10,7 @@ the preview stops and the UI silently returns to its resting screensaver.
 This avoids the periodic camera-restart stutter of a fixed-interval
 always-on auto-auth design.
 
-Structure mirrors the Windows version:
+Structure:
   * WebServer + CameraStreamer serve demo_ui and an MJPEG feed on 127.0.0.1
     (page loads over http:// so the <img> stream is same-origin).
   * DeviceUI  -> Python->JS wrapper over the page's window.deviceUI API.
