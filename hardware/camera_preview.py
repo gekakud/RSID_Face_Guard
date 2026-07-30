@@ -41,6 +41,7 @@ class PreviewController(threading.Thread):
         self._pause_event = threading.Event()
         self._paused_ack = threading.Event()
         self._stopped_ack = threading.Event()
+        self._preview_lock = threading.Lock()
 
     def on_image(self, image):
         """Callback invoked by rsid_py for each decoded preview frame.
@@ -68,15 +69,20 @@ class PreviewController(threading.Thread):
         """Create a PreviewConfig and start the UVC camera stream.
 
         Called once on thread start and again by resume() after authentication
-        releases the camera.
+        releases the camera. Guarded by a lock + idempotency check so a
+        concurrent call (e.g. GUI resume() racing the thread's own startup)
+        can't open the UVC stream twice and hit "uvc_open ... Busy".
         """
-        preview_cfg = rsid_py.PreviewConfig()
-        preview_cfg.device_type = self.device_type
-        preview_cfg.camera_number = self.camera_index
-        preview_cfg.preview_mode = rsid_py.PreviewMode.MJPEG_1080P
+        with self._preview_lock:
+            if self.preview is not None:
+                return
+            preview_cfg = rsid_py.PreviewConfig()
+            preview_cfg.device_type = self.device_type
+            preview_cfg.camera_number = self.camera_index
+            preview_cfg.preview_mode = rsid_py.PreviewMode.MJPEG_1080P
 
-        self.preview = rsid_py.Preview(preview_cfg)
-        self.preview.start(preview_callback=self.on_image, snapshot_callback=None)
+            self.preview = rsid_py.Preview(preview_cfg)
+            self.preview.start(preview_callback=self.on_image, snapshot_callback=None)
 
     # Previews whose USB device disconnected mid-stream: calling stop() on them
     # crashes (libusb mutex already destroyed by the disconnect handler). We keep
@@ -147,9 +153,14 @@ class PreviewController(threading.Thread):
         self._paused_ack.wait(timeout=2.0)
 
     def resume(self):
-        """Restart the UVC stream after authentication."""
+        """Restart the UVC stream after authentication.
+
+        start_preview() is idempotent (locked + no-op if already open), so
+        it's safe to call this even if the thread's own startup or another
+        resume() call is racing this one.
+        """
         self._paused = False
-        if self.preview is None and self.running:
+        if self.running:
             try:
                 self.start_preview()
                 log.info("Preview resumed after authentication")
