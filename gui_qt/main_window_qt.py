@@ -238,11 +238,15 @@ class GUIQt(QMainWindow):
                 on_card_detected=lambda cid: self._bridge.card_detected.emit(cid)
             )
 
+        # Defer until after the window is shown/laid out: video_label.rect()
+        # is still a default placeholder size here (0,0 100x30) since Qt
+        # hasn't done its first real layout pass yet, so overlay geometry set
+        # now would be wrong (pinned tiny in the top-left corner).
         if config.INIT_MODE_ENABLED:
-            self.start_init_mode()
+            QTimer.singleShot(0, self.start_init_mode)
         else:
             self.preview_controller.pause()
-            self._show_idle_text()
+            QTimer.singleShot(0, self._show_idle_text)
 
     # =====================================================
     # INIT MODE (technician QR scan on startup)
