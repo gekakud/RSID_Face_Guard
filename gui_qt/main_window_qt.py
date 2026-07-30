@@ -330,7 +330,7 @@ class GUIQt(QMainWindow):
             if self._session_card_id is not None:
                 success, name, permission = self.host_service.authenticate_with_card(self._session_card_id)
             else:
-                success, name, permission = self.host_service.authenticate_all_users()
+                success, name, permission = self.host_service.authenticate_face_only()
             if success:
                 log.info("Access granted: %s (%s)", name, permission)
             else:

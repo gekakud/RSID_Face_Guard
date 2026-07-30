@@ -184,7 +184,7 @@ class HostModeService:
             self._reconnect()
             return False, None, str(e)
 
-    def authenticate_all_users(self) -> Tuple[bool, Optional[str], Optional[str]]:
+    def authenticate_face_only(self) -> Tuple[bool, Optional[str], Optional[str]]:
         """Extract a live faceprint and match it against every user in the DB.
 
         The highest-scoring match above CUSTOM_THRESHOLD is selected. On
@@ -254,7 +254,7 @@ class HostModeService:
                 return False, None, "Authentication callback not invoked"
             return result[0]
         except Exception as e:
-            log.exception("authenticate_all_users error")
+            log.exception("authenticate_face_only error")
             # Block further auth attempts for 20s while reconnect runs in background
             self._error_backoff_until = time.monotonic() + 20.0
             threading.Thread(target=self._reconnect, daemon=True).start()
