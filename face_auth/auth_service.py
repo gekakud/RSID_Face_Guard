@@ -23,6 +23,16 @@ from hardware.relay_api import open_door, disconnect_relay
 
 log = logging.getLogger("face_guard")
 
+def _open_access_point(identifier=None):
+    """Open the door/access-point on successful auth.
+
+    Currently relay-only (send_w32/Wiegand echo-back to an external panel
+    is unused here for now). This is the single point to wire up a future
+    pluggable Wiegand/relay door-opening API.
+    """
+    if config.RUN_WITH_RELAY:
+        threading.Thread(target=open_door, args=(3.0,), daemon=True).start()
+
 class HostModeService:
     """Business logic for host mode authentication."""
 
@@ -168,9 +178,7 @@ class HostModeService:
             )
 
             if match_result.success or (match_result.score is not None and match_result.score >= config.CUSTOM_THRESHOLD):
-                send_w32(card_id)
-                if config.RUN_WITH_RELAY:
-                    threading.Thread(target=open_door, args=(3.0,), daemon=True).start()
+                _open_access_point(card_id)
                 result[0] = (True, user_info['name'], user_info['permission_level'])
             else:
                 result[0] = (False, None, f"Face match failed (score: {match_result.score})")
@@ -238,12 +246,7 @@ class HostModeService:
                     selected_user_info = user_info
 
             if selected_user_id:
-                try:
-                    send_w32(int(selected_user_id))
-                except (ValueError, TypeError):
-                    pass  # non-numeric user ID (e.g. MongoDB ObjectId), skip Wiegand send
-                if config.RUN_WITH_RELAY:
-                    threading.Thread(target=open_door, args=(3.0,), daemon=True).start()
+                _open_access_point(selected_user_id)
                 result[0] = (True, selected_user_info['name'], selected_user_info['permission_level'])
             else:
                 result[0] = (False, None, "No match found")

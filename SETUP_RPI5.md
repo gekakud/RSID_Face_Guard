@@ -144,18 +144,24 @@ Not installed (not needed for `main_qt.py` as currently configured):
 `pyaudio`, `rpi_ws281x`, `adafruit-blinka`, `neopixel`, `Pillow`, `tk`,
 `gpiozero` — these are only used by other entry points / LED code paths.
 
-If you later enable `AUTH_ONLY_ON_CARD = True` and set
-`SIMULATE_CARD_READER = False` in `config.py` to use the real Wiegand card reader
-hardware (`card_backends_impl/`), you will additionally need `lgpio` (already
-installed above) and should double check `hardware/card_reader_api.py`'s
-imports work as a package (it currently has a non-relative import that may
-need fixing).
+If you enable `AUTH_ONLY_ON_CARD = True`, the card-reader backend used is
+controlled by `config.CARD_READER_BACKEND`:
+- `"gwiot_hid"` (default) — real GWIOT USB HID card reader via `evdev`
+  (`pip install evdev`, already in the core `requirements.txt`).
+- `"wiegand_gpio"` — older real Wiegand GPIO reader (`lgpio`, already
+  installed above).
+- `"simulated"` — fake reader for dev off the Pi.
 
 ## 6. Hardware / OS permissions
 
 ```bash
-sudo usermod -aG dialout,gpio,video,plugdev geka
+sudo usermod -aG dialout,gpio,video,plugdev,input geka
 ```
+
+The `input` group is required for `config.CARD_READER_BACKEND = "gwiot_hid"`
+(the default) -- `card_backends_impl/gwiot_hid_card_reader.py` reads the
+GWIOT USB HID keyboard-emulation card reader directly via `/dev/input/eventX`
+using `evdev`, which requires read access to that device node.
 
 Log out/in (or reboot) for group membership changes to take effect for
 serial (`/dev/ttyACM0`), GPIO, and camera (`/dev/video0`) access.
@@ -271,10 +277,10 @@ sudo ldconfig
 
 # 3. Python deps
 .venv/bin/pip install --upgrade pip
-.venv/bin/pip install numpy PySide6 requests lgpio
+.venv/bin/pip install numpy PySide6 requests lgpio evdev
 
 # 4. Permissions
-sudo usermod -aG dialout,gpio,video,plugdev geka   # then re-login
+sudo usermod -aG dialout,gpio,video,plugdev,input geka   # then re-login
 
 # 5. Run
 DISPLAY=:0 .venv/bin/python main_qt.py

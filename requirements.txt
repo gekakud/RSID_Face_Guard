@@ -17,20 +17,25 @@ PySide6
 # Relay (hardware/relay_api.py, config.RUN_WITH_RELAY = True)
 lgpio
 
+# Card reader (default backend: config.CARD_READER_BACKEND = "gwiot_hid" --
+# card_backends_impl/gwiot_hid_card_reader.py reads the GWIOT USB HID
+# keyboard-emulation reader via evdev).
+evdev
+
 # =====================================================
 # Optional: only needed if the corresponding feature/config is enabled
 # =====================================================
 
 # LED control - only used by the standalone other/led_control.py and
 # other/led_test.py scripts (not imported by main_qt.py/main.py/main_web.py
-# or any of the shared gui/face_auth/hardware/db/card_api packages).
+# or any of the shared gui/face_auth/hardware/db/card_backends_impl packages).
 # pyaudio and rpi_ws281x were removed: verified unused anywhere in the repo.
 Adafruit-Blinka-Raspberry-Pi5-Neopixel
 adafruit-circuitpython-neopixel
 adafruit-blinka
 
-# Real (non-simulated) card reader / GPIO helpers not on the main_qt.py
-# import path when config.SIMULATE_CARD_READER = True.
+# Real Wiegand GPIO card reader/writer helpers -- only needed if
+# config.CARD_READER_BACKEND = "wiegand_gpio" (older hardware).
 gpiozero
 
 # QR code scanning for the technician/maintenance init-mode flow

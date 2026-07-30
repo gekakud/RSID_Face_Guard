@@ -15,14 +15,22 @@ DB_MODE = "local"
 # Hardware Simulation / Mode Flags
 # =====================================================
 
-# Simulate card reader / relay hardware (useful for dev off the Pi)
-SIMULATE_CARD_READER = True
+# Which card-reader backend to use:
+#   "gwiot_hid"    -> real GWIOT USB HID keyboard-emulation reader (evdev),
+#                     the main reader hardware going forward.
+#   "wiegand_gpio" -> real Wiegand GPIO reader (lgpio), older hardware.
+#   "simulated"    -> fake reader for dev off the Pi.
+CARD_READER_BACKEND = "gwiot_hid"
+
+# Kept for backwards compatibility with any code/checks still referencing
+# it directly -- derived from CARD_READER_BACKEND, do not set independently.
+SIMULATE_CARD_READER = CARD_READER_BACKEND == "simulated"
 
 # Set True on RPi5 with the small 720x720 touch screen
 RUN_ON_REAL_SCREEN = True
 
 # Enable card reader monitoring (auto-authenticate when a card is tapped)
-AUTH_ONLY_ON_CARD = False
+AUTH_ONLY_ON_CARD = True
 
 # Session-based authentication: the camera preview stays OFF while idle and
 # only turns on for an active auth "session" -- triggered by a screen

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 
+import queue
+import threading
 from pathlib import Path
 from typing import Optional
 
 from evdev import InputDevice, categorize, ecodes, list_devices
-
 
 class GwiotCardReader:
     KEY_MAP = {
@@ -116,6 +117,69 @@ class GwiotCardReader:
     def close(self) -> None:
         self.device.close()
 
+# ====== Module-level singleton API (matches other card backends) ======
+#
+# GwiotCardReader.wait_for_card_number() is a blocking call with no timeout
+# support, so we run it in a background daemon thread and funnel completed
+# card numbers through a Queue, letting get_card_id(timeout=...) behave like
+# the other backends (wiegand_card_reader.py, card_read_write_simulator.py).
+
+_instance: Optional[GwiotCardReader] = None
+_card_queue: "queue.Queue[str]" = queue.Queue()
+_reader_thread: Optional[threading.Thread] = None
+_stop_event = threading.Event()
+
+def _reader_loop():
+    while not _stop_event.is_set():
+        try:
+            card_number = _instance.wait_for_card_number()
+            if card_number:
+                _card_queue.put(card_number)
+        except Exception:
+            if _stop_event.is_set():
+                break
+            # Device hiccup (e.g. transient read error) -- avoid a tight
+            # error loop, keep trying.
+            _stop_event.wait(1.0)
+
+def initialize_card_reader(
+    device_path: Optional[str] = None,
+    device_name_contains: str = "GWIOT",
+):
+    """Open the GWIOT HID device and start the background read thread."""
+    global _instance, _reader_thread
+    if _instance is not None:
+        return  # already started
+    _instance = GwiotCardReader(
+        device_path=device_path,
+        device_name_contains=device_name_contains,
+    )
+    _stop_event.clear()
+    _reader_thread = threading.Thread(target=_reader_loop, daemon=True)
+    _reader_thread.start()
+
+def get_card_id(timeout: Optional[float] = None) -> Optional[str]:
+    """Return the next card number (string, e.g. "2325780402"), or None on timeout."""
+    if _instance is None:
+        raise RuntimeError("Card reader not initialized. Call initialize_card_reader() first.")
+    try:
+        return _card_queue.get(timeout=timeout)
+    except queue.Empty:
+        return None
+
+def disconnect_card_reader():
+    """Stop the background thread and close the HID device."""
+    global _instance, _reader_thread
+    _stop_event.set()
+    if _instance is not None:
+        try:
+            _instance.close()
+        except Exception:
+            pass
+    if _reader_thread is not None:
+        _reader_thread.join(timeout=2.0)
+        _reader_thread = None
+    _instance = None
 
 def main() -> None:
     reader = GwiotCardReader()
@@ -133,7 +197,6 @@ def main() -> None:
 
     finally:
         reader.close()
-
 
 if __name__ == "__main__":
     main()
