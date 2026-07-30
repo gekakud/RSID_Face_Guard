@@ -32,3 +32,7 @@ adafruit-blinka
 # Real (non-simulated) card reader / GPIO helpers not on the main_qt.py
 # import path when config.SIMULATE_CARD_READER = True.
 gpiozero
+
+# QR code scanning for the technician/maintenance init-mode flow
+# (qr_scanner/qr_scanner.py).
+opencv-python-headless

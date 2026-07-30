@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 import config
 from face_auth import HostModeService
 from hardware.camera_preview import PreviewController
+from qr_scanner import QRScanner
 
 from .display_utils_qt import find_small_display_geometry
 
@@ -116,6 +117,46 @@ class ResultOverlay(QWidget):
             painter.drawText(0, cy - font_size, w, font_size * 2,
                               Qt.AlignmentFlag.AlignCenter, symbol)
 
+class StatusOverlay(QWidget):
+    """Simple centered text overlay used for init-mode / maintenance-mode
+    status messages ("Init Mode", "Configuring...", etc.)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._text = ""
+        self.hide()
+
+    def show_text(self, text: str):
+        self._text = text
+        self.show()
+        self.raise_()
+        self.update()
+
+    def hide_text(self):
+        self._text = ""
+        self.hide()
+
+    def paintEvent(self, event):
+        if not self._text:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+
+        box_w = int(w * 0.9)
+        box_h = 120 if config.RUN_ON_REAL_SCREEN else 160
+        x1 = (w - box_w) // 2
+        y1 = (h - box_h) // 2
+        painter.setBrush(QColor(0, 0, 0, 160))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRect(x1, y1, box_w, box_h)
+
+        font_size = 22 if config.RUN_ON_REAL_SCREEN else 30
+        painter.setPen(QColor("#FFFFFF"))
+        painter.setFont(QFont("Arial", font_size, QFont.Weight.Bold))
+        painter.drawText(0, y1, w, box_h, Qt.AlignmentFlag.AlignCenter, self._text)
+
 class GUIQt(QMainWindow):
     """Main PySide6 window."""
 
@@ -148,6 +189,13 @@ class GUIQt(QMainWindow):
         self.retry_timer = None
         self.session_timeout_timer = None
 
+        # Init mode: brief technician-QR scanning window shown on startup,
+        # before falling into the normal idle/session flow. See config.py's
+        # INIT_MODE_ENABLED/INIT_MODE_DURATION_SEC.
+        self._init_mode_active = False
+        self.init_mode_timer = None
+        self._qr_scanner = QRScanner()
+
         # Central widget / layout
         central = QWidget(self)
         self.setCentralWidget(central)
@@ -161,6 +209,7 @@ class GUIQt(QMainWindow):
         layout.addWidget(self.video_label, stretch=1)
 
         self.result_overlay = ResultOverlay(self.video_label)
+        self.status_overlay = StatusOverlay(self.video_label)
 
         # Window placement
         if config.RUN_ON_REAL_SCREEN:
@@ -177,17 +226,64 @@ class GUIQt(QMainWindow):
         self.video_timer.start(30)
 
         # Start the preview controller's background thread once (it must stay
-        # alive to service pause()/resume() requests), then immediately pause
-        # the actual UVC stream so the camera is off while idle. Sessions
-        # resume()/pause() around this idle baseline -- never start()/stop()
-        # again until app shutdown.
+        # alive to service pause()/resume() requests). If init mode is
+        # enabled, kick off the QR-scanning window with the preview running;
+        # otherwise pause immediately and fall straight into the normal idle
+        # baseline. Sessions resume()/pause() around this idle baseline --
+        # never start()/stop() again until app shutdown.
         self.preview_controller.start()
-        self.preview_controller.pause()
 
         if config.AUTH_ONLY_ON_CARD:
             self.host_service.start_card_monitoring(
                 on_card_detected=lambda cid: self._bridge.card_detected.emit(cid)
             )
+
+        if config.INIT_MODE_ENABLED:
+            self.start_init_mode()
+        else:
+            self.preview_controller.pause()
+
+    # =====================================================
+    # INIT MODE (technician QR scan on startup)
+    # =====================================================
+
+    def start_init_mode(self):
+        """Show a brief live preview and scan for a technician QR code.
+        Falls back to normal idle behavior if nothing is found in time."""
+        self._init_mode_active = True
+        self.video_label.clear()
+        self.status_overlay.setGeometry(self.video_label.rect())
+        self.status_overlay.show_text("Init Mode")
+        self.preview_controller.resume()
+
+        self.init_mode_timer = QTimer(self)
+        self.init_mode_timer.setSingleShot(True)
+        self.init_mode_timer.timeout.connect(self._end_init_mode)
+        self.init_mode_timer.start(int(config.INIT_MODE_DURATION_SEC * 1000))
+
+    def _end_init_mode(self):
+        if not self._init_mode_active:
+            return
+        self._init_mode_active = False
+        if self.init_mode_timer:
+            self.init_mode_timer.stop()
+            self.init_mode_timer = None
+        self.status_overlay.hide_text()
+        self.preview_controller.pause()
+        self.video_label.clear()
+        log.info("Init mode ended -- resuming normal operation")
+
+    def _on_qr_detected(self, payload: dict):
+        """A verified technician QR was found during init mode -- simulate
+        entering a maintenance/config flow (real config-apply logic TBD)."""
+        if not self._init_mode_active:
+            return
+        log.info("Technician QR detected during init mode: %s", payload)
+        if self.init_mode_timer:
+            self.init_mode_timer.stop()
+            self.init_mode_timer = None
+        self.status_overlay.show_text("Configuring... settings loaded successfully")
+        QTimer.singleShot(2500, self._end_init_mode)
 
     # =====================================================
     # DISPLAY PLACEMENT
@@ -218,13 +314,14 @@ class GUIQt(QMainWindow):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.result_overlay.setGeometry(self.video_label.rect())
+        self.status_overlay.setGeometry(self.video_label.rect())
 
     # =====================================================
     # VIDEO
     # =====================================================
 
     def _update_video(self):
-        if not self.preview_controller.running or not self._session_active:
+        if not self.preview_controller.running or not (self._session_active or self._init_mode_active):
             return
         array2d = None
         q = self.preview_controller.image_queue
@@ -232,6 +329,11 @@ class GUIQt(QMainWindow):
             array2d = q.get()
         if array2d is None:
             return
+
+        if self._init_mode_active:
+            payload = self._qr_scanner.scan(array2d)
+            if payload is not None:
+                self._on_qr_detected(payload)
 
         h, w, ch = array2d.shape
         # Mirror horizontally to match the Tkinter version's FLIP_LEFT_RIGHT.
@@ -251,7 +353,7 @@ class GUIQt(QMainWindow):
     # =====================================================
 
     def mousePressEvent(self, event):
-        if not config.AUTH_ONLY_ON_CARD:
+        if not config.AUTH_ONLY_ON_CARD and not self._init_mode_active:
             self.start_session()
         super().mousePressEvent(event)
 
@@ -390,6 +492,8 @@ class GUIQt(QMainWindow):
             self.retry_timer.stop()
         if self.session_timeout_timer:
             self.session_timeout_timer.stop()
+        if self.init_mode_timer:
+            self.init_mode_timer.stop()
 
         # Wait for any in-flight authentication to complete before we touch
         # the device from the shutdown path.

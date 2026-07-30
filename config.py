@@ -38,6 +38,15 @@ AUTH_SESSION_TIMEOUT_SEC = 30.0
 #   False -> normal draggable, bordered window (handy for editor-side debugging).
 KIOSK_BORDERLESS = False
 
+# Init mode: on startup, before the normal idle/session flow, show a brief
+# live camera preview and scan for a technician QR code (maintenance/reset/
+# config). If a valid, signed QR is detected within INIT_MODE_DURATION_SEC,
+# a maintenance flow is entered instead of normal operation. If the timer
+# expires with nothing detected, the app proceeds with regular boot exactly
+# as before.
+INIT_MODE_ENABLED = True
+INIT_MODE_DURATION_SEC = 3.0
+
 # =====================================================
 # Remote Sync
 # =====================================================

@@ -23,11 +23,14 @@ The shared business/hardware layers (HostModeService, PreviewController,
 config) are reused unchanged, exactly like gui_qt.GUIQt.
 """
 
+import io
 import json
 import logging
 import os
 import threading
 
+import numpy as np
+from PIL import Image
 from PySide6.QtCore import QObject, Qt, QUrl, Signal, Slot, QTimer
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -36,6 +39,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow
 import config
 from face_auth import HostModeService
 from hardware.camera_preview import PreviewController
+from qr_scanner import QRScanner
 
 from gui_qt.display_utils_qt import find_small_display_geometry
 from .frame_server import CameraStreamer, WebServer
@@ -103,6 +107,41 @@ BRIDGE_SETUP_JS = """
   document.head.appendChild(script);
 })();
 """
+
+# Injected once to create a simple full-page text overlay used for init-mode /
+# maintenance-mode status messages, independent of demo_ui's own state machine.
+STATUS_OVERLAY_SETUP_JS = """
+(function() {
+  if (document.getElementById('rsid-status-overlay')) return;
+  var div = document.createElement('div');
+  div.id = 'rsid-status-overlay';
+  div.style.position = 'fixed';
+  div.style.inset = '0';
+  div.style.display = 'none';
+  div.style.alignItems = 'center';
+  div.style.justifyContent = 'center';
+  div.style.zIndex = '9999';
+  div.style.background = 'rgba(0,0,0,0.55)';
+  div.style.color = '#fff';
+  div.style.fontFamily = 'Arial, sans-serif';
+  div.style.fontSize = '28px';
+  div.style.fontWeight = 'bold';
+  div.style.textAlign = 'center';
+  document.body.appendChild(div);
+})();
+"""
+
+def _status_overlay_show_js(text: str) -> str:
+    escaped = json.dumps(text)
+    return (
+        "(function(){var d=document.getElementById('rsid-status-overlay');"
+        "if(d){d.textContent=" + escaped + ";d.style.display='flex';}})();"
+    )
+
+STATUS_OVERLAY_HIDE_JS = (
+    "(function(){var d=document.getElementById('rsid-status-overlay');"
+    "if(d){d.style.display='none';}})();"
+)
 
 class DeviceUI:
     """Python -> JS. Thin wrapper over the page's window.deviceUI API."""
@@ -198,6 +237,14 @@ class GUIWeb(QMainWindow):
         self.retry_timer = None
         self.session_timeout_timer = None
 
+        # Init mode: brief technician-QR scanning window shown on startup,
+        # before falling into the normal idle/session flow. See config.py's
+        # INIT_MODE_ENABLED/INIT_MODE_DURATION_SEC.
+        self._init_mode_active = False
+        self.init_mode_timer = None
+        self._qr_scanner = QRScanner()
+        self._qr_scan_timer = None
+
         # Camera streamer + web/MJPEG server (serve the UI dir over http://).
         self.streamer = CameraStreamer(self.preview_controller)
         self.server = WebServer(
@@ -243,6 +290,73 @@ class GUIWeb(QMainWindow):
             self.host_service.start_card_monitoring(
                 on_card_detected=lambda cid: self._bridge.card_detected.emit(cid)
             )
+
+    # =====================================================
+    # INIT MODE (technician QR scan on startup)
+    # =====================================================
+
+    def start_init_mode(self):
+        """Show a brief live preview and scan for a technician QR code.
+        Falls back to normal idle behavior if nothing is found in time."""
+        self._init_mode_active = True
+        self.device_ui.camera()
+        self.view.page().runJavaScript(_status_overlay_show_js("Init Mode"))
+        self.preview_controller.resume()
+
+        self._qr_scan_timer = QTimer(self)
+        self._qr_scan_timer.timeout.connect(self._qr_scan_tick)
+        self._qr_scan_timer.start(200)
+
+        self.init_mode_timer = QTimer(self)
+        self.init_mode_timer.setSingleShot(True)
+        self.init_mode_timer.timeout.connect(self._end_init_mode)
+        self.init_mode_timer.start(int(config.INIT_MODE_DURATION_SEC * 1000))
+
+    def _qr_scan_tick(self):
+        if not self._init_mode_active:
+            return
+        jpeg_bytes = self.streamer.latest()
+        if jpeg_bytes is None:
+            return
+        try:
+            frame = np.array(Image.open(io.BytesIO(jpeg_bytes)).convert("RGB"))
+        except Exception:
+            return
+        payload = self._qr_scanner.scan(frame)
+        if payload is not None:
+            self._on_qr_detected(payload)
+
+    def _end_init_mode(self):
+        if not self._init_mode_active:
+            return
+        self._init_mode_active = False
+        if self.init_mode_timer:
+            self.init_mode_timer.stop()
+            self.init_mode_timer = None
+        if self._qr_scan_timer:
+            self._qr_scan_timer.stop()
+            self._qr_scan_timer = None
+        self.view.page().runJavaScript(STATUS_OVERLAY_HIDE_JS)
+        self.preview_controller.pause()
+        self.device_ui.screensaver()
+        log.info("Init mode ended -- resuming normal operation")
+
+    def _on_qr_detected(self, payload: dict):
+        """A verified technician QR was found during init mode -- simulate
+        entering a maintenance/config flow (real config-apply logic TBD)."""
+        if not self._init_mode_active:
+            return
+        log.info("Technician QR detected during init mode: %s", payload)
+        if self.init_mode_timer:
+            self.init_mode_timer.stop()
+            self.init_mode_timer = None
+        if self._qr_scan_timer:
+            self._qr_scan_timer.stop()
+            self._qr_scan_timer = None
+        self.view.page().runJavaScript(
+            _status_overlay_show_js("Configuring... settings loaded successfully")
+        )
+        QTimer.singleShot(2500, self._end_init_mode)
 
     # =====================================================
     # DISPLAY PLACEMENT
@@ -308,16 +422,20 @@ class GUIWeb(QMainWindow):
             return
         self._page_ready = True
         self.view.page().runJavaScript(BRIDGE_SETUP_JS)
+        self.view.page().runJavaScript(STATUS_OVERLAY_SETUP_JS)
         # UI rests on its native screensaver; the user wakes it by tapping
         # (no-card mode) or the card monitor detects a registered card
-        # (card mode). Either path calls start_session().
+        # (card mode). Either path calls start_session(). On first load,
+        # kick off init mode (technician QR scan window) if enabled.
+        if config.INIT_MODE_ENABLED:
+            self.start_init_mode()
 
     # =====================================================
     # SESSION MANAGEMENT
     # =====================================================
 
     def _on_user_tapped(self):
-        if not config.AUTH_ONLY_ON_CARD:
+        if not config.AUTH_ONLY_ON_CARD and not self._init_mode_active:
             self.start_session()
 
     def _on_card_detected(self, card_id):
@@ -449,6 +567,10 @@ class GUIWeb(QMainWindow):
             self.retry_timer.stop()
         if self.session_timeout_timer:
             self.session_timeout_timer.stop()
+        if self.init_mode_timer:
+            self.init_mode_timer.stop()
+        if self._qr_scan_timer:
+            self._qr_scan_timer.stop()
         try:
             self.server.stop()
         except Exception:
