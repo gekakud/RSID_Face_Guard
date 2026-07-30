@@ -147,7 +147,7 @@ def disconnect_card_reader():
         _instance.stop()
         _instance = None
 
-from card_writer_api import initialize_wiegand_tx, send_w32, close_wiegand_tx
+from card_api.wiegand_card_writer import initialize_wiegand_tx, send_w32, close_wiegand_tx
 
 # Optional CLI for quick testing
 if __name__ == "__main__":

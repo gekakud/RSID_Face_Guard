@@ -20,7 +20,7 @@ import sys
 import config
 
 if config.SIMULATE_CARD_READER:
-    from .card_api_sim import (
+    from card_api.card_read_write_simulator import (
         initialize_card_reader as _initialize_card_reader,
         get_card_id as _get_card_id,
         disconnect_card_reader as _disconnect_card_reader,
@@ -30,10 +30,12 @@ if config.SIMULATE_CARD_READER:
     )
 else:
     try:
-        from card_api import (
+        from card_api.wiegand_card_reader import (
             initialize_card_reader as _initialize_card_reader,
             get_card_id as _get_card_id,
             disconnect_card_reader as _disconnect_card_reader,
+        )
+        from card_api.wiegand_card_writer import (
             initialize_wiegand_tx as _initialize_wiegand_tx,
             send_w32 as _send_w32,
             close_wiegand_tx as _close_wiegand_tx,
