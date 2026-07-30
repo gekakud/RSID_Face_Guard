@@ -242,6 +242,7 @@ class GUIQt(QMainWindow):
             self.start_init_mode()
         else:
             self.preview_controller.pause()
+            self._show_idle_text()
 
     # =====================================================
     # INIT MODE (technician QR scan on startup)
@@ -268,10 +269,15 @@ class GUIQt(QMainWindow):
         if self.init_mode_timer:
             self.init_mode_timer.stop()
             self.init_mode_timer = None
-        self.status_overlay.hide_text()
         self.preview_controller.pause()
         self.video_label.clear()
+        self._show_idle_text()
         log.info("Init mode ended -- resuming normal operation")
+
+    def _show_idle_text(self):
+        msg = "Tap your card to authenticate" if config.AUTH_ONLY_ON_CARD else "Tap anywhere to authenticate"
+        self.status_overlay.setGeometry(self.video_label.rect())
+        self.status_overlay.show_text(msg)
 
     def _on_qr_detected(self, payload: dict):
         """A verified technician QR was found during init mode -- simulate
@@ -374,6 +380,7 @@ class GUIQt(QMainWindow):
         if card_id is not None:
             self.host_service.mark_card_session_active()
 
+        self.status_overlay.hide_text()
         self.video_label.clear()
         self.preview_controller.resume()
 
@@ -397,6 +404,7 @@ class GUIQt(QMainWindow):
             return
         log.info("Auth session timed out with no match -- returning to idle")
         self._end_session()
+        self._show_idle_text()
 
     def _end_session(self):
         if not self._session_active:
@@ -463,8 +471,10 @@ class GUIQt(QMainWindow):
             self.result_overlay.setGeometry(self.video_label.rect())
             self.result_overlay.show_result(success, name)
             QTimer.singleShot(config.WELCOME_DURATION_MS, self.result_overlay.hide_result)
-            # Successful match ends the session (after the welcome hold).
+            # Successful match ends the session (after the welcome hold), then
+            # shows the idle text again so the screen doesn't go black.
             QTimer.singleShot(config.WELCOME_DURATION_MS, self._end_session)
+            QTimer.singleShot(config.WELCOME_DURATION_MS, self._show_idle_text)
 
     # =====================================================
     # SHUTDOWN
