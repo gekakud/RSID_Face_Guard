@@ -45,7 +45,7 @@ KIOSK_BORDERLESS = False
 # expires with nothing detected, the app proceeds with regular boot exactly
 # as before.
 INIT_MODE_ENABLED = True
-INIT_MODE_DURATION_SEC = 3.0
+INIT_MODE_DURATION_SEC = 5.0
 
 # =====================================================
 # Remote Sync
