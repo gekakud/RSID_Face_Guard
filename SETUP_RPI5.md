@@ -146,8 +146,8 @@ Not installed (not needed for `main_qt.py` as currently configured):
 
 If you later enable `AUTH_ONLY_ON_CARD = True` and set
 `SIMULATE_CARD_READER = False` in `config.py` to use the real Wiegand card reader
-hardware (`card_api/`), you will additionally need `lgpio` (already
-installed above) and should double check `card_api/card_reader_api.py`'s
+hardware (`card_backends_impl/`), you will additionally need `lgpio` (already
+installed above) and should double check `hardware/card_reader_api.py`'s
 imports work as a package (it currently has a non-relative import that may
 need fixing).
 

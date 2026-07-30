@@ -29,12 +29,16 @@ db/
 hardware/
   camera_preview.py          PreviewController -- background thread wrapping
                               rsid_py preview/camera streaming.
-  card_reader_api.py         Wiegand reads (get_card_id) and sends (send_w32).
+  card_reader_api.py         Facade selecting real vs. simulated card backend
+                              (config.SIMULATE_CARD_READER); exposes
+                              Wiegand reads (get_card_id) and sends (send_w32).
   relay_api.py                Door-strike relay control (GPIO via lgpio).
-  card_api_sim.py            Simulated card reader/relay for dev off-Pi.
 
-card_api/                    Lower-level card reader/writer helpers (GPIO/
-                              Wiegand line-level protocol), used by hardware/.
+card_backends_impl/          Concrete card backend implementations selected by
+                              hardware/card_reader_api.py (Strategy pattern):
+  wiegand_card_reader.py      Real GPIO/lgpio Wiegand reader.
+  wiegand_card_writer.py      Real GPIO/lgpio Wiegand transmitter.
+  card_read_write_simulator.py Simulated card reader/writer for dev off-Pi.
 
 gui_qt/
   main_window_qt.py          GUIQt -- PySide6 window, session state machine.
