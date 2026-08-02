@@ -86,6 +86,7 @@
     screensaver: document.getElementById("screensaver"),
     brand: document.getElementById("screensaver-brand"),
     clock: document.getElementById("clock"),
+    hint: document.getElementById("saver-hint"),
     companyLogo: document.getElementById("company-logo"),
     attendance: document.getElementById("attendance"),
     // Camera-state code button (commented out in index.html -- kept here for
@@ -213,6 +214,7 @@
     codeRejected: (hold) => setState("code-failed", { hold }),
     setExpectedCode: (code) => { expectedCode = String(code); },
     setLogo: (src) => setLogo(src),
+    setHintText: (text) => { if (els.hint) els.hint.textContent = text; },
     // Employee attendance — controlled by the admin/device-management system.
     // The Check In / Check Out toggle only appears while enabled.
     setAttendanceEnabled: (on) => setAttendanceEnabled(on),

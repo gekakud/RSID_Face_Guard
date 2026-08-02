@@ -479,6 +479,22 @@ class GUIQt(QMainWindow):
             # shows the idle text again so the screen doesn't go black.
             QTimer.singleShot(config.WELCOME_DURATION_MS, self._end_session)
             QTimer.singleShot(config.WELCOME_DURATION_MS, self._show_idle_text)
+        elif self._session_card_id is not None:
+            # Card session with a non-matching face: don't keep retrying for
+            # the full session timeout -- a card is either yours or it isn't.
+            # Show the failure once and return to idle immediately.
+            if self.retry_timer:
+                self.retry_timer.stop()
+                self.retry_timer = None
+            if self.session_timeout_timer:
+                self.session_timeout_timer.stop()
+                self.session_timeout_timer = None
+
+            self.result_overlay.setGeometry(self.video_label.rect())
+            self.result_overlay.show_result(False)
+            QTimer.singleShot(config.FAIL_DURATION_MS, self.result_overlay.hide_result)
+            QTimer.singleShot(config.FAIL_DURATION_MS, self._end_session)
+            QTimer.singleShot(config.FAIL_DURATION_MS, self._show_idle_text)
 
     # =====================================================
     # SHUTDOWN

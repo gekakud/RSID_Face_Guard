@@ -180,6 +180,9 @@ class DeviceUI:
     def set_expected_code(self, code):
         self._call("setExpectedCode", str(code))
 
+    def set_hint_text(self, text):
+        self._call("setHintText", text)
+
 class Bridge(QObject):
     """JS -> Python. Keypad code submissions and tap-to-wake from the web UI."""
 
@@ -423,6 +426,8 @@ class GUIWeb(QMainWindow):
         self._page_ready = True
         self.view.page().runJavaScript(BRIDGE_SETUP_JS)
         self.view.page().runJavaScript(STATUS_OVERLAY_SETUP_JS)
+        hint = "Tap your card to enter" if config.AUTH_ONLY_ON_CARD else "Tap the display to enter"
+        self.device_ui.set_hint_text(hint)
         # UI rests on its native screensaver; the user wakes it by tapping
         # (no-card mode) or the card monitor detects a registered card
         # (card mode). Either path calls start_session(). On first load,
@@ -547,6 +552,20 @@ class GUIWeb(QMainWindow):
             # welcome hold ends, alongside tearing down the camera session.
             QTimer.singleShot(config.WELCOME_DURATION_MS, self._end_session)
             QTimer.singleShot(config.WELCOME_DURATION_MS, self.device_ui.screensaver)
+        elif self._session_card_id is not None:
+            # Card session with a non-matching face: don't keep retrying for
+            # the full session timeout -- a card is either yours or it isn't.
+            # Show the failure once and return to the screensaver immediately.
+            if self.retry_timer:
+                self.retry_timer.stop()
+                self.retry_timer = None
+            if self.session_timeout_timer:
+                self.session_timeout_timer.stop()
+                self.session_timeout_timer = None
+
+            self.device_ui.failed(hold=config.FAIL_DURATION_MS)
+            QTimer.singleShot(config.FAIL_DURATION_MS, self._end_session)
+            QTimer.singleShot(config.FAIL_DURATION_MS, self.device_ui.screensaver)
 
     # =====================================================
     # SHUTDOWN
