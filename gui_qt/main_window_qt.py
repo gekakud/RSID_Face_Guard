@@ -44,6 +44,7 @@ class _SignalBridge(QObject):
     PreviewController) onto the Qt main thread via signals."""
     auth_result = Signal(bool, object)  # success, name
     card_detected = Signal(object)      # card_id
+    card_rejected = Signal(object)      # card_id (unregistered)
 
 class ResultOverlay(QWidget):
     """Semi-transparent overlay drawn on top of the video canvas showing
@@ -174,6 +175,7 @@ class GUIQt(QMainWindow):
         self._bridge = _SignalBridge()
         self._bridge.auth_result.connect(self._on_auth_complete)
         self._bridge.card_detected.connect(self._on_card_detected)
+        self._bridge.card_rejected.connect(self._on_card_rejected)
 
         # Services (shared, GUI-agnostic layers)
         self.preview_controller = PreviewController(port, camera_index, device_type)
@@ -235,7 +237,8 @@ class GUIQt(QMainWindow):
 
         if config.AUTH_ONLY_ON_CARD:
             self.host_service.start_card_monitoring(
-                on_card_detected=lambda cid: self._bridge.card_detected.emit(cid)
+                on_card_detected=lambda cid: self._bridge.card_detected.emit(cid),
+                on_card_rejected=lambda cid: self._bridge.card_rejected.emit(cid),
             )
 
         # Defer until after the window is shown/laid out: video_label.rect()
@@ -372,6 +375,17 @@ class GUIQt(QMainWindow):
         # already filters unregistered cards, so any card_id reaching here
         # is valid and ready for a face-match session.
         self.start_session(card_id=card_id)
+
+    def _on_card_rejected(self, card_id):
+        """An unregistered card was tapped: no session/camera is started --
+        just show a brief failure message, then return to idle."""
+        if self._session_active or self._init_mode_active:
+            return
+        self.status_overlay.hide_text()
+        self.result_overlay.setGeometry(self.video_label.rect())
+        self.result_overlay.show_result(False)
+        QTimer.singleShot(config.FAIL_DURATION_MS, self.result_overlay.hide_result)
+        QTimer.singleShot(config.FAIL_DURATION_MS, self._show_idle_text)
 
     def start_session(self, card_id=None):
         """Begin a bounded auth session: start the preview, retry face-match

@@ -211,6 +211,7 @@ class _SignalBridge(QObject):
     """Marshals background-thread auth callbacks onto the Qt main thread."""
     auth_result = Signal(bool, object)  # success, name
     card_detected = Signal(object)      # card_id
+    card_rejected = Signal(object)      # card_id (unregistered)
 
 class GUIWeb(QMainWindow):
     """Main window hosting the web UI in a QWebEngineView."""
@@ -228,6 +229,7 @@ class GUIWeb(QMainWindow):
         self._bridge = _SignalBridge()
         self._bridge.auth_result.connect(self._on_auth_complete)
         self._bridge.card_detected.connect(self._on_card_detected)
+        self._bridge.card_rejected.connect(self._on_card_rejected)
 
         # Shared, GUI-agnostic layers (same as GUIQt).
         self.preview_controller = PreviewController(port, camera_index, device_type)
@@ -291,7 +293,8 @@ class GUIWeb(QMainWindow):
 
         if config.AUTH_ONLY_ON_CARD:
             self.host_service.start_card_monitoring(
-                on_card_detected=lambda cid: self._bridge.card_detected.emit(cid)
+                on_card_detected=lambda cid: self._bridge.card_detected.emit(cid),
+                on_card_rejected=lambda cid: self._bridge.card_rejected.emit(cid),
             )
 
     # =====================================================
@@ -447,6 +450,14 @@ class GUIWeb(QMainWindow):
         # start_card_monitoring() already filters unregistered cards, so any
         # card_id reaching here is valid and ready for a face-match session.
         self.start_session(card_id=card_id)
+
+    def _on_card_rejected(self, card_id):
+        """An unregistered card was tapped: no session/camera is started --
+        just show a brief failure message, then return to the screensaver."""
+        if self._session_active or self._init_mode_active or not self._page_ready:
+            return
+        self.device_ui.failed(hold=config.FAIL_DURATION_MS)
+        QTimer.singleShot(config.FAIL_DURATION_MS, self.device_ui.screensaver)
 
     def start_session(self, card_id=None):
         """Begin a bounded auth session: show the live camera state, start the

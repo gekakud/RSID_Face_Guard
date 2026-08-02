@@ -263,7 +263,8 @@ class HostModeService:
             threading.Thread(target=self._reconnect, daemon=True).start()
             return False, None, str(e)
 
-    def start_card_monitoring(self, on_card_detected: Callable[[object], None]):
+    def start_card_monitoring(self, on_card_detected: Callable[[object], None],
+                               on_card_rejected: Optional[Callable[[object], None]] = None):
         """Start a background daemon thread polling the Wiegand card reader.
 
         This thread only *detects* card taps -- it does not touch the camera.
@@ -306,6 +307,8 @@ class HostModeService:
                             log.warning("Card %s not registered -- ignoring", card_id)
                             last_card_id = card_id
                             last_read_time = current_time
+                            if on_card_rejected:
+                                on_card_rejected(card_id)
                             continue
 
                         log.info("Card detected: %s", card_id)
