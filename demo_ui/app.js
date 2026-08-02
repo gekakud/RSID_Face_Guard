@@ -395,7 +395,13 @@
   /* ---------------------------------------------- Boot */
 
   els.brand.innerHTML = BRAND_FACE;
-  render("screensaver");        // device rests on the screensaver
+  // NOTE: no default render() call here -- the host app (Python) is the sole
+  // authority on the very first visible state (e.g. init-mode QR scan vs.
+  // resting screensaver). The page boots on whatever state is already baked
+  // into index.html's <body data-state="..."> (currently "idle", a blank
+  // camera-style screen) until Python's first runJavaScript() call switches
+  // it. This avoids a visible flash of the screensaver text/clock before
+  // Python decides the real starting state.
   updateClock();
   setInterval(updateClock, 1000);
   startCamera();                // camera runs behind, revealed on wake

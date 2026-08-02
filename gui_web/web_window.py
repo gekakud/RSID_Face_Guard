@@ -437,6 +437,8 @@ class GUIWeb(QMainWindow):
         # kick off init mode (technician QR scan window) if enabled.
         if config.INIT_MODE_ENABLED:
             self.start_init_mode()
+        else:
+            self.device_ui.screensaver()
 
     # =====================================================
     # SESSION MANAGEMENT
