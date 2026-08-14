@@ -1,11 +1,17 @@
+"""Simulated issuer: generates a signed provisioning QR code (POC).
+
+In real life this logic runs on the provisioning/issuer server (holds the
+private key only); here it just runs locally against issuer_keys.py's
+generated key pair for demonstration.
+"""
+
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import qrcode
-
-from qr_common import COMMAND, SCHEMA
-
+from issuer_keys import KEY_ID, load_or_create_private_key
+from qr_common import COMMAND, SCHEMA, sign_payload
 
 def generate_provisioning_qr(
     server_url: str,
@@ -34,15 +40,10 @@ def generate_provisioning_qr(
             "mode": "ethernet_or_preconfigured_wifi",
             "wifi_profile_ref": None,
         },
-        # Placeholder only -- not verified yet by qr_scanner/qr_scanner.py.
-        # TODO: replace with a real Ed25519 signature once verification is
-        # implemented.
-        "signature": {
-            "algorithm": "Ed25519",
-            "key_id": "installer-signing-key-2026-01",
-            "value": "base64url-signature",
-        },
     }
+
+    private_key = load_or_create_private_key()
+    payload = sign_payload(payload, private_key, KEY_ID)
 
     qr_content = json.dumps(
         payload,
@@ -64,7 +65,8 @@ def generate_provisioning_qr(
         back_color="white",
     )
     image.save(output_path)
-
+    print(f"Signed provisioning QR saved to {output_path}")
+    print(json.dumps(payload, indent=2))
 
 if __name__ == "__main__":
     generate_provisioning_qr(

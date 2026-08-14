@@ -3,7 +3,8 @@ import sys
 from typing import Optional
 
 import cv2
-from qr_common import verify_signature
+from issuer_keys import KEY_ID, load_or_create_public_key
+from qr_common import verify_payload
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import (
@@ -29,6 +30,9 @@ class QRCodeReader(QMainWindow):
         self.camera: Optional[cv2.VideoCapture] = None
         self.qr_detector = cv2.QRCodeDetector()
         self.last_qr_data = ""
+        # Simulated device-side trust store: {key_id: public_key}.
+        self.public_keys = {KEY_ID: load_or_create_public_key()}
+        self.seen_nonces = set()
 
         self.video_label = QLabel("Camera is stopped")
         self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -190,8 +194,8 @@ class QRCodeReader(QMainWindow):
         if not isinstance(payload, dict):
             return qr_data
 
-        is_valid = verify_signature(payload)
-        status = "VALID signature" if is_valid else "INVALID signature"
+        result = verify_payload(payload, self.public_keys, self.seen_nonces)
+        status = "VALID" if result.valid else f"INVALID ({result.reason})"
 
         lines = [f"Status: {status}", "", "Decoded text:", qr_data, "", "Parsed fields:"]
         for key, value in payload.items():

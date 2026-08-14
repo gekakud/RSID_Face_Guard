@@ -55,6 +55,12 @@ KIOSK_BORDERLESS = False
 INIT_MODE_ENABLED = True
 INIT_MODE_DURATION_SEC = 5.0
 
+# Directory of trusted issuer public keys for provisioning QR verification.
+# Each file must be named "<key_id>.pem" (Ed25519 SubjectPublicKeyInfo PEM),
+# where <key_id> matches the QR payload's signature.key_id. See
+# qr_scanner/qr_scanner.py and other/qr_code_poc/issuer_keys.py.
+PROVISIONING_PUBLIC_KEYS_DIR = "provisioning_keys"
+
 # =====================================================
 # Remote Sync
 # =====================================================

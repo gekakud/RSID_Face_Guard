@@ -3,3 +3,6 @@
 datadir
 __pycache__
 face_guard.log
+
+# Simulated issuer private key (POC) -- never commit real signing keys
+# other/qr_code_poc/issuer_private_key.pem
