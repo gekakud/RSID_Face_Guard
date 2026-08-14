@@ -348,11 +348,14 @@ class GUIWeb(QMainWindow):
         log.info("Init mode ended -- resuming normal operation")
 
     def _on_qr_detected(self, payload: dict):
-        """A verified technician QR was found during init mode -- simulate
-        entering a maintenance/config flow (real config-apply logic TBD)."""
+        """A provisioning QR was found during init mode -- simulate entering
+        a maintenance/config flow (real provisioning logic TBD)."""
         if not self._init_mode_active:
             return
-        log.info("Technician QR detected during init mode: %s", payload)
+        log.info(
+            "Provisioning QR detected during init mode: door_id=%s site_id=%s tenant_id=%s",
+            payload.get("door_id"), payload.get("site_id"), payload.get("tenant_id"),
+        )
         if self.init_mode_timer:
             self.init_mode_timer.stop()
             self.init_mode_timer = None

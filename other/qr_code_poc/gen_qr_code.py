@@ -1,23 +1,48 @@
 import json
+import uuid
+from datetime import datetime, timedelta, timezone
 
 import qrcode
 
-from qr_common import APP_NAME, create_signature
+from qr_common import COMMAND, SCHEMA
 
 
-def generate_device_qr(
-    device_id: str,
-    url: str,
+def generate_provisioning_qr(
+    server_url: str,
+    tenant_id: str,
+    site_id: str,
+    door_id: str,
+    provisioning_token: str,
     output_path: str,
+    validity_minutes: int = 10,
 ) -> None:
-    payload = {
-        "app": APP_NAME,
-        "version": 1,
-        "id": device_id,
-        "url": url,
-    }
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(minutes=validity_minutes)
 
-    payload["signature"] = create_signature(payload)
+    payload = {
+        "schema": SCHEMA,
+        "command": COMMAND,
+        "server_url": server_url,
+        "tenant_id": tenant_id,
+        "site_id": site_id,
+        "door_id": door_id,
+        "provisioning_token": provisioning_token,
+        "issued_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "expires_at": expires.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "nonce": str(uuid.uuid4()),
+        "network_profile": {
+            "mode": "ethernet_or_preconfigured_wifi",
+            "wifi_profile_ref": None,
+        },
+        # Placeholder only -- not verified yet by qr_scanner/qr_scanner.py.
+        # TODO: replace with a real Ed25519 signature once verification is
+        # implemented.
+        "signature": {
+            "algorithm": "Ed25519",
+            "key_id": "installer-signing-key-2026-01",
+            "value": "base64url-signature",
+        },
+    }
 
     qr_content = json.dumps(
         payload,
@@ -42,8 +67,11 @@ def generate_device_qr(
 
 
 if __name__ == "__main__":
-    generate_device_qr(
-        device_id="DEVICE-000123",
-        url="https://www.google.com",
+    generate_provisioning_qr(
+        server_url="https://access.example.com",
+        tenant_id="tenant_123",
+        site_id="site_456",
+        door_id="door_789",
+        provisioning_token="opaque-one-time-token",
         output_path="device_000123.png",
     )
