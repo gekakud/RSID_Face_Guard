@@ -12,6 +12,10 @@ from typing import Dict, Optional
 
 import requests
 
+from observability.logging_setup import get_logger
+
+log = get_logger("db")
+
 
 def get_mac_address() -> str:
     """Return this device's MAC address, formatted as aa:bb:cc:dd:ee:ff."""
@@ -48,24 +52,24 @@ class RemoteUserDataProvider:
     def load_all(self) -> Dict[str, dict]:
         """Fetch users from the server. Returns {} on any failure."""
         payload = {"mac": get_mac_address()}
-        print("🌍 Contacting server with MAC:", payload["mac"])
+        log.info("Contacting server with MAC: %s", payload["mac"])
 
         try:
             response = requests.post(self.server_url, json=payload, timeout=self.timeout_sec)
         except Exception as e:
-            print("❌ Network error:", e)
+            log.error("Network error: %s", e)
             return {}
 
         if response.status_code != 200:
-            print("❌ Server returned:", response.status_code)
-            print("❌ Body:", response.text[:500])
+            log.error("Server returned: %s", response.status_code)
+            log.error("Body: %s", response.text[:500])
             return {}
 
         try:
             data = response.json()
         except Exception:
-            print("❌ Invalid JSON from server")
-            print("❌ Body:", response.text[:500])
+            log.error("Invalid JSON from server")
+            log.error("Body: %s", response.text[:500])
             return {}
 
         remote_entries = self._extract_entries(data)
@@ -91,7 +95,7 @@ class RemoteUserDataProvider:
 
             faceprints = _embedding_to_faceprints(embedding)
             if faceprints is None:
-                print(f"⚠️ Skipping badgeID {badge_id}: bad embedding values")
+                log.warning("Skipping badgeID %s: bad embedding values", badge_id)
                 continue
 
             user_obj = entry.get("user", {}) or {}
@@ -103,7 +107,7 @@ class RemoteUserDataProvider:
                 "faceprints": faceprints,
             }
 
-        print(f"✅ Remote fetch complete. {len(users)} users retrieved.")
+        log.info("Remote fetch complete. %d users retrieved.", len(users))
         return users
 
     @staticmethod
@@ -117,7 +121,7 @@ class RemoteUserDataProvider:
                 (data.get("result") or {}).get("ticketDeviceAccess")
             )
             if not entries:
-                print("ℹ Could not find entries. Top-level keys:", list(data.keys())[:50])
+                log.warning("Could not find entries. Top-level keys: %s", list(data.keys())[:50])
             return entries
-        print("ℹ Unexpected JSON type:", type(data))
+        log.warning("Unexpected JSON type: %s", type(data))
         return None

@@ -25,7 +25,9 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import numpy as np
 from PIL import Image
 
-log = logging.getLogger("face_guard")
+from observability.logging_setup import get_logger
+
+log = get_logger("gui")
 
 class CameraStreamer:
     """Keeps the latest JPEG frame from the PreviewController for the MJPEG

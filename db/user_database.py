@@ -16,7 +16,9 @@ from typing import Callable, Dict, Optional
 from .local_provider import LocalUserDataProvider
 from .remote_provider import RemoteUserDataProvider
 
-log = logging.getLogger("face_guard")
+from observability.logging_setup import get_logger
+
+log = get_logger("db")
 
 
 class UserDatabase:

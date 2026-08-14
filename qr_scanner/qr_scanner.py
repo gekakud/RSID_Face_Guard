@@ -59,7 +59,9 @@ from cryptography.hazmat.primitives import serialization
 
 import config
 
-log = logging.getLogger("face_guard")
+from observability.logging_setup import get_logger
+
+log = get_logger("qr_scanner")
 
 EXPECTED_SCHEMA = "acme.provisioning-qr.v1"
 

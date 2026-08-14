@@ -21,7 +21,9 @@ from hardware.card_reader_api import (
 )
 from hardware.relay_api import open_door, disconnect_relay
 
-log = logging.getLogger("face_guard")
+from observability.logging_setup import get_logger
+
+log = get_logger("auth")
 
 def _open_access_point(identifier=None):
     """Open the door/access-point on successful auth.

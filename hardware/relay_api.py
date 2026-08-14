@@ -9,11 +9,15 @@ Moved unchanged from the project root relay_api.py. Public API:
 
 import time
 
+from observability.logging_setup import get_logger
+
+log = get_logger("relay")
+
 try:
     import lgpio
 except ImportError:
     lgpio = None
-    print("⚠️ lgpio not available")
+    log.warning("lgpio not available -- relay control disabled")
 
 # GPIO chip number: RPi 5 uses chip 4, earlier RPi models use chip 0
 GPIO_CHIP = 4
@@ -40,9 +44,9 @@ class RelayController:
             on_level = 0 if self.active_low else 1
             initial = off_level if self.default_off else on_level
             lgpio.gpio_claim_output(self._handle, self.relay_pin, initial)
-            print(f"✅ Relay initialized on GPIO {self.relay_pin}, chip {GPIO_CHIP} (active_low={self.active_low})")
+            log.info("Relay initialized on GPIO %s, chip %s (active_low=%s)", self.relay_pin, GPIO_CHIP, self.active_low)
         except Exception as e:
-            print(f"⚠️ Relay GPIO initialization failed: {e}. Relay disabled.")
+            log.error("Relay GPIO initialization failed: %s. Relay disabled.", e)
             self._unavailable = True
             if self._handle is not None:
                 try:
@@ -63,7 +67,7 @@ class RelayController:
 
     def open_door(self, seconds: float = 3.0):
         if lgpio is None or self._unavailable:
-            print(f"[SIM] open_door({seconds})")
+            log.info("[SIM] open_door(%s)", seconds)
             return
 
         if self._handle is None:
@@ -85,7 +89,7 @@ class RelayController:
         except Exception:
             pass
         self._handle = None
-        print("🧹 Relay GPIO cleaned up")
+        log.info("Relay GPIO cleaned up")
 
 
 # =====================================================

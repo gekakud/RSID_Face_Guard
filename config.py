@@ -62,6 +62,25 @@ INIT_MODE_DURATION_SEC = 5.0
 PROVISIONING_PUBLIC_KEYS_DIR = "provisioning_keys"
 
 # =====================================================
+# Logging (see observability/README.md)
+# =====================================================
+
+# Global default level for the "face_guard" logger tree.
+LOG_LEVEL = "INFO"
+
+# Per-module overrides, keyed by the short module tag (the part after
+# "face_guard."). Use this to quieten noisy subsystems without code changes.
+# Available tags: qr_scanner, auth, relay, card, preview, db, gui, native.
+LOG_LEVELS = {
+    # librsid's C++ logs are extremely chatty at DEBUG (serial/UVC internals).
+    "native": "INFO",
+}
+
+LOG_FILE = "face_guard.log"          # relative paths resolve to the project root
+LOG_MAX_BYTES = 1_000_000
+LOG_BACKUP_COUNT = 5
+
+# =====================================================
 # Remote Sync
 # =====================================================
 

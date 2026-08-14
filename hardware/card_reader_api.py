@@ -24,6 +24,10 @@ Public API:
     close_wiegand_tx()
 """
 
+from observability.logging_setup import get_logger
+
+log = get_logger("card")
+
 import sys
 
 import config
@@ -50,7 +54,7 @@ elif config.CARD_READER_BACKEND == "gwiot_hid":
             close_wiegand_tx as _close_wiegand_tx,
         )
     except ImportError:
-        print("CRITICAL: GWIOT HID card reader backend not available.")
+        log.critical("GWIOT HID card reader backend not available.")
         sys.exit(1)
 elif config.CARD_READER_BACKEND == "wiegand_gpio":
     try:
@@ -65,10 +69,10 @@ elif config.CARD_READER_BACKEND == "wiegand_gpio":
             close_wiegand_tx as _close_wiegand_tx,
         )
     except ImportError:
-        print("CRITICAL: Wiegand GPIO card reader backend not available.")
+        log.critical("Wiegand GPIO card reader backend not available.")
         sys.exit(1)
 else:
-    print(f"CRITICAL: Unknown CARD_READER_BACKEND: {config.CARD_READER_BACKEND!r}")
+    log.critical("Unknown CARD_READER_BACKEND: %r", config.CARD_READER_BACKEND)
     sys.exit(1)
 
 def initialize_card_reader():

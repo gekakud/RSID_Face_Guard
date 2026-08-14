@@ -5,6 +5,10 @@ Self-contained: parses `xrandr --query` to find a preferred small
 touchscreen's geometry so the kiosk window can be placed on it.
 """
 
+from observability.logging_setup import get_logger
+
+log = get_logger("gui")
+
 import re
 import subprocess
 import sys
@@ -38,7 +42,7 @@ def parse_xrandr_connected():
                     int(m.group("y")),
                 ))
     except Exception as e:
-        print("xrandr parse failed:", e)
+        log.warning("xrandr parse failed: %s", e)
     return displays
 
 def find_small_display_geometry(prefer_w=800, prefer_h=480) -> Optional[Tuple[int, int]]:

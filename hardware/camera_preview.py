@@ -15,7 +15,9 @@ import time
 import numpy as np
 import rsid_py
 
-log = logging.getLogger("face_guard")
+from observability.logging_setup import get_logger
+
+log = get_logger("preview")
 
 class PreviewController(threading.Thread):
     """Handles camera preview in a separate thread."""

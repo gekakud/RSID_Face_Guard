@@ -7,6 +7,10 @@ from typing import Optional
 
 from evdev import InputDevice, categorize, ecodes, list_devices
 
+from observability.logging_setup import get_logger
+
+log = get_logger("card")
+
 class GwiotCardReader:
     KEY_MAP = {
         ecodes.KEY_0: "0",
@@ -41,10 +45,7 @@ class GwiotCardReader:
             device_name_contains=device_name_contains,
         )
 
-        print(
-            f"Card reader connected: {self.device.name} "
-            f"({self.device.path})"
-        )
+        log.info("Card reader connected: %s (%s)", self.device.name, self.device.path)
 
     @staticmethod
     def _open_device(

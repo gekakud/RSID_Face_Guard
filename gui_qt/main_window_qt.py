@@ -35,7 +35,9 @@ from qr_scanner import QRScanner
 
 from .display_utils_qt import find_small_display_geometry
 
-log = logging.getLogger("face_guard")
+from observability.logging_setup import get_logger
+
+log = get_logger("gui")
 
 WINDOW_NAME = "RealSenseID Host Mode (Qt)"
 

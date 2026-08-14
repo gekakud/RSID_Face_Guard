@@ -23,7 +23,6 @@ import logging
 import os
 import platform
 import sys
-from logging.handlers import RotatingFileHandler
 
 # --- QtWebEngine runtime requirements (must be set before any Qt import) -----
 # 1. Chromium refuses to run as root with its sandbox on; the kiosk runs as root.
@@ -37,27 +36,11 @@ os.environ.setdefault("QT_OPENGL", "software")
 os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
 
 import config
+from observability.logging_setup import get_logger, install_native_log_bridge, setup_logging
 
-def _setup_logging() -> logging.Logger:
-    """Configure and return the application logger (same setup as main_qt.py)."""
-    _log = logging.getLogger("face_guard")
-    _log.setLevel(logging.INFO)
-    if _log.handlers:
-        return _log
-    _fmt = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    ch = logging.StreamHandler()
-    ch.setFormatter(_fmt)
-    _log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "face_guard.log")
-    fh = RotatingFileHandler(_log_path, maxBytes=1_000_000, backupCount=5, encoding="utf-8")
-    fh.setFormatter(_fmt)
-    _log.addHandler(ch)
-    _log.addHandler(fh)
-    return _log
-
-log = _setup_logging()
+setup_logging()
+install_native_log_bridge()
+log = get_logger("main")
 
 try:
     import rsid_py
