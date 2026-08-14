@@ -76,7 +76,16 @@ LOG_LEVELS = {
     "native": "INFO",
 }
 
-LOG_FILE = "face_guard.log"          # relative paths resolve to the project root
+# Where the rotating log file is written. A relative path is resolved against
+# the project root (/home/geka/RSID_Face_Guard/face_guard.log), so it doesn't
+# depend on the process's current working directory (important under systemd).
+LOG_FILE = "face_guard.log"
+
+# Log rotation. When face_guard.log reaches LOG_MAX_BYTES (~1 MB) it is renamed
+# to face_guard.log.1 and a fresh file is started; older files shift down
+# (.1 -> .2 ...) and anything past LOG_BACKUP_COUNT is deleted. So disk usage is
+# capped at roughly LOG_MAX_BYTES * (LOG_BACKUP_COUNT + 1) ~= 6 MB total --
+# important on an SD card that must never fill up.
 LOG_MAX_BYTES = 1_000_000
 LOG_BACKUP_COUNT = 5
 
