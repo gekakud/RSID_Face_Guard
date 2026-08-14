@@ -35,6 +35,14 @@ trusted key_id, named "<key_id>.pem". Verification (signature, expiry,
 nonce replay) happens entirely offline/locally; no network call is needed
 to validate the QR's authenticity. See other/qr_code_poc/ for the issuer
 (signing) side of this scheme, simulated for local testing.
+
+Logging: this is a security-relevant path, so every scan outcome is logged
+via the shared "face_guard" logger (console + rotating file, configured in
+main_qt.py). Benign/expected rejections (schema mismatch, expired token)
+log at WARNING. Rejections that indicate a potential forgery/replay attempt
+(invalid signature, unknown key_id, replayed nonce) log at ERROR with a
+"SECURITY:" prefix so they stand out. Every scan attempt also logs exactly
+one final "QR scan result: ACCEPTED/REJECTED" line for easy grepping.
 """
 
 import base64
@@ -59,7 +67,8 @@ def _load_public_keys(directory: str) -> dict:
     """Load all "<key_id>.pem" files in directory into {key_id: public_key}."""
     keys = {}
     if not directory or not os.path.isdir(directory):
-        log.warning("Provisioning public keys directory not found: %r", directory)
+        log.warning("QR provisioning public keys directory not found: %r -- "
+                    "all provisioning QR codes will be rejected", directory)
         return keys
     for filename in os.listdir(directory):
         if not filename.endswith(".pem"):
@@ -71,7 +80,23 @@ def _load_public_keys(directory: str) -> dict:
                 keys[key_id] = serialization.load_pem_public_key(f.read())
         except Exception:
             log.exception("Failed loading provisioning public key: %s", path)
+    if keys:
+        log.info("QR provisioning: loaded %d trusted public key(s): %s",
+                  len(keys), sorted(keys.keys()))
+    else:
+        log.warning("QR provisioning: no trusted public keys loaded from %r -- "
+                    "all provisioning QR codes will be rejected", directory)
     return keys
+
+def _payload_context(payload: dict) -> str:
+    """Short, safe-to-log summary of a payload for tracing (no secrets)."""
+    return (
+        f"tenant_id={payload.get('tenant_id')!r} "
+        f"site_id={payload.get('site_id')!r} "
+        f"door_id={payload.get('door_id')!r} "
+        f"key_id={(payload.get('signature') or {}).get('key_id')!r} "
+        f"nonce={payload.get('nonce')!r}"
+    )
 
 class QRScanner:
     """Stateless-ish helper: feed it frames, get back verified payloads."""
@@ -92,26 +117,39 @@ class QRScanner:
         ).encode("utf-8")
 
     def _verify(self, payload: dict) -> bool:
+        ctx = _payload_context(payload)
+
         if payload.get("schema") != EXPECTED_SCHEMA:
-            log.warning("QR schema mismatch: %r", payload.get("schema"))
+            log.warning("QR rejected (unexpected schema %r) -- %s",
+                        payload.get("schema"), ctx)
             return False
 
         sig = payload.get("signature")
         if not isinstance(sig, dict) or sig.get("algorithm") != "Ed25519":
-            log.warning("QR missing/unsupported signature: %r", sig)
+            log.error("SECURITY: QR rejected (missing/unsupported signature "
+                      "algorithm %r) -- %s", sig.get("algorithm") if isinstance(sig, dict) else sig, ctx)
             return False
 
         key_id = sig.get("key_id")
         public_key = self._public_keys.get(key_id)
         if public_key is None:
-            log.warning("QR signed by unknown key_id: %r", key_id)
+            log.error("SECURITY: QR rejected (unknown key_id) -- %s", ctx)
             return False
 
         try:
             signature_bytes = base64.urlsafe_b64decode(sig.get("value", ""))
+        except Exception:
+            log.error("SECURITY: QR rejected (malformed signature encoding) -- %s", ctx)
+            return False
+
+        try:
             public_key.verify(signature_bytes, self._canonical_payload_bytes(payload))
-        except (InvalidSignature, Exception):
-            log.warning("QR signature verification failed")
+        except InvalidSignature:
+            log.error("SECURITY: QR rejected (signature does not match payload -- "
+                      "possible tampering or forgery attempt) -- %s", ctx)
+            return False
+        except Exception:
+            log.exception("QR signature verification raised an unexpected error -- %s", ctx)
             return False
 
         expires_at = payload.get("expires_at")
@@ -119,19 +157,20 @@ class QRScanner:
             try:
                 expires_dt = datetime.strptime(expires_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
             except ValueError:
-                log.warning("QR malformed expires_at: %r", expires_at)
+                log.warning("QR rejected (malformed expires_at %r) -- %s", expires_at, ctx)
                 return False
             if datetime.now(timezone.utc) > expires_dt:
-                log.warning("QR token expired at %s", expires_at)
+                log.warning("QR rejected (token expired at %s) -- %s", expires_at, ctx)
                 return False
 
         nonce = payload.get("nonce")
         if nonce is not None:
             if nonce in self._seen_nonces:
-                log.warning("QR nonce already used (replay): %r", nonce)
+                log.error("SECURITY: QR rejected (nonce already used -- replay attempt) -- %s", ctx)
                 return False
             self._seen_nonces.add(nonce)
 
+        log.info("QR signature/expiry/nonce checks passed -- %s", ctx)
         return True
 
     def scan(self, frame: np.ndarray) -> Optional[dict]:
@@ -148,23 +187,27 @@ class QRScanner:
         try:
             qr_data, points, _ = self._detector.detectAndDecode(frame)
         except Exception:
-            log.exception("QR detection error")
+            log.exception("QR scan result: REJECTED (detection error)")
             return None
 
         if not qr_data:
+            # No QR code found in this frame -- normal/expected during most
+            # of init mode's polling; not logged to avoid spam.
             return None
 
         try:
             payload = json.loads(qr_data)
         except (json.JSONDecodeError, TypeError):
-            log.warning("QR code detected but content is not valid JSON: %r", qr_data)
+            log.warning("QR scan result: REJECTED (content is not valid JSON): %r", qr_data)
             return None
 
         if not isinstance(payload, dict):
+            log.warning("QR scan result: REJECTED (decoded JSON is not an object)")
             return None
 
         if not self._verify(payload):
+            log.warning("QR scan result: REJECTED -- %s", _payload_context(payload))
             return None
 
-        log.info("QR code detected and verified: %s", payload)
+        log.info("QR scan result: ACCEPTED -- %s", _payload_context(payload))
         return payload
