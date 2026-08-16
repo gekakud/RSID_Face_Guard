@@ -167,11 +167,15 @@ class HostModeService:
 
         def on_fp_auth_result(status, new_prints):
             if status != rsid_py.AuthenticateStatus.Success or not new_prints:
+                events.emit("access_denied", method="card", card_id=str(card_id),
+                            reason="extraction_failed", status=str(status))
                 result[0] = (False, None, f"Face extraction failed: {status}")
                 return
 
             fp = user_info.get('faceprints')
             if not fp:
+                events.emit("access_denied", method="card", card_id=str(card_id),
+                            reason="no_faceprints_on_file")
                 result[0] = (False, None, "No faceprints on file")
                 return
 
@@ -221,6 +225,8 @@ class HostModeService:
 
         def on_fp_auth_result(status, new_prints):
             if status != rsid_py.AuthenticateStatus.Success or not new_prints:
+                events.emit("access_denied", method="face",
+                            reason="extraction_failed", status=str(status))
                 result[0] = (False, None, f"Face extraction failed: {status}")
                 return
 

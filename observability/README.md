@@ -147,7 +147,7 @@ delivered but whose response was lost (and therefore resent) never duplicates.
 |---|---|
 | `device_boot` | `main_qt.py` / `main_web.py` `main()` |
 | `device_shutdown` | `provisioning/binding.py` `shutdown()` |
-| `access_granted` / `access_denied` | `face_auth/auth_service.py` |
+| `access_granted` / `access_denied` | `face_auth/auth_service.py` — `access_denied` carries a `reason`: `face_mismatch`, `no_match`, `extraction_failed`, or `no_faceprints_on_file` |
 | `card_unknown` | `face_auth/auth_service.py` |
 | `hardware_error` | `face_auth/auth_service.py` |
 | `relay_opened` | `hardware/relay_api.py` `open_door()` |
