@@ -53,7 +53,7 @@ KIOSK_BORDERLESS = False
 # expires with nothing detected, the app proceeds with regular boot exactly
 # as before.
 INIT_MODE_ENABLED = True
-INIT_MODE_DURATION_SEC = 5.0
+INIT_MODE_DURATION_SEC = 8.0
 
 # Directory of trusted issuer public keys for provisioning QR verification.
 # Each file must be named "<key_id>.pem" (Ed25519 SubjectPublicKeyInfo PEM),

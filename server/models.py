@@ -47,6 +47,7 @@ class RegisterResponse(BaseModel):
     tenant_id: str
     site_id: str
     door_id: str
+    registered_at: str
 
 
 class StatusRequest(BaseModel):

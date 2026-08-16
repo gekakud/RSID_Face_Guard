@@ -277,6 +277,7 @@ def register_device(
         tenant_id=row["tenant_id"],
         site_id=row["site_id"],
         door_id=row["door_id"],
+        registered_at=now,
     )
 
 
