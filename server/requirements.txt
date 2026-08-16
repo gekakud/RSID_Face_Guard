@@ -1,0 +1,19 @@
+# Dashboard / provisioning server. Independent of the device's requirements.txt
+# (no PySide6, no lgpio, no rsid_py) so this deploys to a plain Linux host.
+fastapi
+uvicorn[standard]
+jinja2
+pydantic
+cryptography
+qrcode[pil]
+requests
+
+# Used to read back each QR we generate and confirm the device's own decoder
+# (OpenCV) can actually parse it before we hand it to an installer. See
+# signing._decodes(). Headless build: no GUI libs needed on the server.
+numpy
+opencv-python-headless
+
+# Dev / test only
+pytest
+httpx

@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 import config
 from face_auth import HostModeService
 from hardware.camera_preview import PreviewController
+from provisioning.binding import BindingManager
 from qr_scanner import QRScanner
 
 from .display_utils_qt import find_small_display_geometry
@@ -47,6 +48,7 @@ class _SignalBridge(QObject):
     auth_result = Signal(bool, object)  # success, name
     card_detected = Signal(object)      # card_id
     card_rejected = Signal(object)      # card_id (unregistered)
+    binding_result = Signal(bool, str)  # success, message (device provisioning)
 
 class ResultOverlay(QWidget):
     """Semi-transparent overlay drawn on top of the video canvas showing
@@ -178,6 +180,7 @@ class GUIQt(QMainWindow):
         self._bridge.auth_result.connect(self._on_auth_complete)
         self._bridge.card_detected.connect(self._on_card_detected)
         self._bridge.card_rejected.connect(self._on_card_rejected)
+        self._bridge.binding_result.connect(self._on_binding_result)
 
         # Services (shared, GUI-agnostic layers)
         self.preview_controller = PreviewController(port, camera_index, device_type)
@@ -199,6 +202,10 @@ class GUIQt(QMainWindow):
         self._init_mode_active = False
         self.init_mode_timer = None
         self._qr_scanner = QRScanner()
+        # Unlike gui_web (which stops its scan timer), QR scanning here runs
+        # inside _update_video and keeps firing, so this guards against a second
+        # frame starting a second registration with the same one-time token.
+        self._binding_in_progress = False
 
         # Central widget / layout
         central = QWidget(self)
@@ -242,6 +249,13 @@ class GUIQt(QMainWindow):
                 on_card_detected=lambda cid: self._bridge.card_detected.emit(cid),
                 on_card_rejected=lambda cid: self._bridge.card_rejected.emit(cid),
             )
+
+        # If this device was bound on an earlier run, resume reporting to the
+        # dashboard right away -- no QR rescan needed after a reboot.
+        self.binding = BindingManager(
+            device_type=device_type, metadata_fn=self._collect_metadata
+        )
+        self.binding.start_if_bound()
 
         # Defer until after the window is shown/laid out: video_label.rect()
         # is still a default placeholder size here (0,0 100x30) since Qt
@@ -288,20 +302,52 @@ class GUIQt(QMainWindow):
         self.status_overlay.setGeometry(self.video_label.rect())
         self.status_overlay.show_text(msg)
 
+    def _collect_metadata(self) -> dict:
+        """Snapshot of device state, sent with every heartbeat.
+
+        Called from the heartbeat thread, so it only reads simple attributes --
+        no Qt calls, no blocking work.
+        """
+        return {
+            "app_version": getattr(config, "APP_VERSION", "face-guard"),
+            "device_type": str(self.preview_controller.device_type),
+            "serial_port": self.port,
+            "user_count": self.host_service.user_db.count(),
+            "camera_available": bool(self.preview_controller.running),
+            "relay_available": bool(config.RUN_WITH_RELAY),
+            "session_active": bool(self._session_active),
+            "init_mode_active": bool(self._init_mode_active),
+            "auth_in_progress": bool(self.auth_in_progress),
+        }
+
+    def _on_binding_result(self, ok: bool, message: str):
+        """Binding finished (marshalled onto the Qt thread by _SignalBridge)."""
+        self._binding_in_progress = False
+        self.status_overlay.show_text(message if ok else f"Registration failed\n{message}")
+        # Leave a failure up longer -- an installer needs time to read why.
+        QTimer.singleShot(3000 if ok else 6000, self._end_init_mode)
+
     def _on_qr_detected(self, payload: dict):
-        """A provisioning QR was found during init mode -- simulate entering
-        a maintenance/config flow (real provisioning logic TBD)."""
-        if not self._init_mode_active:
+        """A verified provisioning QR was found during init mode -- bind this
+        device to the server named in the payload."""
+        if not self._init_mode_active or self._binding_in_progress:
             return
+        self._binding_in_progress = True
         log.info(
             "Provisioning QR detected during init mode: door_id=%s site_id=%s tenant_id=%s",
             payload.get("door_id"), payload.get("site_id"), payload.get("tenant_id"),
         )
+        # Stop the init-mode timeout immediately so a second frame can't start a
+        # second registration with the same (single-use) token.
         if self.init_mode_timer:
             self.init_mode_timer.stop()
             self.init_mode_timer = None
-        self.status_overlay.show_text("Configuring... settings loaded successfully")
-        QTimer.singleShot(2500, self._end_init_mode)
+
+        self.status_overlay.show_text("Binding to server...")
+        self.binding.bind_async(
+            payload,
+            lambda ok, message: self._bridge.binding_result.emit(ok, message),
+        )
 
     # =====================================================
     # DISPLAY PLACEMENT
@@ -348,7 +394,7 @@ class GUIQt(QMainWindow):
         if array2d is None:
             return
 
-        if self._init_mode_active:
+        if self._init_mode_active and not self._binding_in_progress:
             payload = self._qr_scanner.scan(array2d)
             if payload is not None:
                 self._on_qr_detected(payload)
@@ -552,6 +598,7 @@ class GUIQt(QMainWindow):
 
         # Fully stop the preview stream (blocks until the native thread ends)
         # BEFORE disconnecting the authenticator.
+        self.binding.shutdown()
         self.preview_controller.stop()
         self.host_service.cleanup()
 

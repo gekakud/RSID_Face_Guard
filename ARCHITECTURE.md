@@ -52,6 +52,22 @@ gui_web/
 
 demo_ui/                      Static HTML/CSS/JS front-end rendered inside
                               GUIWeb's QWebEngineView (designer-provided UI).
+
+qr_scanner/
+  qr_scanner.py               QRScanner -- OpenCV QR detection plus Ed25519
+                              signature, expiry and nonce-replay verification
+                              against provisioning_keys/*.pem.
+
+provisioning/                 Binding this device to a dashboard server after
+                              it scans a provisioning QR (see server/README.md):
+  binding.py                  BindingManager -- the flow both GUIs call.
+  client.py                   The two HTTP calls (register, post_status).
+  identity.py                 Load/save device_identity.json (holds a token).
+  heartbeat.py                Background status-reporting thread.
+
+server/                       Standalone FastAPI + SQLite dashboard. Issues the
+                              provisioning QRs and displays device status. Not
+                              part of the device app -- deploys separately.
 ```
 
 Both GUIs depend only on `HostModeService`, `PreviewController`, and

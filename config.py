@@ -103,6 +103,23 @@ SERVER_URL = "https://geine-server.onrender.com/getTicketDeviceAccessByMacAdress
 REMOTE_TIMEOUT_SEC = 10
 
 # =====================================================
+# Device Binding (dashboard server -- see server/README.md)
+# =====================================================
+
+# Where this device's credentials live after it binds by scanning a
+# provisioning QR. Holds a bearer token, so it is gitignored. Note the server
+# URL is NOT configured here: it comes from the signed QR payload, which is how
+# a fresh device learns which deployment it belongs to.
+DEVICE_IDENTITY_FILE = "device_identity.json"
+
+# How often a bound device reports its status. The server marks a device
+# offline after its own (longer) timeout, so one missed beat won't flap it.
+HEARTBEAT_INTERVAL_SEC = 30
+
+# Reported to the dashboard as app_version.
+APP_VERSION = "face-guard-0.1.0"
+
+# =====================================================
 # Authentication
 # =====================================================
 

@@ -6,3 +6,9 @@ face_guard.log
 
 # Simulated issuer private key (POC) -- never commit real signing keys
 # other/qr_code_poc/issuer_private_key.pem
+
+# Dashboard server SQLite database (+ WAL sidecars)
+server/data/
+
+# Device binding credentials -- holds a bearer token (Phase 2)
+device_identity.json

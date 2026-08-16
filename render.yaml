@@ -1,0 +1,36 @@
+# Render blueprint for the device dashboard (server/).
+#
+# The disk is not optional: Render's filesystem is ephemeral, so without it the
+# SQLite database -- and every registered device -- is wiped on each deploy.
+#
+# Set in the Render dashboard, not here:
+#   ADMIN_USER / ADMIN_PASSWORD  -> enables HTTP Basic on the dashboard
+#   PUBLIC_BASE_URL              -> this service's public https URL. It is signed
+#                                   into every QR as server_url, so devices learn
+#                                   where to register. Getting it wrong means
+#                                   devices scan fine and then call nowhere.
+services:
+  - type: web
+    name: face-guard-dashboard
+    runtime: python
+    plan: free
+    buildCommand: pip install -r server/requirements.txt
+    startCommand: uvicorn server.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: DB_PATH
+        value: /var/data/faceguard.db
+      - key: HEARTBEAT_TIMEOUT_SEC
+        value: "90"
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: ADMIN_USER
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+    disk:
+      name: faceguard-data
+      mountPath: /var/data
+      sizeGB: 1

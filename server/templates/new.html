@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% set active = "new" %}
+{% block title %}Add device — Face Guard{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-xl font-semibold tracking-tight text-slate-100">Add a device</h1>
+  <p class="mt-1 text-sm text-slate-500">
+    Generate a signed, one-time QR code, then show it to the device camera while the
+    device is in init mode. The code binds that device to this door.
+  </p>
+</div>
+
+<div class="grid gap-6 lg:grid-cols-[20rem_1fr]">
+
+  <form id="form" class="space-y-4 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+    {% set field = "mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 outline-none focus:border-sky-500" %}
+    {% set label = "block text-xs font-medium uppercase tracking-wider text-slate-500" %}
+
+    <div>
+      <label class="{{ label }}" for="tenant_id">Tenant</label>
+      <input class="{{ field }}" id="tenant_id" name="tenant_id" required placeholder="acme-corp">
+    </div>
+    <div>
+      <label class="{{ label }}" for="site_id">Site</label>
+      <input class="{{ field }}" id="site_id" name="site_id" required placeholder="tel-aviv-hq">
+    </div>
+    <div>
+      <label class="{{ label }}" for="door_id">Door</label>
+      <input class="{{ field }}" id="door_id" name="door_id" required placeholder="main-entrance">
+    </div>
+    <div>
+      <label class="{{ label }}" for="validity_minutes">Valid for (minutes)</label>
+      <input class="{{ field }}" id="validity_minutes" name="validity_minutes"
+             type="number" min="0" max="1440" value="{{ default_validity }}" required>
+    </div>
+
+    <button type="submit"
+            class="w-full rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-sky-500 disabled:opacity-50">
+      Generate QR code
+    </button>
+    <p id="error" class="hidden rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-400"></p>
+  </form>
+
+  <div id="result" class="hidden rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+    <div class="flex flex-wrap items-start gap-6">
+      <div class="shrink-0">
+        <!-- White plate behind the code: the device camera needs the quiet zone
+             to stay light, and the page background is near-black. -->
+        <div class="rounded-lg bg-white p-3">
+          <img id="qr" alt="Provisioning QR code" class="block h-64 w-64">
+        </div>
+        <p id="countdown" class="mt-3 text-center text-sm"></p>
+      </div>
+
+      <div class="min-w-0 flex-1">
+        <h2 class="text-sm font-medium text-slate-200">Show this to the device camera</h2>
+        <dl id="meta" class="mt-3 space-y-1.5 text-sm"></dl>
+        <details class="mt-4">
+          <summary class="cursor-pointer text-xs uppercase tracking-wider text-slate-500 hover:text-slate-300">
+            Signed payload
+          </summary>
+          <pre id="payload" class="mt-2 max-h-64 overflow-auto rounded-md bg-slate-950 p-3 font-mono text-xs text-slate-400"></pre>
+        </details>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const form = document.getElementById("form");
+  const result = document.getElementById("result");
+  const errorBox = document.getElementById("error");
+  const countdown = document.getElementById("countdown");
+  let countdownTimer = null;
+
+  const escapeHtml = (value) =>
+    String(value ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  function startCountdown(expiresAt) {
+    clearInterval(countdownTimer);
+    const expiry = new Date(expiresAt).getTime();
+
+    const tick = () => {
+      const remaining = Math.floor((expiry - Date.now()) / 1000);
+      if (remaining <= 0) {
+        // Make a dead code obvious -- an installer shouldn't be left holding up
+        // a QR the device will silently reject as expired.
+        countdown.textContent = "Expired — generate a new code";
+        countdown.className = "mt-3 text-center text-sm font-medium text-red-400";
+        document.getElementById("qr").style.opacity = "0.25";
+        clearInterval(countdownTimer);
+        return;
+      }
+      const mins = String(Math.floor(remaining / 60)).padStart(2, "0");
+      const secs = String(remaining % 60).padStart(2, "0");
+      countdown.textContent = `Expires in ${mins}:${secs}`;
+      countdown.className = "mt-3 text-center text-sm text-slate-400";
+    };
+
+    tick();
+    countdownTimer = setInterval(tick, 1000);
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    errorBox.classList.add("hidden");
+
+    const data = Object.fromEntries(new FormData(form));
+    data.validity_minutes = Number(data.validity_minutes);
+
+    try {
+      const response = await fetch("/devices/generate-qr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.detail ? JSON.stringify(body.detail) : `HTTP ${response.status}`);
+      }
+      const payload = await response.json();
+
+      document.getElementById("qr").src = payload.qr_png;
+      document.getElementById("qr").style.opacity = "1";
+      document.getElementById("payload").textContent = JSON.stringify(payload.payload, null, 2);
+      document.getElementById("meta").innerHTML = [
+        ["Door", payload.payload.door_id],
+        ["Site", payload.payload.site_id],
+        ["Tenant", payload.payload.tenant_id],
+        ["Registers at", payload.payload.server_url],
+        ["Expires", payload.expires_at],
+      ].map(([key, value]) => `
+        <div class="flex gap-3">
+          <dt class="w-28 shrink-0 text-slate-500">${key}</dt>
+          <dd class="min-w-0 break-all text-slate-300">${escapeHtml(value)}</dd>
+        </div>`).join("");
+
+      result.classList.remove("hidden");
+      startCountdown(payload.expires_at);
+    } catch (err) {
+      errorBox.textContent = "Could not generate: " + err.message;
+      errorBox.classList.remove("hidden");
+    }
+  });
+</script>
+{% endblock %}

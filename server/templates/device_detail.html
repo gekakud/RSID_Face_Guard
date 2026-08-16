@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% set active = "devices" %}
+{% block title %}{{ device.name or device.device_id }} — Face Guard{% endblock %}
+
+{% block content %}
+<a href="/" class="text-sm text-slate-500 transition-colors hover:text-slate-300">&larr; Devices</a>
+
+<div class="mt-3 mb-6 flex flex-wrap items-center gap-3">
+  <h1 class="text-xl font-semibold tracking-tight text-slate-100">
+    {{ device.name or device.door_id or "Unnamed device" }}
+  </h1>
+  {% if device.online %}
+    <span class="inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
+      <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>Online
+    </span>
+  {% else %}
+    <span class="inline-flex items-center gap-2 rounded-full bg-slate-500/10 px-2.5 py-1 text-xs font-medium text-slate-400">
+      <span class="h-1.5 w-1.5 rounded-full bg-slate-500"></span>Offline
+    </span>
+  {% endif %}
+  <span class="font-mono text-xs text-slate-600">{{ device.device_id }}</span>
+</div>
+
+{% macro row(key, value) %}
+  <div class="flex gap-4 border-b border-slate-800/60 py-2 last:border-0">
+    <dt class="w-40 shrink-0 text-slate-500">{{ key }}</dt>
+    <dd class="min-w-0 break-all text-slate-300">
+      {%- if value is none or value == "" -%}
+        <span class="text-slate-600">—</span>
+      {%- elif value is sameas true -%}yes
+      {%- elif value is sameas false -%}no
+      {%- else -%}{{ value }}{%- endif -%}
+    </dd>
+  </div>
+{% endmacro %}
+
+<div class="grid gap-6 lg:grid-cols-2">
+
+  <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+    <h2 class="mb-3 text-xs font-medium uppercase tracking-wider text-slate-500">Identity</h2>
+    <dl class="text-sm">
+      {{ row("Tenant", device.tenant_id) }}
+      {{ row("Site", device.site_id) }}
+      {{ row("Door", device.door_id) }}
+      {{ row("MAC", device.mac) }}
+      {{ row("Device type", device.device_type) }}
+      {{ row("Firmware", device.fw_version) }}
+      {{ row("App version", device.app_version) }}
+      {{ row("IP address", device.ip_address) }}
+      {{ row("Registered", device.registered_at) }}
+      {{ row("Last seen", device.last_seen_at) }}
+      {{ row("Reported status", device.status) }}
+    </dl>
+  </section>
+
+  <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+    <h2 class="mb-3 text-xs font-medium uppercase tracking-wider text-slate-500">
+      Latest metadata
+    </h2>
+    {% if device.metadata %}
+      <dl class="text-sm">
+        {% for key, value in device.metadata | dictsort %}
+          {{ row(key, value) }}
+        {% endfor %}
+      </dl>
+    {% else %}
+      <p class="py-2 text-sm text-slate-600">No metadata reported yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-5 lg:col-span-2">
+    <h2 class="mb-3 text-xs font-medium uppercase tracking-wider text-slate-500">
+      Recent status reports
+    </h2>
+    {% if device.history %}
+      <ol class="text-sm">
+        {% for entry in device.history %}
+          <li class="flex gap-4 border-b border-slate-800/60 py-2 last:border-0">
+            <span class="w-44 shrink-0 font-mono text-xs text-slate-500">{{ entry.ts }}</span>
+            <span class="text-slate-300">{{ entry.status or "—" }}</span>
+            {% if entry.metadata %}
+              <span class="ml-auto truncate font-mono text-xs text-slate-600">
+                {{ entry.metadata | tojson }}
+              </span>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ol>
+    {% else %}
+      <p class="py-2 text-sm text-slate-600">Nothing reported yet.</p>
+    {% endif %}
+  </section>
+
+</div>
+{% endblock %}

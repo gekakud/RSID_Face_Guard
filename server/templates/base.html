@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Face Guard{% endblock %}</title>
+  <!-- Tailwind Play CDN: zero build step, matching demo_ui/'s approach. It logs a
+       "not for production" warning in the console; fine for this POC. -->
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="h-full bg-slate-950 text-slate-200 antialiased">
+
+  <header class="border-b border-slate-800 bg-slate-900/60">
+    <div class="mx-auto flex max-w-6xl items-center gap-6 px-6 py-4">
+      <a href="/" class="flex items-center gap-2.5">
+        <span class="grid h-8 w-8 place-items-center rounded-lg bg-sky-500/15 text-sky-400">
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round"
+                  d="M12 3l7 3v6c0 4.2-2.9 7.6-7 9-4.1-1.4-7-4.8-7-9V6l7-3z"/>
+          </svg>
+        </span>
+        <span class="text-sm font-semibold tracking-tight text-slate-100">Face Guard</span>
+      </a>
+
+      <nav class="flex items-center gap-1 text-sm">
+        {% set nav_base = "rounded-md px-3 py-1.5 transition-colors" %}
+        <a href="/" class="{{ nav_base }} {{ 'bg-slate-800 text-slate-100' if active == 'devices' else 'text-slate-400 hover:text-slate-200' }}">Devices</a>
+        <a href="/new" class="{{ nav_base }} {{ 'bg-slate-800 text-slate-100' if active == 'new' else 'text-slate-400 hover:text-slate-200' }}">Add device</a>
+      </nav>
+
+      <div class="ml-auto">{% block header_extra %}{% endblock %}</div>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-6xl px-6 py-8">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script>
+    // Shared: turn an age in seconds into "12s ago" / "4m ago" / "2h ago".
+    function relativeAge(seconds) {
+      if (seconds === null || seconds === undefined || !isFinite(seconds)) return "never";
+      if (seconds < 60) return Math.floor(seconds) + "s ago";
+      if (seconds < 3600) return Math.floor(seconds / 60) + "m ago";
+      if (seconds < 86400) return Math.floor(seconds / 3600) + "h ago";
+      return Math.floor(seconds / 86400) + "d ago";
+    }
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
