@@ -96,8 +96,11 @@ LOG_BACKUP_COUNT = 5
 # How often to sync with server (seconds)
 DB_SYNC_INTERVAL_SEC = 600   # 10 minutes
 
-# Server URL used to fetch remote users/faceprints by device MAC address
-SERVER_URL = "https://geine-server.onrender.com/getTicketDeviceAccessByMacAdress"
+# Server URL used to fetch remote users/faceprints by device MAC address.
+# Not to be confused with the dashboard's "server_url" (provisioning/,
+# device_identity.json) -- that's a completely separate server for device
+# registration/heartbeat, unrelated to this faceprint sync endpoint.
+FACEPRINT_SYNC_URL = "https://geine-server.onrender.com/getTicketDeviceAccessByMacAdress"
 
 # Network timeout (seconds)
 REMOTE_TIMEOUT_SEC = 10

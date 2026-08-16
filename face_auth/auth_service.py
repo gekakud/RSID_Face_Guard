@@ -48,7 +48,7 @@ class HostModeService:
         use_remote = config.DB_MODE == "remote"
         self.user_db = UserDatabase(
             config.USER_DB_FILE,
-            server_url=config.SERVER_URL if use_remote else None,
+            server_url=config.FACEPRINT_SYNC_URL if use_remote else None,
             remote_timeout_sec=config.REMOTE_TIMEOUT_SEC,
         )
         self._error_backoff_until = 0.0  # epoch time; auth is blocked until this passes
