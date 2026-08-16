@@ -75,6 +75,59 @@ def _client_ip(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
 
 
+def _ingest_events(
+    conn: sqlite3.Connection,
+    device_id: str,
+    device_events: Any,
+    received_at: str,
+) -> None:
+    """Store events carried on a heartbeat, idempotently and bounded.
+
+    Each event is keyed by its device-generated event_id, so a heartbeat that
+    was delivered but whose response was lost (and therefore resent by the
+    device) does not create duplicates -- INSERT OR IGNORE drops the repeat.
+    After inserting, the per-device event log is trimmed to EVENTS_LIMIT rows.
+    """
+    if not isinstance(device_events, list) or not device_events:
+        return
+
+    inserted = False
+    for ev in device_events:
+        if not isinstance(ev, dict):
+            continue
+        event_id = ev.get("event_id")
+        event_type = ev.get("type")
+        if not event_id or not event_type:
+            continue
+        ts = ev.get("ts") or received_at
+        # Everything that isn't a reserved key is context "data".
+        data = {k: v for k, v in ev.items() if k not in ("event_id", "ts", "type")}
+        conn.execute(
+            """INSERT OR IGNORE INTO events
+                   (event_id, device_id, ts, received_at, type, data)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                event_id,
+                device_id,
+                ts,
+                received_at,
+                event_type,
+                json.dumps(data, separators=(",", ":")) if data else None,
+            ),
+        )
+        inserted = True
+
+    if inserted:
+        conn.execute(
+            """DELETE FROM events
+                WHERE device_id = ?
+                  AND id NOT IN (
+                      SELECT id FROM events
+                       WHERE device_id = ? ORDER BY id DESC LIMIT ?
+                  )""",
+            (device_id, device_id, config.EVENTS_LIMIT),
+        )
+
 def _device_summary(row: sqlite3.Row) -> models.DeviceSummary:
     """Row -> summary, deriving online/offline rather than storing it."""
     age = timeutil.age_seconds(row["last_seen_at"]) if row["last_seen_at"] else None
@@ -289,9 +342,17 @@ def post_status(
     device: sqlite3.Row = Depends(device_auth),
     conn: sqlite3.Connection = Depends(db.get_db),
 ):
-    """Device heartbeat: refresh last_seen, replace metadata, append history."""
+    """Device heartbeat: refresh last_seen, replace metadata, append history.
+
+    Events piggyback on metadata under the "events" key (see observability/
+    events.py). They are pulled out into the events table and stripped from the
+    stored metadata so the dashboard's "latest metadata" panel stays clean.
+    """
     now = timeutil.now_ts()
-    metadata_json = json.dumps(body.metadata, separators=(",", ":"))
+
+    metadata = dict(body.metadata)
+    device_events = metadata.pop("events", [])
+    metadata_json = json.dumps(metadata, separators=(",", ":"))
 
     conn.execute(
         """UPDATE devices
@@ -303,6 +364,7 @@ def post_status(
         "INSERT INTO status_history (device_id, ts, status, metadata) VALUES (?, ?, ?, ?)",
         (device_id, now, body.status, metadata_json),
     )
+    _ingest_events(conn, device_id, device_events, now)
     # Keep the history bounded -- a device heartbeating every 30s would otherwise
     # add ~2900 rows a day, forever.
     conn.execute(
@@ -386,6 +448,41 @@ def get_device(device_id: str, conn: sqlite3.Connection = Depends(db.get_db)):
         ],
     )
 
+
+@app.get(
+    "/devices/{device_id}/events",
+    response_model=List[models.DeviceEvent],
+    dependencies=[Depends(require_admin)],
+)
+def list_device_events(
+    device_id: str,
+    limit: int = 100,
+    type: Optional[str] = None,
+    conn: sqlite3.Connection = Depends(db.get_db),
+):
+    """Recent device events, newest first, optionally filtered by type."""
+    limit = max(1, min(limit, config.EVENTS_LIMIT))
+    if type:
+        rows = conn.execute(
+            """SELECT ts, received_at, type, data FROM events
+                WHERE device_id = ? AND type = ? ORDER BY id DESC LIMIT ?""",
+            (device_id, type, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT ts, received_at, type, data FROM events
+                WHERE device_id = ? ORDER BY id DESC LIMIT ?""",
+            (device_id, limit),
+        ).fetchall()
+    return [
+        models.DeviceEvent(
+            ts=r["ts"],
+            received_at=r["received_at"],
+            type=r["type"],
+            data=_json_loads(r["data"]),
+        )
+        for r in rows
+    ]
 
 @app.get("/healthz")
 def healthz():

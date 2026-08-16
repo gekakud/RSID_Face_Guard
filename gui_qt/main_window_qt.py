@@ -36,6 +36,7 @@ from qr_scanner import QRScanner
 
 from .display_utils_qt import find_small_display_geometry
 
+from observability import events
 from observability.logging_setup import get_logger
 
 log = get_logger("gui")
@@ -275,6 +276,7 @@ class GUIQt(QMainWindow):
         """Show a brief live preview and scan for a technician QR code.
         Falls back to normal idle behavior if nothing is found in time."""
         self._init_mode_active = True
+        events.emit("init_mode_entered")
         self.video_label.clear()
         self.status_overlay.setGeometry(self.video_label.rect())
         self.status_overlay.show_text("Init Mode")

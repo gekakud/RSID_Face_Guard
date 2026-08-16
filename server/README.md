@@ -35,6 +35,7 @@ All optional; every value has a working default.
 | `HEARTBEAT_INTERVAL_SEC` | `30` | Period handed to devices at registration. |
 | `DEFAULT_VALIDITY_MINUTES` | `10` | Default QR lifetime. |
 | `STATUS_HISTORY_LIMIT` | `200` | History rows kept per device. |
+| `EVENTS_LIMIT` | `500` | Event-log rows kept per device. |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | unset | Both set ⇒ HTTP Basic on the dashboard. Unset ⇒ open. |
 
 ## The flow
@@ -89,11 +90,45 @@ otherwise `403`.
 `metadata` is a free-form object — whatever the device sends is stored and
 displayed as-is. No schema migration needed to add a field.
 
+The reserved `metadata.events` key carries device telemetry (see
+[Device events](#device-events)); it is pulled out into the events table and
+stripped from the stored metadata, so it never appears in the "latest metadata"
+panel.
+
 ### Reads — dashboard
 - `GET /devices` — all devices with derived `online` and `last_seen_age_sec`.
 - `GET /devices/{id}` — the above plus the last 50 status reports.
+- `GET /devices/{id}/events?limit=&type=` — recent device events, newest first,
+  optionally filtered by `type`. `limit` is clamped to `EVENTS_LIMIT`.
 - `GET /tokens` — unredeemed provisioning tokens.
 - `GET /healthz` — unauthenticated liveness probe.
+
+## Device events
+
+A lightweight event log for door telemetry — `device_boot`, `access_granted`,
+`access_denied`, `card_unknown`, `qr_accepted`, `qr_rejected`, `relay_opened`,
+`hardware_error`, `db_sync_ok` / `db_sync_failed`, `init_mode_entered`,
+`device_shutdown`, etc. The device-side emitter lives in `observability/events.py`.
+
+**No new endpoint or connection.** Events piggyback on the existing heartbeat:
+the device buffers them and sends them in `metadata.events` on the next status
+POST. Each event is:
+```jsonc
+{ "event_id": "uuid",        // device-generated; enables idempotent resend
+  "ts": "2026-08-16T10:00:00Z",
+  "type": "access_granted",
+  "user": "alice", "method": "card" }   // any extra fields become "data"
+```
+
+**Guaranteed delivery.** The device only drops an event from its buffer after
+the heartbeat carrying it returns 2xx, so a failed beat re-sends on the next
+one. Because a beat could be delivered but its response lost (device then
+resends), the server does `INSERT OR IGNORE` on the unique `event_id` — so
+resends never duplicate. The per-device log is trimmed to `EVENTS_LIMIT` rows.
+
+The dashboard shows these in an **Event log** section on each device's detail
+page (`/device/{id}`), with a type filter, auto-refreshing on the same cadence
+as the device list.
 
 ## Signing
 
@@ -149,7 +184,7 @@ Checked twice against the same signed `expires_at`:
 python -m pytest server/tests -q
 ```
 
-Two files, 37 tests, no hardware required:
+Three files, 43 tests, no hardware required:
 
 - **`test_provisioning.py`** drives the API through `TestClient`. The tests that
   matter most run server-generated QR *images* through the real, unmodified
@@ -160,6 +195,10 @@ Two files, 37 tests, no hardware required:
   `provisioning/client.py` and `provisioning/binding.py` over real HTTP — the
   same code the Pi runs, including the reboot-resumes case and the "server
   unreachable" path. It imports no PySide6 and no `rsid_py`.
+- **`test_events.py`** posts heartbeats carrying `metadata.events` and asserts
+  they are filed, deduped by `event_id`, bounded to `EVENTS_LIMIT`, stripped
+  from stored metadata, and served back (with type filtering) by the events
+  endpoint.
 
 ### Fake device
 

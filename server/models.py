@@ -86,6 +86,12 @@ class StatusHistoryEntry(BaseModel):
     status: Optional[str] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
+class DeviceEvent(BaseModel):
+    ts: str                              # device-supplied event time
+    received_at: str                     # server time the beat arrived
+    type: str
+    data: Dict[str, Any] = Field(default_factory=dict)
+
 
 class DeviceDetail(DeviceSummary):
     history: List[StatusHistoryEntry] = Field(default_factory=list)

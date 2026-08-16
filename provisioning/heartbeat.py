@@ -9,6 +9,7 @@ doing.
 import threading
 from typing import Callable, Optional
 
+from observability import events
 from observability.logging_setup import get_logger
 from provisioning import client
 from provisioning.identity import DeviceIdentity
@@ -81,6 +82,14 @@ class HeartbeatWorker:
 
         while not self._stop.wait(delay):
             status, metadata = self._collect()
+
+            # Attach buffered device events (guaranteed delivery): snapshot now,
+            # and only ack() -- dropping them from the buffer -- once the POST
+            # is confirmed 2xx below. A failed beat leaves them for the next one.
+            pending = events.snapshot()
+            if pending:
+                metadata = {**metadata, "events": pending}
+
             try:
                 ok = client.post_status(self.identity, status, metadata)
             except Exception as exc:
@@ -90,6 +99,7 @@ class HeartbeatWorker:
                 ok = False
 
             if ok:
+                events.ack(len(pending))
                 delay = interval
             else:
                 delay = min(max(interval, delay * 2 or interval), _MAX_BACKOFF_SEC)

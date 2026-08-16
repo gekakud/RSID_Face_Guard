@@ -45,6 +45,7 @@ from qr_scanner import QRScanner
 from gui_qt.display_utils_qt import find_small_display_geometry
 from .frame_server import CameraStreamer, WebServer
 
+from observability import events
 from observability.logging_setup import get_logger
 
 log = get_logger("gui")
@@ -346,6 +347,7 @@ class GUIWeb(QMainWindow):
         """Show a brief live preview and scan for a technician QR code.
         Falls back to normal idle behavior if nothing is found in time."""
         self._init_mode_active = True
+        events.emit("init_mode_entered")
         self.device_ui.camera()
         self.view.page().runJavaScript(_status_overlay_show_js("Init Mode"))
         self.preview_controller.resume()

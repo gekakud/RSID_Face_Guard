@@ -71,6 +71,8 @@ from hardware.relay_api import initialize_relay
 
 def main():
     """Entry point: parse CLI args, discover and configure the device, then run the web GUI."""
+    from observability import events
+    events.emit("device_boot", app_version=config.APP_VERSION, ui="web")
     parser = argparse.ArgumentParser(prog='main_web', description='RealSense ID Host Mode GUI (Web UI)')
     parser.add_argument('-p', '--port', help='Device port', type=str, default=None)
     parser.add_argument('-c', '--camera', help='Camera number (-1 for autodetect)', type=int, default=-1)

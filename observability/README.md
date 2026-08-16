@@ -1,7 +1,6 @@
 # Observability
 
-Cross-cutting logging (and, planned, event telemetry) for the access-control
-kiosk.
+Cross-cutting logging and event telemetry for the access-control kiosk.
 
 ## Logging
 
@@ -102,26 +101,56 @@ Do not use `print()` in runtime code paths — it bypasses the log file and is
 invisible under systemd. (`print()` inside `if __name__ == "__main__":`
 blocks of standalone CLI test tools is fine.)
 
-## Event telemetry (planned)
+## Event telemetry
 
-Diagnostic logs are free-form text for humans. Server-side analysis needs
-structured **events**, which will live in `observability/events.py`:
+Diagnostic logs are free-form text for humans; server-side analysis needs
+structured **events**. These live in `observability/events.py` and surface on
+the dashboard's per-device **Event log** (see `server/README.md`).
 
-- `emit_event(type, severity, **fields)` → JSON record with `ts`, device id
-  (MAC), `event_type`, `severity`, `session_id`, plus event-specific fields.
-- Planned event types: `device_boot`, `device_shutdown`, `access_granted`,
-  `access_denied`, `card_unknown`, `qr_accepted`, `qr_rejected`,
-  `relay_opened`, `hardware_error`, `db_sync_ok` / `db_sync_failed`,
-  `init_mode_entered`.
-- **Offline-first delivery**: events append to a local SQLite spool; a
-  background worker POSTs batches to `config.EVENTS_ENDPOINT` and only
-  deletes rows after a 2xx response. Bounded size, oldest-dropped, so a long
-  network outage can't fill the SD card.
-- A `logging.Handler` can auto-emit events for `ERROR`/`CRITICAL` records so
-  crashes reach the server without extra call sites.
-- Also planned: a `session_id` (uuid4 per auth session, set on card/screen
-  tap) attached to every log line and event, so one interaction —
-  card detected → preview resumed → match score → access granted → relay
-  opened — can be traced end to end.
+```python
+from observability import events
 
-The endpoint is stubbed for now.
+events.emit("access_granted", user="alice", method="card")
+```
+
+- `emit(type, **fields)` — thread-safe, never raises, never blocks. Safe to
+  call from the auth thread, card-reader thread, relay, or GUI. It stamps each
+  event with a uuid4 `event_id` and a UTC `ts` and appends it to a bounded
+  in-memory ring buffer.
+- Event types in use: `device_boot`, `device_shutdown`, `access_granted`,
+  `access_denied`, `card_unknown`, `qr_accepted`, `qr_rejected`, `relay_opened`,
+  `hardware_error`, `db_sync_ok` / `db_sync_failed`, `init_mode_entered`.
+
+### Delivery — piggybacked on the heartbeat, guaranteed
+
+There is **no separate uploader, spool file, or endpoint**. Events ride the
+status heartbeat the provisioning layer already sends every
+`config.HEARTBEAT_INTERVAL_SEC`:
+
+1. `HeartbeatWorker._run()` calls `events.snapshot()` and puts the result in
+   `metadata["events"]` of the status POST.
+2. Only on a 2xx response does it call `events.ack(n)`, removing exactly those
+   `n` events. A failed beat acks nothing, so the events ride the next one —
+   **guaranteed delivery** with no loss across an outage (bounded by the ring
+   buffer's `maxlen`; only a very long outage with heavy traffic drops the
+   oldest).
+3. On shutdown, `BindingManager.shutdown()` emits `device_shutdown` and does one
+   best-effort synchronous flush before the heartbeat thread stops, so the last
+   events aren't stranded.
+
+The server does `INSERT OR IGNORE` on the unique `event_id`, so a beat that was
+delivered but whose response was lost (and therefore resent) never duplicates.
+
+### Emit sites
+
+| Event | Emitted from |
+|---|---|
+| `device_boot` | `main_qt.py` / `main_web.py` `main()` |
+| `device_shutdown` | `provisioning/binding.py` `shutdown()` |
+| `access_granted` / `access_denied` | `face_auth/auth_service.py` |
+| `card_unknown` | `face_auth/auth_service.py` |
+| `hardware_error` | `face_auth/auth_service.py` |
+| `relay_opened` | `hardware/relay_api.py` `open_door()` |
+| `qr_accepted` / `qr_rejected` | `qr_scanner/qr_scanner.py` `scan()` |
+| `db_sync_ok` / `db_sync_failed` | `db/remote_provider.py` |
+| `init_mode_entered` | `gui_qt` / `gui_web` `start_init_mode()` |

@@ -48,8 +48,19 @@ CREATE TABLE IF NOT EXISTS status_history (
   metadata  TEXT
 );
 
+CREATE TABLE IF NOT EXISTS events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id    TEXT UNIQUE NOT NULL,   -- device-generated uuid; enables idempotent resend
+  device_id   TEXT NOT NULL,
+  ts          TEXT NOT NULL,          -- device-supplied event time
+  received_at TEXT NOT NULL,          -- server time the beat carrying it arrived
+  type        TEXT NOT NULL,
+  data        TEXT                    -- JSON of any extra fields (may be NULL/'{}')
+);
+
 CREATE INDEX IF NOT EXISTS idx_history_device ON status_history(device_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_devices_token  ON devices(token_hash);
+CREATE INDEX IF NOT EXISTS idx_events_device  ON events(device_id, id DESC);
 """
 
 

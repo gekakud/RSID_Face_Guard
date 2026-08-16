@@ -21,6 +21,7 @@ from hardware.card_reader_api import (
 )
 from hardware.relay_api import open_door, disconnect_relay
 
+from observability import events
 from observability.logging_setup import get_logger
 
 log = get_logger("auth")
@@ -159,6 +160,7 @@ class HostModeService:
         """
         user_info = self.user_db.get_user(str(card_id))
         if not user_info:
+            events.emit("card_unknown", card_id=str(card_id))
             return False, None, "Card not registered"
 
         result = [None]
@@ -181,8 +183,10 @@ class HostModeService:
 
             if match_result.success or (match_result.score is not None and match_result.score >= config.CUSTOM_THRESHOLD):
                 _open_access_point(card_id)
+                events.emit("access_granted", user=user_info['name'], method="card", card_id=str(card_id))
                 result[0] = (True, user_info['name'], user_info['permission_level'])
             else:
+                events.emit("access_denied", method="card", card_id=str(card_id), reason="face_mismatch")
                 result[0] = (False, None, f"Face match failed (score: {match_result.score})")
 
         try:
@@ -249,8 +253,10 @@ class HostModeService:
 
             if selected_user_id:
                 _open_access_point(selected_user_id)
+                events.emit("access_granted", user=selected_user_info['name'], method="face")
                 result[0] = (True, selected_user_info['name'], selected_user_info['permission_level'])
             else:
+                events.emit("access_denied", method="face", reason="no_match")
                 result[0] = (False, None, "No match found")
 
         try:
@@ -260,6 +266,7 @@ class HostModeService:
             return result[0]
         except Exception as e:
             log.exception("authenticate_face_only error")
+            events.emit("hardware_error", where="authenticate_face_only", error=str(e))
             # Block further auth attempts for 20s while reconnect runs in background
             self._error_backoff_until = time.monotonic() + 20.0
             threading.Thread(target=self._reconnect, daemon=True).start()

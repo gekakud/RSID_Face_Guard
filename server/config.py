@@ -39,6 +39,11 @@ DEFAULT_VALIDITY_MINUTES = _env_int("DEFAULT_VALIDITY_MINUTES", 10)
 # Status history rows retained per device (oldest trimmed on insert).
 STATUS_HISTORY_LIMIT = _env_int("STATUS_HISTORY_LIMIT", 200)
 
+# Device event-log rows retained per device (oldest trimmed on insert). Events
+# arrive piggybacked on heartbeat metadata; this caps how much door telemetry
+# history is kept so the DB can't grow without bound.
+EVENTS_LIMIT = _env_int("EVENTS_LIMIT", 500)
+
 # Dashboard HTTP Basic auth. If either is empty the dashboard is left open,
 # which is fine locally but should not be how it sits on a public URL.
 ADMIN_USER = os.environ.get("ADMIN_USER", "")

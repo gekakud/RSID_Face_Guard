@@ -9,6 +9,7 @@ Moved unchanged from the project root relay_api.py. Public API:
 
 import time
 
+from observability import events
 from observability.logging_setup import get_logger
 
 log = get_logger("relay")
@@ -108,6 +109,7 @@ def initialize_relay(relay_pin: int = 18, active_low: bool = True, default_off: 
 def open_door(seconds: float = 3.0):
     if _relay is None:
         initialize_relay()
+    events.emit("relay_opened", seconds=seconds)
     _relay.open_door(seconds)
 
 

@@ -59,6 +59,8 @@ from cryptography.hazmat.primitives import serialization
 
 import config
 
+from observability import events
+
 from observability.logging_setup import get_logger
 
 log = get_logger("qr_scanner")
@@ -209,7 +211,9 @@ class QRScanner:
 
         if not self._verify(payload):
             log.warning("QR scan result: REJECTED -- %s", _payload_context(payload))
+            events.emit("qr_rejected", door_id=payload.get("door_id"))
             return None
 
         log.info("QR scan result: ACCEPTED -- %s", _payload_context(payload))
+        events.emit("qr_accepted", door_id=payload.get("door_id"))
         return payload

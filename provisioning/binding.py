@@ -9,6 +9,7 @@ callback; nothing Qt-specific lives here.
 import threading
 from typing import Callable, Optional
 
+from observability import events
 from observability.logging_setup import get_logger
 from provisioning import client, identity as identity_store
 from provisioning.heartbeat import HeartbeatWorker
@@ -118,5 +119,38 @@ class BindingManager:
             self._heartbeat = None
 
     def shutdown(self, timeout: Optional[float] = None) -> None:
-        """Stop heartbeating. Pass a timeout to wait for the thread to finish."""
+        """Stop heartbeating, flushing any buffered events one last time.
+
+        The heartbeat thread is what normally delivers events, so on the way
+        down we emit device_shutdown and try a single best-effort synchronous
+        status POST to hand off whatever is still buffered before the thread
+        stops. Never raises -- shutdown must not be blocked by the network.
+        """
+        events.emit("device_shutdown")
+        self._flush_events()
         self._stop_heartbeat(timeout)
+
+    def _flush_events(self) -> None:
+        """Best-effort final delivery of buffered events (no heartbeat thread)."""
+        if self.identity is None:
+            return
+        pending = events.snapshot()
+        if not pending:
+            return
+        try:
+            metadata = {"events": pending}
+            if self._metadata_fn:
+                try:
+                    metadata = {**self._metadata_fn(), "events": pending}
+                except Exception:
+                    pass
+            status = "shutting_down"
+            if self._status_fn:
+                try:
+                    status = self._status_fn()
+                except Exception:
+                    pass
+            if client.post_status(self.identity, status, metadata):
+                events.ack(len(pending))
+        except Exception as exc:
+            log.debug("Final event flush failed (ignored): %s", exc)

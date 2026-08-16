@@ -12,6 +12,7 @@ from typing import Dict, Optional
 
 import requests
 
+from observability import events
 from observability.logging_setup import get_logger
 
 log = get_logger("db")
@@ -58,11 +59,13 @@ class RemoteUserDataProvider:
             response = requests.post(self.server_url, json=payload, timeout=self.timeout_sec)
         except Exception as e:
             log.error("Network error: %s", e)
+            events.emit("db_sync_failed", reason="network_error", error=str(e))
             return {}
 
         if response.status_code != 200:
             log.error("Server returned: %s", response.status_code)
             log.error("Body: %s", response.text[:500])
+            events.emit("db_sync_failed", reason="http_error", status=response.status_code)
             return {}
 
         try:
@@ -70,6 +73,7 @@ class RemoteUserDataProvider:
         except Exception:
             log.error("Invalid JSON from server")
             log.error("Body: %s", response.text[:500])
+            events.emit("db_sync_failed", reason="invalid_json")
             return {}
 
         remote_entries = self._extract_entries(data)
@@ -108,6 +112,7 @@ class RemoteUserDataProvider:
             }
 
         log.info("Remote fetch complete. %d users retrieved.", len(users))
+        events.emit("db_sync_ok", users=len(users))
         return users
 
     @staticmethod
