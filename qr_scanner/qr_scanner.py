@@ -1,10 +1,14 @@
 """
 QR code scanning for the technician/maintenance "init mode" flow.
 
-Wraps OpenCV's QRCodeDetector to detect + decode a QR code in a single RGB
-frame (as produced by hardware.camera_preview.PreviewController), then
-verifies the "Provisioning QR Envelope" signature/expiry/nonce before
-trusting it.
+Wraps pyzbar (zbar) to detect + decode a QR code in a single RGB frame (as
+produced by hardware.camera_preview.PreviewController), then verifies the
+"Provisioning QR Envelope" signature/expiry/nonce before trusting it.
+
+zbar is used rather than OpenCV's QRCodeDetector because it reads large,
+dense QR symbols (the signed payload lands at version 17+) far more reliably
+off a live camera frame. It needs the system shared library libzbar0
+(`sudo apt install -y libzbar0`).
 
 Payload shape:
 {
@@ -52,10 +56,10 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-import cv2
 import numpy as np
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
+from pyzbar.pyzbar import ZBarSymbol, decode as zbar_decode
 
 import config
 
@@ -106,7 +110,6 @@ class QRScanner:
     """Stateless-ish helper: feed it frames, get back verified payloads."""
 
     def __init__(self):
-        self._detector = cv2.QRCodeDetector()
         self._public_keys = _load_public_keys(config.PROVISIONING_PUBLIC_KEYS_DIR)
         # Replay protection: nonces accepted this process lifetime. Resets on
         # restart -- acceptable since tokens are short-lived (expires_at).
@@ -181,7 +184,8 @@ class QRScanner:
         """Detect + decode a QR code in frame and verify it.
 
         Args:
-            frame: RGB (or BGR -- detection doesn't care) HxWx3 uint8 array.
+            frame: RGB (or BGR -- luminance is the same either way) HxWx3
+                uint8 array.
 
         Returns:
             The parsed JSON payload (dict) if a valid, signed, unexpired,
@@ -189,14 +193,23 @@ class QRScanner:
             None.
         """
         try:
-            qr_data, points, _ = self._detector.detectAndDecode(frame)
+            # zbar reads off luminance; a plain numpy luma weighting avoids any
+            # OpenCV dependency. Restrict to QR so 1D barcodes aren't picked up.
+            gray = np.dot(frame[..., :3], [0.299, 0.587, 0.114]).astype(np.uint8)
+            results = zbar_decode(gray, symbols=[ZBarSymbol.QRCODE])
         except Exception:
             log.exception("QR scan result: REJECTED (detection error)")
             return None
 
-        if not qr_data:
+        if not results:
             # No QR code found in this frame -- normal/expected during most
             # of init mode's polling; not logged to avoid spam.
+            return None
+
+        try:
+            qr_data = results[0].data.decode("utf-8")
+        except (UnicodeDecodeError, AttributeError):
+            log.warning("QR scan result: REJECTED (undecodable symbol bytes)")
             return None
 
         try:

@@ -9,10 +9,13 @@ qrcode[pil]
 requests
 
 # Used to read back each QR we generate and confirm the device's own decoder
-# (OpenCV) can actually parse it before we hand it to an installer. See
-# signing._decodes(). Headless build: no GUI libs needed on the server.
+# (pyzbar/zbar) can actually parse it before we hand it to an installer. See
+# signing._decodes(). pyzbar needs the system library libzbar0; where it's
+# unavailable (e.g. a plain Render Python runtime) the self-check degrades to
+# "skip" rather than failing. numpy is also used by the device-compatibility
+# tests, which import qr_scanner.
 numpy
-opencv-python-headless
+pyzbar
 
 # Dev / test only
 pytest

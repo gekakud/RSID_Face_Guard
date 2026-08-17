@@ -40,7 +40,7 @@ gpiozero
 
 # QR code scanning for the technician/maintenance init-mode flow
 # (qr_scanner/qr_scanner.py).
-opencv-python-headless
+pyzbar
 
 # Ed25519 signature verification for provisioning QR codes
 # (qr_scanner/qr_scanner.py).

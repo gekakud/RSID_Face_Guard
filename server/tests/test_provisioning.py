@@ -18,7 +18,7 @@ from server import signing, timeutil
 
 TS_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
-# numpy/opencv are only needed for the device-compatibility tests; the rest of
+# numpy/pyzbar are only needed for the device-compatibility tests; the rest of
 # the suite runs fine without them (see server/requirements.txt).
 try:
     import numpy as np
@@ -32,7 +32,7 @@ except Exception:  # pragma: no cover - depends on optional test deps
 
 needs_device_verifier = pytest.mark.skipif(
     not DEVICE_VERIFIER_AVAILABLE,
-    reason="numpy/opencv/qr_scanner not available",
+    reason="numpy/pyzbar/qr_scanner not available",
 )
 
 
@@ -108,12 +108,11 @@ def test_real_device_verifier_accepts_our_qr(qr):
 def test_every_generated_qr_is_readable_by_the_device(qr):
     """The regression test for signing._decodes().
 
-    OpenCV cannot decode a small fraction of version-17+ symbols even from a
-    perfect PNG, so the server re-signs with a fresh nonce until it produces one
-    that reads back. Without that, roughly 1 in 20 codes would be a dud an
-    installer could hold to the camera indefinitely. 25 samples catches a
-    regression that reintroduces a ~5% failure rate ~73% of the time; the run is
-    cheap, so prefer it over a single sample.
+    The server re-signs with a fresh nonce until the decoder reads the image it
+    just produced. zbar reads version-17+ symbols reliably (unlike OpenCV, which
+    dudded ~1 in 20), so this asserts every generated code is readable by the
+    device's real decoder. 25 samples keeps the regression net wide even though
+    zbar rarely needs a retry; the run is cheap.
     """
     for index in range(25):
         body = qr(door_id=f"door-{index:03d}")

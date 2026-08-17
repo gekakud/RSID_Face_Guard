@@ -31,10 +31,10 @@ log = logging.getLogger(__name__)
 # printed and scuffed) and the Ed25519 signature already covers integrity.
 _ERROR_CORRECTION = qrcode.constants.ERROR_CORRECT_L
 
-# See _decodes(): occasionally OpenCV cannot read a QR it just rendered, and the
-# failure is deterministic for a given payload. Regenerating produces a new
-# nonce and therefore different modules, which clears it -- measured at 200/200
-# within four attempts.
+# See _decodes(): a self-check re-renders with a fresh nonce if the decoder
+# can't read the image it just produced. zbar reads version-17+ symbols
+# reliably, so this almost always succeeds on the first attempt; the retries
+# remain only as a cheap safety net.
 _MAX_RENDER_ATTEMPTS = 6
 
 # The issuer key is loaded lazily and cached -- reading + parsing the PEM on
@@ -115,26 +115,25 @@ def render_qr_data_uri(payload: dict) -> str:
 def _decodes(png_bytes: bytes) -> Optional[bool]:
     """Can the device's own decoder read this image?
 
-    OpenCV's QRCodeDetector fails on a small fraction of large (version 17+)
-    symbols, even from a pixel-perfect PNG, and the failure is deterministic for
-    a given payload -- roughly 1 in 10 at ERROR_CORRECT_M, 1 in 20 at L. Since
-    the device reads the code with this exact detector, an image that fails here
-    is one the installer would hold up to the camera forever.
+    The device reads QR codes with pyzbar (zbar), so the server verifies each
+    image it generates with the same decoder -- an image zbar can't read here
+    is one the installer would hold up to the camera in vain.
 
-    Returns None if OpenCV isn't installed, meaning "cannot check" rather than
-    "bad" -- the server must still work without it.
+    Returns None when the check can't run (pyzbar or its system library
+    libzbar0 not available -- e.g. on a Render Python runtime with no apt),
+    meaning "cannot check" rather than "bad", so the server still works
+    without it.
     """
     try:
-        import cv2
-        import numpy as np
         from PIL import Image
+        from pyzbar.pyzbar import ZBarSymbol, decode as zbar_decode
     except ImportError:
         return None
 
     try:
-        frame = np.array(Image.open(io.BytesIO(png_bytes)).convert("RGB"))
-        data, _, _ = cv2.QRCodeDetector().detectAndDecode(frame)
-        return bool(data)
+        image = Image.open(io.BytesIO(png_bytes)).convert("L")
+        results = zbar_decode(image, symbols=[ZBarSymbol.QRCODE])
+        return bool(results)
     except Exception as exc:
         log.warning("QR self-check failed to run: %s", exc)
         return None

@@ -145,22 +145,27 @@ a literal `strptime` of that format and rejects anything else.
 ### Why every QR is decoded before it is returned
 
 The signed payload is ~600 characters, which renders as a QR version 17 symbol.
-OpenCV's `QRCodeDetector` — the decoder the device itself uses — cannot read a
-small fraction of symbols that large, even from a pixel-perfect PNG: measured at
-roughly 1 in 10 at error-correction level M and 1 in 20 at L. The failure is
-deterministic per payload, so a dud code stays a dud, and an installer would
-hold it up to the camera indefinitely with no feedback.
+The device reads these with **pyzbar (zbar)**, so `signing.generate()` verifies
+each rendered image with that *same* decoder before returning it — an image the
+device's decoder can't read is one an installer would hold up to the camera in
+vain. If a render fails to decode, it re-signs with a fresh nonce (which changes
+the module pattern) and retries.
 
-`signing.generate()` therefore decodes each rendered image with that same
-detector and re-signs with a fresh nonce (which changes the module pattern)
-until one reads back — 200/200 succeeded within four attempts in testing. This
-is why `opencv-python-headless` is a runtime dependency, not just a test one. If
-OpenCV is missing the check is skipped rather than failing the request.
+pyzbar reads version-17+ symbols reliably, so this almost always passes on the
+first attempt; the retry loop is just a cheap safety net. (This is a deliberate
+switch away from OpenCV's `QRCodeDetector`, which dudded roughly 1 in 20 of
+these large symbols even from a pixel-perfect PNG — that unreliability was the
+original reason the self-check and retry loop exist.)
 
-Error correction is set to L rather than M for the same reason: it drops the
-symbol from version 19 to 17, so the modules are larger and easier for the
-camera to resolve. Error correction buys little here — the code is displayed on
-a clean screen, and the Ed25519 signature already covers integrity.
+pyzbar needs the system shared library `libzbar0`. Where it isn't available
+(e.g. a plain Render Python runtime with no apt), the self-check degrades to
+"skip" rather than failing the request — the QR is still returned, just not
+pre-verified server-side.
+
+Error correction is set to L rather than M: it drops the symbol from version 19
+to 17, so the modules are larger and easier for the camera to resolve. Error
+correction buys little here — the code is displayed on a clean screen, and the
+Ed25519 signature already covers integrity.
 
 > The issuer private key is committed to this repo, so anyone with repo access
 > can forge provisioning QRs. Acceptable for a POC; before production, generate
@@ -190,7 +195,7 @@ Three files, 43 tests, no hardware required:
   matter most run server-generated QR *images* through the real, unmodified
   device verifier (`qr_scanner/qr_scanner.py`) and assert they are accepted,
   that replays are rejected, that expired codes are rejected, and that 25
-  consecutive codes are all decodable. They skip if `numpy`/`opencv` are absent.
+  consecutive codes are all decodable. They skip if `numpy`/`pyzbar` are absent.
 - **`test_device_binding.py`** starts a live uvicorn server and exercises
   `provisioning/client.py` and `provisioning/binding.py` over real HTTP — the
   same code the Pi runs, including the reboot-resumes case and the "server

@@ -133,6 +133,19 @@ path with the current `config.py`). Install just the core set:
 (equivalently, the first block of `requirements.txt` above the "Optional"
 section).
 
+### QR scanning (init mode)
+
+The technician "init mode" flow scans a provisioning QR with the camera. It
+uses `pyzbar` (zbar) — chosen over OpenCV because it reads the large, dense
+provisioning symbols far more reliably off a live frame — plus `cryptography`
+to verify the QR's Ed25519 signature. `pyzbar` needs the system shared library
+`libzbar0`:
+
+```bash
+sudo apt install -y libzbar0
+.venv/bin/pip install pyzbar cryptography evdev
+```
+
 - `numpy`, `PySide6` — hard imports in `main_qt.py`.
 - `requests` — imported transitively via `gui_qt` → `face_auth` →
   `db.__init__` → `db/remote_provider.py` (always imported, even in local
@@ -275,9 +288,10 @@ sudo cp rpi_py_build_lib/librsid.so rpi_py_build_lib/librsid_c.so /usr/lib/
 sudo ldconfig
 .venv/bin/python -c "import rsid_py; print(rsid_py.__version__)"   # -> 1.3.1
 
-# 3. Python deps
+# 3. Python deps (+ libzbar0 for QR scanning in init mode)
+sudo apt install -y libzbar0
 .venv/bin/pip install --upgrade pip
-.venv/bin/pip install numpy PySide6 requests lgpio evdev
+.venv/bin/pip install numpy PySide6 requests lgpio evdev pyzbar cryptography
 
 # 4. Permissions
 sudo usermod -aG dialout,gpio,video,plugdev,input geka   # then re-login
