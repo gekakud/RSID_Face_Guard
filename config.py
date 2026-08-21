@@ -90,6 +90,24 @@ LOG_MAX_BYTES = 1_000_000
 LOG_BACKUP_COUNT = 5
 
 # =====================================================
+# Storage Monitoring (observability/storage_monitor.py)
+# =====================================================
+
+# Filesystem path to monitor for free space. None -> project root, which is
+# where face_guard.log, user_database.json and device_identity.json all live
+# on the SD card. A relative path is resolved against the project root.
+STORAGE_MONITOR_PATH = None
+
+# Below this many MB free, a "storage_low" event fires (once per crossing)
+# and a WARNING is logged on every check until space recovers.
+STORAGE_MIN_FREE_MB = 200
+
+# How often the GUI's background timer re-checks disk usage (seconds).
+# Independent of HEARTBEAT_INTERVAL_SEC -- the latest result is also embedded
+# in every heartbeat's metadata regardless of this interval.
+STORAGE_CHECK_INTERVAL_SEC = 300
+
+# =====================================================
 # Remote Sync
 # =====================================================
 

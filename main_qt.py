@@ -77,6 +77,10 @@ def main():
         log.info("Device type: %s", device_type)
     except Exception as e:
         log.exception("Could not connect to device on port %s: %s", port, e)
+        # Best-effort only: no heartbeat thread/BindingManager exists yet at
+        # this point in boot, so this event won't reach the server this boot
+        # cycle -- still useful for local log correlation.
+        events.emit("hardware_error", where="boot_device_discovery", error=str(e))
         sys.exit(1)
 
     log.info("Configuring device...")
@@ -89,6 +93,9 @@ def main():
             log.info("Device configured successfully")
         except Exception as e:
             log.exception("Device configuration error: %s", e)
+            # Best-effort only (see note above) -- process exits before any
+            # heartbeat/BindingManager can send it.
+            events.emit("hardware_error", where="boot_device_config", error=str(e))
             os._exit(1)
         finally:
             f.disconnect()
@@ -97,16 +104,28 @@ def main():
     log.info("Using camera index: %d", camera_index)
 
     if config.AUTH_ONLY_ON_CARD:
-        initialize_card_reader()
-        log.info("Card reader initialized")
+        try:
+            initialize_card_reader()
+            log.info("Card reader initialized")
+        except Exception as e:
+            log.exception("Card reader initialization error: %s", e)
+            # Best-effort only (see note above).
+            events.emit("hardware_error", where="boot_card_reader", error=str(e))
+            raise
 
     if config.RUN_WITH_RELAY:
-        initialize_relay(
-            relay_pin=config.RELAY_PIN,
-            active_low=config.RELAY_ACTIVE_LOW,
-            default_off=config.RELAY_DEFAULT_OFF,
-        )
-        log.info("Relay initialized")
+        try:
+            initialize_relay(
+                relay_pin=config.RELAY_PIN,
+                active_low=config.RELAY_ACTIVE_LOW,
+                default_off=config.RELAY_DEFAULT_OFF,
+            )
+            log.info("Relay initialized")
+        except Exception as e:
+            log.exception("Relay initialization error: %s", e)
+            # Non-fatal: RelayController already degrades gracefully
+            # internally, so keep booting without the relay.
+            events.emit("hardware_error", where="boot_relay", error=str(e))
 
     app = QApplication(sys.argv)
     window = GUIQt(port, camera_index, device_type)

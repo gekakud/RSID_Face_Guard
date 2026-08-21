@@ -47,6 +47,8 @@ class HeartbeatWorker:
         self._on_revoked = on_revoked
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        self._consecutive_failures = 0
+
 
     def start(self) -> None:
         if self._thread is not None:
@@ -116,8 +118,21 @@ class HeartbeatWorker:
             if ok:
                 events.ack(len(pending))
                 delay = interval
+                self._consecutive_failures = 0
             else:
+                self._consecutive_failures += 1
+                # Throttled: only emit once we've failed enough in a row to be
+                # a real outage, not a single blip -- avoids flooding the
+                # buffer (this event itself only gets delivered on the *next*
+                # successful beat anyway, so it must stay rare).
+                if self._consecutive_failures == 3:
+                    events.emit(
+                        "heartbeat_post_failed",
+                        consecutive_failures=self._consecutive_failures,
+                        server_url=self.identity.server_url,
+                    )
                 delay = min(max(interval, delay * 2 or interval), _MAX_BACKOFF_SEC)
                 log.debug("Heartbeat retry in %ss", delay)
+
 
         log.info("Heartbeat stopped")

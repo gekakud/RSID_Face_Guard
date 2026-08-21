@@ -67,12 +67,14 @@ class HostModeService:
             log.info("FaceAuthenticator connected")
         except Exception as e:
             log.error("FaceAuthenticator connect failed: %s", e)
+            events.emit("hardware_error", where="authenticator_connect", error=str(e))
 
         try:
             initialize_wiegand_tx()
             log.info("Wiegand transmitter initialized")
         except Exception as e:
             log.warning("Wiegand initialization failed: %s", e)
+            events.emit("hardware_error", where="wiegand_tx_init", error=str(e))
 
         # The DB is fully responsible for keeping itself fresh; nothing
         # above this layer needs to know about sync scheduling. In "local"
@@ -199,8 +201,13 @@ class HostModeService:
                 return False, None, "Authentication callback not invoked"
             return result[0]
         except Exception as e:
-            self._reconnect()
+            log.exception("authenticate_with_card error")
+            events.emit("hardware_error", where="authenticate_with_card", card_id=str(card_id), error=str(e))
+            # Block further auth attempts for 20s while reconnect runs in background
+            self._error_backoff_until = time.monotonic() + 20.0
+            threading.Thread(target=self._reconnect, daemon=True).start()
             return False, None, str(e)
+
 
     def authenticate_face_only(self) -> Tuple[bool, Optional[str], Optional[str]]:
         """Extract a live faceprint and match it against every user in the DB.
@@ -333,7 +340,9 @@ class HostModeService:
 
                 except Exception as e:
                     log.error("Card reader error: %s", e)
+                    events.emit("hardware_error", where="card_monitor", error=str(e))
                     time.sleep(1)
+
 
             log.info("Card reader monitoring stopped")
 

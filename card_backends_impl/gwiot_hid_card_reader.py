@@ -8,8 +8,10 @@ from typing import Optional
 from evdev import InputDevice, categorize, ecodes, list_devices
 
 from observability.logging_setup import get_logger
+from observability import events
 
 log = get_logger("card")
+
 
 class GwiotCardReader:
     KEY_MAP = {
@@ -136,12 +138,15 @@ def _reader_loop():
             card_number = _instance.wait_for_card_number()
             if card_number:
                 _card_queue.put(card_number)
-        except Exception:
+        except Exception as e:
             if _stop_event.is_set():
                 break
             # Device hiccup (e.g. transient read error) -- avoid a tight
             # error loop, keep trying.
+            log.error("GWIOT card reader error: %s", e)
+            events.emit("hardware_error", where="gwiot_reader", error=str(e))
             _stop_event.wait(1.0)
+
 
 def initialize_card_reader(
     device_path: Optional[str] = None,

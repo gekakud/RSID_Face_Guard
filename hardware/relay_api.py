@@ -48,7 +48,9 @@ class RelayController:
             log.info("Relay initialized on GPIO %s, chip %s (active_low=%s)", self.relay_pin, GPIO_CHIP, self.active_low)
         except Exception as e:
             log.error("Relay GPIO initialization failed: %s. Relay disabled.", e)
+            events.emit("hardware_error", where="relay_init", error=str(e))
             self._unavailable = True
+
             if self._handle is not None:
                 try:
                     lgpio.gpiochip_close(self._handle)
@@ -74,9 +76,14 @@ class RelayController:
         if self._handle is None:
             self.initialize()
 
-        self._set_on()
-        time.sleep(max(0.0, seconds))
-        self._set_off()
+        try:
+            self._set_on()
+            time.sleep(max(0.0, seconds))
+            self._set_off()
+        except Exception as e:
+            log.error("Relay open_door failed: %s", e)
+            events.emit("hardware_error", where="relay_open", error=str(e))
+
 
     def disconnect(self):
         if lgpio is None or self._handle is None:

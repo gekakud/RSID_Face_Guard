@@ -197,9 +197,11 @@ class QRScanner:
             # OpenCV dependency. Restrict to QR so 1D barcodes aren't picked up.
             gray = np.dot(frame[..., :3], [0.299, 0.587, 0.114]).astype(np.uint8)
             results = zbar_decode(gray, symbols=[ZBarSymbol.QRCODE])
-        except Exception:
+        except Exception as e:
             log.exception("QR scan result: REJECTED (detection error)")
+            events.emit("hardware_error", where="qr_scanner", error=str(e))
             return None
+
 
         if not results:
             # No QR code found in this frame -- normal/expected during most

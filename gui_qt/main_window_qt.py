@@ -37,6 +37,7 @@ from qr_scanner import QRScanner
 from .display_utils_qt import find_small_display_geometry
 
 from observability import events
+from observability import storage_monitor
 from observability.logging_setup import get_logger
 
 log = get_logger("gui")
@@ -239,6 +240,14 @@ class GUIQt(QMainWindow):
         self.video_timer.timeout.connect(self._update_video)
         self.video_timer.start(30)
 
+        # Periodic disk-space check (independent of the heartbeat interval).
+        # Emits storage_low/storage_ok events on threshold crossings; the
+        # latest reading also rides every heartbeat via _collect_metadata().
+        self._storage_timer = QTimer(self)
+        self._storage_timer.timeout.connect(storage_monitor.check_storage)
+        self._storage_timer.start(int(config.STORAGE_CHECK_INTERVAL_SEC * 1000))
+        storage_monitor.check_storage()  # baseline check at startup
+
         # Start the preview controller's background thread once (it must stay
         # alive to service pause()/resume() requests). If init mode is
         # enabled, kick off the QR-scanning window with the preview running;
@@ -326,7 +335,9 @@ class GUIQt(QMainWindow):
             "session_active": bool(self._session_active),
             "init_mode_active": bool(self._init_mode_active),
             "auth_in_progress": bool(self.auth_in_progress),
+            "storage": storage_monitor.get_storage_metadata(),
         }
+
 
     def _on_binding_result(self, ok: bool, message: str):
         """Binding finished (marshalled onto the Qt thread by _SignalBridge)."""

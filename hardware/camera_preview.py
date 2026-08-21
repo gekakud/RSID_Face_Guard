@@ -15,7 +15,9 @@ import time
 import numpy as np
 import rsid_py
 
+from observability import events
 from observability.logging_setup import get_logger
+
 
 log = get_logger("preview")
 
@@ -64,8 +66,10 @@ class PreviewController(threading.Thread):
                 except queue.Empty:
                     pass
             self.image_queue.put(array2d.copy())
-        except Exception:
+        except Exception as e:
             log.exception("Error in preview frame callback")
+            events.emit("hardware_error", where="preview_frame", error=str(e))
+
 
     def start_preview(self):
         """Create a PreviewConfig and start the UVC camera stream.
@@ -129,6 +133,8 @@ class PreviewController(threading.Thread):
                         log.info("Preview restarted after reconnect")
                     except Exception as e:
                         log.error("Preview restart failed: %s", e)
+                        events.emit("hardware_error", where="preview_restart", error=str(e))
+
 
         if self.preview:
             try:
@@ -168,6 +174,8 @@ class PreviewController(threading.Thread):
                 log.info("Preview resumed after authentication")
             except Exception as e:
                 log.error("Preview resume failed: %s", e)
+                events.emit("hardware_error", where="preview_resume", error=str(e))
+
 
     def stop(self):
         """Signal the preview thread to exit its run loop, stop the UVC stream,

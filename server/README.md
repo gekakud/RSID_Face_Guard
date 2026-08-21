@@ -137,10 +137,18 @@ otherwise `403`.
 `metadata` is a free-form object — whatever the device sends is stored and
 displayed as-is. No schema migration needed to add a field.
 
+The kiosk currently sends: `app_version`, `device_type`, `serial_port`,
+`user_count`, `camera_available`, `relay_available`, `session_active`,
+`init_mode_active`, `auth_in_progress`, and `storage` (an object with
+`path`, `total_mb`, `used_mb`, `free_mb`, `free_pct`, `low` — see
+`observability/storage_monitor.py`). None of these are required by the
+server; it's purely a display convention on the device side.
+
 The reserved `metadata.events` key carries device telemetry (see
 [Device events](#device-events)); it is pulled out into the events table and
 stripped from the stored metadata, so it never appears in the "latest metadata"
 panel.
+
 
 ### `DELETE /devices/{device_id}` — dashboard
 Removes a device. This is a **soft delete**: the row is marked `suspended`

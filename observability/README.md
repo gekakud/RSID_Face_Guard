@@ -119,7 +119,9 @@ events.emit("access_granted", user="alice", method="card")
   in-memory ring buffer.
 - Event types in use: `device_boot`, `device_shutdown`, `access_granted`,
   `access_denied`, `card_unknown`, `qr_accepted`, `qr_rejected`, `relay_opened`,
-  `hardware_error`, `db_sync_ok` / `db_sync_failed`, `init_mode_entered`.
+  `hardware_error`, `db_sync_ok` / `db_sync_failed`, `init_mode_entered`,
+  `storage_low` / `storage_ok`, `heartbeat_post_failed`.
+
 
 ### Delivery — piggybacked on the heartbeat, guaranteed
 
@@ -149,8 +151,38 @@ delivered but whose response was lost (and therefore resent) never duplicates.
 | `device_shutdown` | `provisioning/binding.py` `shutdown()` |
 | `access_granted` / `access_denied` | `face_auth/auth_service.py` — `access_denied` carries a `reason`: `face_mismatch`, `no_match`, `extraction_failed`, or `no_faceprints_on_file` |
 | `card_unknown` | `face_auth/auth_service.py` |
-| `hardware_error` | `face_auth/auth_service.py` |
+| `hardware_error` | `face_auth/auth_service.py` (`authenticator_connect`, `wiegand_tx_init`, `authenticate_face_only`, `authenticate_with_card`, `card_monitor`), `hardware/relay_api.py` (`relay_init`, `relay_open`), `hardware/camera_preview.py` (`preview_frame`, `preview_restart`, `preview_resume`), `card_backends_impl/gwiot_hid_card_reader.py` (`gwiot_reader`), `qr_scanner/qr_scanner.py` (`qr_scanner`), `observability/storage_monitor.py` (`storage_monitor`), `main_qt.py` / `main_web.py` `main()` (`boot_device_discovery`, `boot_device_config`, `boot_card_reader`, `boot_relay` — best-effort only: emitted before any heartbeat thread/BindingManager exists, so these never reach the server the boot cycle they fire in, but still land in the local log) — every occurrence carries a `where` field identifying the failure site plus an `error` string |
 | `relay_opened` | `hardware/relay_api.py` `open_door()` |
 | `qr_accepted` / `qr_rejected` | `qr_scanner/qr_scanner.py` `scan()` |
 | `db_sync_ok` / `db_sync_failed` | `db/remote_provider.py` |
 | `init_mode_entered` | `gui_qt` / `gui_web` `start_init_mode()` |
+| `storage_low` / `storage_ok` | `observability/storage_monitor.py` `check_storage()` — fires once per threshold crossing (not every check), carries `path`, `free_mb`, and (for `storage_low`) `min_free_mb` |
+| `heartbeat_post_failed` | `provisioning/heartbeat.py` `HeartbeatWorker._run()` — fires once after 3 consecutive failed heartbeat POSTs (throttled so a brief blip doesn't flood the buffer), carries `consecutive_failures` and `server_url` |
+
+## Storage monitoring
+
+`observability/storage_monitor.py` watches free disk space on the SD card
+that holds `face_guard.log`, `user_database.json` and
+`device_identity.json`.
+
+```python
+from observability import storage_monitor
+
+storage_monitor.check_storage()        # {"path", "total_mb", "used_mb", "free_mb", "free_pct", "low"}
+storage_monitor.get_storage_metadata() # same, but never raises -- safe for heartbeat metadata_fn
+```
+
+Both GUI windows (`gui_qt/main_window_qt.py`, `gui_web/web_window.py`) start a
+`QTimer` on `config.STORAGE_CHECK_INTERVAL_SEC` (default 300s) that calls
+`check_storage()` to detect threshold crossings between heartbeats, and embed
+`get_storage_metadata()` under `metadata["storage"]` in every heartbeat via
+`_collect_metadata()`.
+
+### Configuration (`config.py`)
+
+```python
+STORAGE_MONITOR_PATH = None      # None -> project root (SD card)
+STORAGE_MIN_FREE_MB = 200        # below this -> storage_low event + WARNING log
+STORAGE_CHECK_INTERVAL_SEC = 300 # GUI timer interval, independent of heartbeat cadence
+```
+

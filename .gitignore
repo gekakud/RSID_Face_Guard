@@ -12,3 +12,4 @@ server/data/
 
 # Device binding credentials -- holds a bearer token (Phase 2)
 device_identity.json
+.claude/settings.local.json

@@ -47,6 +47,7 @@ from gui_qt.display_utils_qt import find_small_display_geometry
 from .frame_server import CameraStreamer, WebServer
 
 from observability import events
+from observability import storage_monitor
 from observability.logging_setup import get_logger
 
 log = get_logger("gui")
@@ -289,6 +290,14 @@ class GUIWeb(QMainWindow):
         self._frame_push_timer.start(66)  # ~15 fps is plenty for a kiosk preview
         self._last_pushed_frame = None
 
+        # Periodic disk-space check (independent of the heartbeat interval).
+        # Emits storage_low/storage_ok events on threshold crossings; the
+        # latest reading also rides every heartbeat via _collect_metadata().
+        self._storage_timer = QTimer(self)
+        self._storage_timer.timeout.connect(storage_monitor.check_storage)
+        self._storage_timer.start(int(config.STORAGE_CHECK_INTERVAL_SEC * 1000))
+        storage_monitor.check_storage()  # baseline check at startup
+
         # Web view + QWebChannel bridge.
         self.view = QWebEngineView(self)
         self.setCentralWidget(self.view)
@@ -359,7 +368,9 @@ class GUIWeb(QMainWindow):
             "session_active": bool(self._session_active),
             "init_mode_active": bool(self._init_mode_active),
             "auth_in_progress": bool(self.auth_in_progress),
+            "storage": storage_monitor.get_storage_metadata(),
         }
+
 
     def _push_frame(self):
         """Encode the latest camera frame as a base64 JPEG data URI and push it
