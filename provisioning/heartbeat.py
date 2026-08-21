@@ -29,6 +29,7 @@ class HeartbeatWorker:
         identity: DeviceIdentity,
         metadata_fn: Optional[Callable[[], dict]] = None,
         status_fn: Optional[Callable[[], str]] = None,
+        on_revoked: Optional[Callable[[], None]] = None,
     ):
         """
         Args:
@@ -37,10 +38,13 @@ class HeartbeatWorker:
                 A callback (rather than a snapshot) keeps this module free of
                 any GUI/hardware imports.
             status_fn: called on each beat for the status string.
+            on_revoked: called (once, on the heartbeat thread) if the server
+                reports this device was removed. The worker then stops itself.
         """
         self.identity = identity
         self._metadata_fn = metadata_fn or (lambda: {})
         self._status_fn = status_fn or (lambda: "online")
+        self._on_revoked = on_revoked
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -92,6 +96,17 @@ class HeartbeatWorker:
 
             try:
                 ok = client.post_status(self.identity, status, metadata)
+            except client.DeviceRevokedError:
+                # The operator removed this device. Notify the owner (which drops
+                # the identity file and returns the GUI to unbound), then end the
+                # loop -- there is nothing left to heartbeat.
+                log.info("Device was revoked by the server; stopping heartbeat")
+                if self._on_revoked is not None:
+                    try:
+                        self._on_revoked()
+                    except Exception as exc:
+                        log.error("on_revoked callback failed: %s", exc)
+                return
             except Exception as exc:
                 # post_status already handles the expected failures; this is the
                 # last line of defence so the thread can never die silently.

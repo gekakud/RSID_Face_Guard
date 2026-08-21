@@ -319,6 +319,70 @@ def test_site_and_door_require_existing_parent(client):
     assert client.post("/doors", json={"site_id": 1, "name": "d"}).status_code == 404
 
 # =====================================================
+# Device removal (suspend -> device acknowledges -> purge)
+# =====================================================
+
+def test_delete_device_suspends_it(client, qr):
+    creds = _register(client, qr()).json()
+    resp = client.delete(f"/devices/{creds['device_id']}")
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "suspended"
+
+    # Still listed, now flagged suspended (tombstone awaiting the device).
+    device = client.get(f"/devices/{creds['device_id']}").json()
+    assert device["state"] == "suspended"
+    assert device["suspended_at"]
+
+def test_delete_unknown_device_is_404(client):
+    assert client.delete("/devices/nope").status_code == 404
+
+def test_suspended_device_heartbeat_gets_410_and_acknowledges(client, qr):
+    creds = _register(client, qr()).json()
+    client.delete(f"/devices/{creds['device_id']}")
+
+    # The device's next heartbeat is told it was removed (410 Gone) and the row
+    # flips to revoked_ack.
+    resp = client.post(
+        f"/devices/{creds['device_id']}/status",
+        headers={"Authorization": f"Bearer {creds['device_token']}"},
+        json={"status": "online"},
+    )
+    assert resp.status_code == 410
+
+    device = client.get(f"/devices/{creds['device_id']}").json()
+    assert device["state"] == "revoked_ack"
+
+def test_acknowledged_device_is_purged_on_next_list(client, qr):
+    creds = _register(client, qr()).json()
+    client.delete(f"/devices/{creds['device_id']}")
+    # Acknowledge (410) -> revoked_ack.
+    client.post(
+        f"/devices/{creds['device_id']}/status",
+        headers={"Authorization": f"Bearer {creds['device_token']}"},
+        json={"status": "online"},
+    )
+    # Listing sweeps out acknowledged tombstones.
+    devices = client.get("/devices").json()
+    assert devices == []
+    assert client.get(f"/devices/{creds['device_id']}").status_code == 404
+
+def test_active_device_heartbeat_unaffected(client, qr):
+    creds = _register(client, qr()).json()
+    resp = client.post(
+        f"/devices/{creds['device_id']}/status",
+        headers={"Authorization": f"Bearer {creds['device_token']}"},
+        json={"status": "online"},
+    )
+    assert resp.status_code == 200
+
+def test_delete_is_idempotent(client, qr):
+    creds = _register(client, qr()).json()
+    first = client.delete(f"/devices/{creds['device_id']}")
+    second = client.delete(f"/devices/{creds['device_id']}")
+    assert first.status_code == 200 and second.status_code == 200
+    assert second.json()["state"] == "suspended"
+
+# =====================================================
 # Network profile
 # =====================================================
 

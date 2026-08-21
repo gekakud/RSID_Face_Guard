@@ -217,6 +217,7 @@ class _SignalBridge(QObject):
     card_detected = Signal(object)      # card_id
     card_rejected = Signal(object)      # card_id (unregistered)
     binding_result = Signal(bool, str)  # success, message (device provisioning)
+    device_revoked = Signal()           # server removed this device
 
 class GUIWeb(QMainWindow):
     """Main window hosting the web UI in a QWebEngineView."""
@@ -236,6 +237,7 @@ class GUIWeb(QMainWindow):
         self._bridge.card_detected.connect(self._on_card_detected)
         self._bridge.card_rejected.connect(self._on_card_rejected)
         self._bridge.binding_result.connect(self._on_binding_result)
+        self._bridge.device_revoked.connect(self._on_device_revoked)
 
         # Shared, GUI-agnostic layers (same as GUIQt).
         self.preview_controller = PreviewController(port, camera_index, device_type)
@@ -306,7 +308,11 @@ class GUIWeb(QMainWindow):
         # If this device was bound on an earlier run, resume reporting to the
         # dashboard right away -- no QR rescan needed after a reboot.
         self.binding = BindingManager(
-            device_type=device_type, metadata_fn=self._collect_metadata
+            device_type=device_type,
+            metadata_fn=self._collect_metadata,
+            # Marshalled onto the Qt thread; the heartbeat thread fires this
+            # after the identity has already been dropped.
+            on_revoked=lambda: self._bridge.device_revoked.emit(),
         )
         self.binding.start_if_bound()
 
@@ -338,6 +344,18 @@ class GUIWeb(QMainWindow):
         self.view.page().runJavaScript(_status_overlay_show_js(text))
         # Leave a failure up longer -- an installer needs time to read why.
         QTimer.singleShot(3000 if ok else 6000, self._end_init_mode)
+
+    def _on_device_revoked(self):
+        """The dashboard removed this device (marshalled onto the Qt thread).
+
+        BindingManager has already dropped the identity; here we just tell the
+        operator. Face auth from the local DB keeps working; the device can be
+        re-enrolled by scanning a fresh QR.
+        """
+        log.info("Device was removed from the server; now unbound")
+        self.view.page().runJavaScript(
+            _status_overlay_show_js("Device removed\nRescan a QR to re-enroll")
+        )
 
     # =====================================================
     # INIT MODE (technician QR scan on startup)
@@ -396,8 +414,8 @@ class GUIWeb(QMainWindow):
         if not self._init_mode_active:
             return
         log.info(
-            "Provisioning QR detected during init mode: door_id=%s site_id=%s tenant_id=%s",
-            payload.get("door_id"), payload.get("site_id"), payload.get("tenant_id"),
+            "Provisioning QR detected during init mode: door_id=%s site_id=%s customer_id=%s",
+            payload.get("door_id"), payload.get("site_id"), payload.get("customer_id"),
         )
         # Stop scanning immediately so a second frame can't start a second
         # registration with the same (single-use) token.

@@ -20,6 +20,10 @@ log = get_logger("provision")
 class RegistrationError(Exception):
     """Registration was refused or unreachable. Message is shown on the kiosk."""
 
+class DeviceRevokedError(Exception):
+    """The server reported this device was removed (410). The caller must drop
+    its identity and stop heartbeating."""
+
 
 def _app_version() -> str:
     return getattr(config, "APP_VERSION", "face-guard")
@@ -109,7 +113,14 @@ def register(payload: dict, device_type: Optional[str] = None) -> DeviceIdentity
 
 
 def post_status(identity: DeviceIdentity, status: str, metadata: dict) -> bool:
-    """Send one heartbeat. Returns False on any failure (never raises)."""
+    """Send one heartbeat.
+
+    Returns True on success, False on a transient failure (network/5xx) so the
+    caller can back off and retry.
+
+    Raises DeviceRevokedError on HTTP 410 -- the operator removed this device,
+    and the caller must drop its identity rather than retry.
+    """
     try:
         response = requests.post(
             identity.status_url,
@@ -120,6 +131,11 @@ def post_status(identity: DeviceIdentity, status: str, metadata: dict) -> bool:
     except requests.RequestException as exc:
         log.warning("Heartbeat failed (network): %s", exc)
         return False
+
+    if response.status_code == 410:
+        # Tombstone response: this device was removed on the dashboard.
+        log.warning("Server reports this device was removed (410)")
+        raise DeviceRevokedError("Device was removed from the server")
 
     if not response.ok:
         log.warning("Heartbeat rejected: HTTP %s %s", response.status_code, response.text[:200])

@@ -26,10 +26,16 @@ class BindingManager:
         device_type=None,
         metadata_fn: Optional[Callable[[], dict]] = None,
         status_fn: Optional[Callable[[], str]] = None,
+        on_revoked: Optional[Callable[[], None]] = None,
     ):
         self.device_type = device_type
         self._metadata_fn = metadata_fn
         self._status_fn = status_fn
+        # GUI hook fired (on the heartbeat thread) after the device has been
+        # removed server-side and its identity dropped, so the window can return
+        # to the unbound "show a QR to enroll" state. Callers marshal to the UI
+        # thread themselves (both GUIs use their _SignalBridge).
+        self._on_revoked_ui = on_revoked
         self.identity: Optional[DeviceIdentity] = None
         self._heartbeat: Optional[HeartbeatWorker] = None
 
@@ -109,9 +115,30 @@ class BindingManager:
         if self.identity is None:
             return
         self._heartbeat = HeartbeatWorker(
-            self.identity, metadata_fn=self._metadata_fn, status_fn=self._status_fn
+            self.identity,
+            metadata_fn=self._metadata_fn,
+            status_fn=self._status_fn,
+            on_revoked=self._handle_revoked,
         )
         self._heartbeat.start()
+
+    def _handle_revoked(self) -> None:
+        """The server removed this device: drop the identity and go unbound.
+
+        Runs on the heartbeat thread. We delete the on-disk identity so a reboot
+        won't silently rebind, forget it in memory, and let the GUI know so it
+        can return to the enroll screen. The heartbeat worker stops itself after
+        this returns. Door access from the local face DB is unaffected.
+        """
+        log.warning("Device removed on the server -- dropping identity, going unbound")
+        identity_store.clear()
+        self.identity = None
+        self._heartbeat = None
+        if self._on_revoked_ui is not None:
+            try:
+                self._on_revoked_ui()
+            except Exception as exc:
+                log.error("on_revoked UI callback failed: %s", exc)
 
     def _stop_heartbeat(self, timeout: Optional[float] = None) -> None:
         if self._heartbeat is not None:

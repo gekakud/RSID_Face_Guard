@@ -150,6 +150,21 @@ def test_post_status_returns_false_on_bad_token(device_env):
     # Must not raise -- a heartbeat failure can never be allowed to reach the kiosk.
     assert device_client.post_status(identity, "online", {}) is False
 
+def test_post_status_raises_revoked_after_removal(device_env):
+    """A removed device's heartbeat gets 410, surfaced as DeviceRevokedError."""
+    import requests
+
+    identity = device_client.register(_issue_qr(device_env))
+    # First beat is fine.
+    assert device_client.post_status(identity, "online", {}) is True
+
+    # Operator removes it on the dashboard.
+    requests.delete(f"{device_env}/devices/{identity.device_id}", timeout=10).raise_for_status()
+
+    # The next heartbeat must raise so the caller drops its identity.
+    with pytest.raises(device_client.DeviceRevokedError):
+        device_client.post_status(identity, "online", {})
+
 
 # =====================================================
 # provisioning/identity.py
@@ -294,6 +309,42 @@ def test_start_if_bound_is_false_when_unbound(device_env):
     manager = binding_mod.BindingManager()
     assert manager.start_if_bound() is False
     assert manager.identity is None
+
+def test_removal_drops_identity_and_notifies_gui(device_env, monkeypatch):
+    """End-to-end: bind, remove on the server, and the heartbeat thread should
+    drop the on-disk identity, go unbound, and fire the on_revoked callback."""
+    import requests
+
+    # Hand the device a short heartbeat interval at registration so its next
+    # beat (which sees the 410) lands within the test's wait window rather than
+    # the default 30s later.
+    monkeypatch.setattr(server_config, "HEARTBEAT_INTERVAL_SEC", 1)
+
+    revoked = threading.Event()
+    manager = binding_mod.BindingManager(
+        metadata_fn=lambda: {"boot": 1},
+        on_revoked=lambda: revoked.set(),
+    )
+    ok, _ = _bind_and_wait(manager, _issue_qr(device_env))
+    assert ok
+    device_id = manager.identity.device_id
+    assert identity_store.load() is not None
+
+    # Wait until the device is online, so we know the heartbeat loop is running.
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if requests.get(f"{device_env}/devices/{device_id}", timeout=10).json().get("online"):
+            break
+        time.sleep(0.2)
+
+    # Remove it -- the next heartbeat should see 410 and tear down.
+    requests.delete(f"{device_env}/devices/{device_id}", timeout=10).raise_for_status()
+
+    assert revoked.wait(15), "on_revoked callback never fired"
+    # Identity dropped on disk and in memory -> a reboot would come back unbound.
+    assert identity_store.load() is None
+    assert manager.identity is None
+    manager.shutdown()
 
 
 def test_rebinding_replaces_the_old_identity(device_env):

@@ -142,8 +142,25 @@ The reserved `metadata.events` key carries device telemetry (see
 stripped from the stored metadata, so it never appears in the "latest metadata"
 panel.
 
+### `DELETE /devices/{device_id}` — dashboard
+Removes a device. This is a **soft delete**: the row is marked `suspended`
+(kept as a tombstone) rather than erased, so the device's next heartbeat can be
+told it's gone. Idempotent; `404` if the device never existed.
+```jsonc
+// response
+{ "ok": true, "device_id": "uuid", "state": "suspended" }
+```
+Lifecycle: `active` → (Remove) `suspended` → the device's next heartbeat gets
+**`410 Gone`** and the row flips to `revoked_ack` → the next dashboard device
+list purges it. On the device, the 410 makes it delete its `device_identity.json`
+and return to the unbound state (ready to scan a new QR); face auth from the
+local DB is unaffected throughout. A removed device that is offline stays
+`suspended` until it next checks in.
+
 ### Reads — dashboard
-- `GET /devices` — all devices with derived `online` and `last_seen_age_sec`.
+- `GET /devices` — all devices with derived `online`, `last_seen_age_sec`, and
+  admin `state` (`active`/`suspended`/`revoked_ack`). Purges acknowledged
+  removals as a side effect.
 - `GET /devices/{id}` — the above plus the last 50 status reports.
 - `GET /devices/{id}/events?limit=&type=` — recent device events, newest first,
   optionally filtered by `type`. `limit` is clamped to `EVENTS_LIMIT`.
@@ -236,7 +253,7 @@ Checked twice against the same signed `expires_at`:
 python -m pytest server/tests -q
 ```
 
-Three files, 50 tests, no hardware required:
+Three files, 62 tests, no hardware required:
 
 - **`test_provisioning.py`** drives the API through `TestClient`. The tests that
   matter most run server-generated QR *images* through the real, unmodified
@@ -289,7 +306,7 @@ Implemented in `provisioning/` at the repo root:
 
 | Module | Role |
 |---|---|
-| `identity.py` | Load/save `device_identity.json` (atomic write; holds the bearer token + the customer/site/door and network_profile, so it is gitignored). |
+| `identity.py` | Load/save/`clear()` `device_identity.json` (atomic write; holds the bearer token + the customer/site/door and network_profile, so it is gitignored). `clear()` is used when the server revokes the device. |
 | `client.py` | The two HTTP calls — `register()` and `post_status()`. |
 | `heartbeat.py` | Daemon thread posting status every `config.HEARTBEAT_INTERVAL_SEC`, with capped backoff. Never raises into the kiosk. |
 | `binding.py` | `BindingManager` — the flow both GUIs call. |
@@ -304,6 +321,12 @@ back online after a reboot without rescanning anything.
 Rescanning a new QR re-binds the device to the new door, replacing the old
 identity. A failed registration leaves the device unbound rather than
 half-configured.
+
+**Removal handling.** Both GUIs pass an `on_revoked` callback to
+`BindingManager`. When a heartbeat gets `410 Gone` (the device was removed on
+the dashboard), the heartbeat thread drops the identity file via
+`identity.clear()`, goes unbound, and the GUI shows "Device removed — Rescan a
+QR to re-enroll". A reboot then comes back unbound, ready for a fresh QR.
 
 Device-side config lives in the root `config.py` under "Device Binding". Note
 the server URL is deliberately *not* configured there — it comes from the signed

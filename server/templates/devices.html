@@ -30,10 +30,11 @@
         <th class="px-4 py-3 font-medium">Last seen</th>
         <th class="px-4 py-3 font-medium">Firmware</th>
         <th class="px-4 py-3 font-medium">MAC</th>
+        <th class="px-4 py-3 font-medium text-right">Actions</th>
       </tr>
     </thead>
     <tbody id="rows" class="divide-y divide-slate-800/70">
-      <tr><td colspan="6" class="px-4 py-10 text-center text-slate-600">Loading…</td></tr>
+      <tr><td colspan="7" class="px-4 py-10 text-center text-slate-600">Loading…</td></tr>
     </tbody>
   </table>
 </div>
@@ -52,7 +53,7 @@
     value ? escapeHtml(value) : '<span class="text-slate-600">—</span>';
 
   const emptyState = `
-    <tr><td colspan="6" class="px-4 py-14 text-center">
+    <tr><td colspan="7" class="px-4 py-14 text-center">
       <p class="text-slate-400">No devices yet</p>
       <p class="mt-1 text-sm text-slate-600">
         Generate a QR code on <a href="/new" class="text-sky-400 hover:underline">Add device</a>,
@@ -61,12 +62,40 @@
     </td></tr>`;
 
   function renderRow(device) {
-    const dot = device.online ? "bg-emerald-400" : "bg-slate-600";
-    const label = device.online ? "Online" : "Offline";
-    const labelColor = device.online ? "text-emerald-400" : "text-slate-500";
-    const reported = device.status
-      ? `<span class="text-slate-600">·</span> <span class="text-slate-400">${escapeHtml(device.status)}</span>`
-      : "";
+    // A removed-but-not-yet-acknowledged device shows a suspended badge in the
+    // status column instead of online/offline.
+    const suspended = device.state === "suspended";
+
+    let statusCell;
+    if (suspended) {
+      statusCell = `
+        <span class="inline-flex items-center gap-2">
+          <span class="h-2 w-2 rounded-full bg-amber-400"></span>
+          <span class="text-amber-400">Suspended</span>
+          <span class="text-slate-600">·</span>
+          <span class="text-slate-500">awaiting device</span>
+        </span>`;
+    } else {
+      const dot = device.online ? "bg-emerald-400" : "bg-slate-600";
+      const label = device.online ? "Online" : "Offline";
+      const labelColor = device.online ? "text-emerald-400" : "text-slate-500";
+      const reported = device.status
+        ? `<span class="text-slate-600">·</span> <span class="text-slate-400">${escapeHtml(device.status)}</span>`
+        : "";
+      statusCell = `
+        <span class="inline-flex items-center gap-2">
+          <span class="h-2 w-2 rounded-full ${dot}"></span>
+          <span class="${labelColor}">${label}</span> ${reported}
+        </span>`;
+    }
+
+    const actionCell = suspended
+      ? `<span class="text-xs text-slate-600">removing…</span>`
+      : `<button data-remove="${encodeURIComponent(device.device_id)}"
+                 data-door="${escapeHtml(device.name || device.door_id || device.device_id.slice(0, 8))}"
+                 class="rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-red-500/60 hover:text-red-400">
+           Remove
+         </button>`;
 
     return `
       <tr class="transition-colors hover:bg-slate-800/40">
@@ -78,17 +107,35 @@
         <td class="px-4 py-3 text-slate-400">
           ${dash(device.customer_id)} <span class="text-slate-600">/</span> ${dash(device.site_id)}
         </td>
-        <td class="px-4 py-3">
-          <span class="inline-flex items-center gap-2">
-            <span class="h-2 w-2 rounded-full ${dot}"></span>
-            <span class="${labelColor}">${label}</span> ${reported}
-          </span>
-        </td>
+        <td class="px-4 py-3">${statusCell}</td>
         <td class="px-4 py-3 text-slate-400">${relativeAge(device.last_seen_age_sec)}</td>
         <td class="px-4 py-3 text-slate-400">${dash(device.fw_version)}</td>
         <td class="px-4 py-3 font-mono text-xs text-slate-500">${dash(device.mac)}</td>
+        <td class="px-4 py-3 text-right">${actionCell}</td>
       </tr>`;
   }
+
+  async function removeDevice(deviceId, door) {
+    if (!confirm(
+      `Remove "${door}"?\n\n` +
+      "The device stays listed as Suspended until it next checks in, at which " +
+      "point it drops its credentials and disappears from this list."
+    )) return;
+    try {
+      const response = await fetch(`/devices/${encodeURIComponent(deviceId)}`, { method: "DELETE" });
+      if (!response.ok) throw new Error(response.status);
+      refresh();
+    } catch (err) {
+      alert("Could not remove device: " + err.message);
+    }
+  }
+
+  // Delegated click handler for the Remove buttons (rows are re-rendered each refresh).
+  rows.addEventListener("click", (event) => {
+    const btn = event.target.closest("[data-remove]");
+    if (!btn) return;
+    removeDevice(decodeURIComponent(btn.dataset.remove), btn.dataset.door);
+  });
 
   async function refresh() {
     try {

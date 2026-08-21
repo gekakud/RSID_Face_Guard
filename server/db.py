@@ -63,8 +63,15 @@ CREATE TABLE IF NOT EXISTS devices (
   ip_address      TEXT,
   registered_at   TEXT NOT NULL,
   last_seen_at    TEXT,
-  status          TEXT,
-  metadata        TEXT
+  status          TEXT,               -- device-reported: online/offline/shutting_down
+  metadata        TEXT,
+  -- Admin lifecycle state, distinct from the device-reported `status`:
+  --   'active'      normal.
+  --   'suspended'   operator removed it; still tombstoned so the device's next
+  --                 heartbeat can be told (410) to drop its identity.
+  --   'revoked_ack' the device acknowledged removal; safe to purge.
+  state           TEXT NOT NULL DEFAULT 'active',
+  suspended_at    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS status_history (

@@ -141,6 +141,9 @@ class DeviceSummary(BaseModel):
     online: bool
     last_seen_age_sec: Optional[float] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    # Admin lifecycle: "active" | "suspended" | "revoked_ack". See server/db.py.
+    state: str = "active"
+    suspended_at: Optional[str] = None
 
 
 class StatusHistoryEntry(BaseModel):
@@ -157,6 +160,12 @@ class DeviceEvent(BaseModel):
 
 class DeviceDetail(DeviceSummary):
     history: List[StatusHistoryEntry] = Field(default_factory=list)
+
+
+class DeleteDeviceResponse(BaseModel):
+    ok: bool = True
+    device_id: str
+    state: str          # "suspended" (awaiting the device to acknowledge)
 
 
 class PendingToken(BaseModel):

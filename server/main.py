@@ -149,6 +149,8 @@ def _device_summary(row: sqlite3.Row) -> models.DeviceSummary:
         online=age is not None and age <= config.HEARTBEAT_TIMEOUT_SEC,
         last_seen_age_sec=age,
         metadata=_json_loads(row["metadata"]),
+        state=row["state"] if "state" in row.keys() else "active",
+        suspended_at=row["suspended_at"] if "suspended_at" in row.keys() else None,
     )
 
 
@@ -355,6 +357,21 @@ def post_status(
     events.py). They are pulled out into the events table and stripped from the
     stored metadata so the dashboard's "latest metadata" panel stays clean.
     """
+    # If an operator removed this device, its row is kept as a tombstone so this
+    # heartbeat can be told the device was revoked. Reply 410 Gone (the device
+    # drops its identity on seeing it) and flip the row to revoked_ack so it can
+    # be purged. Don't record the heartbeat.
+    if device["state"] == "suspended":
+        conn.execute(
+            "UPDATE devices SET state = 'revoked_ack' WHERE device_id = ?",
+            (device_id,),
+        )
+        conn.commit()
+        raise HTTPException(status_code=410, detail="Device was removed")
+    if device["state"] == "revoked_ack":
+        # Device somehow beat again before being purged -- keep telling it.
+        raise HTTPException(status_code=410, detail="Device was removed")
+
     now = timeutil.now_ts()
 
     metadata = dict(body.metadata)
@@ -517,11 +534,62 @@ def create_door(
     dependencies=[Depends(require_admin)],
 )
 def list_devices(conn: sqlite3.Connection = Depends(db.get_db)):
+    # Sweep out devices that have acknowledged their removal before listing, so
+    # the tombstone disappears once the device has actually dropped its identity.
+    _purge_acknowledged(conn)
     rows = conn.execute(
         "SELECT * FROM devices ORDER BY last_seen_at DESC, registered_at DESC"
     ).fetchall()
     return [_device_summary(row) for row in rows]
 
+
+@app.delete(
+    "/devices/{device_id}",
+    response_model=models.DeleteDeviceResponse,
+    dependencies=[Depends(require_admin)],
+)
+def delete_device(device_id: str, conn: sqlite3.Connection = Depends(db.get_db)):
+    """Remove a device: suspend it (soft delete).
+
+    The row is kept as a tombstone rather than hard-deleted, so the device's
+    next heartbeat can be answered with 410 and it can drop its own identity.
+    Once the device acknowledges (its heartbeat flips it to revoked_ack) the
+    tombstone is purged on the next device-list load. Idempotent.
+    """
+    row = conn.execute(
+        "SELECT state FROM devices WHERE device_id = ?", (device_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Unknown device")
+
+    # Only move active -> suspended; leave an already-acknowledged removal alone.
+    if row["state"] == "active":
+        conn.execute(
+            "UPDATE devices SET state = 'suspended', suspended_at = ? WHERE device_id = ?",
+            (timeutil.now_ts(), device_id),
+        )
+        conn.commit()
+        new_state = "suspended"
+    else:
+        new_state = row["state"]
+
+    return models.DeleteDeviceResponse(ok=True, device_id=device_id, state=new_state)
+
+def _purge_acknowledged(conn: sqlite3.Connection) -> None:
+    """Hard-delete devices that have acknowledged removal, and their history."""
+    acked = [
+        r["device_id"]
+        for r in conn.execute(
+            "SELECT device_id FROM devices WHERE state = 'revoked_ack'"
+        ).fetchall()
+    ]
+    if not acked:
+        return
+    for device_id in acked:
+        conn.execute("DELETE FROM status_history WHERE device_id = ?", (device_id,))
+        conn.execute("DELETE FROM events WHERE device_id = ?", (device_id,))
+        conn.execute("DELETE FROM devices WHERE device_id = ?", (device_id,))
+    conn.commit()
 
 @app.get(
     "/tokens",
