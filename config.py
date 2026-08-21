@@ -127,7 +127,7 @@ APP_VERSION = "face-guard-0.1.0"
 # registers. Leave False on dev machines -- it would reconfigure the host's
 # networking. Set True only on the Raspberry Pi kiosk. A "local" profile (LAN
 # cable) is always a no-op regardless of this flag.
-APPLY_NETWORK_PROFILE = False
+APPLY_NETWORK_PROFILE = True
 
 # Seconds to wait for the Wi-Fi connection to come up after nmcli is invoked.
 NETWORK_APPLY_TIMEOUT_SEC = 30
