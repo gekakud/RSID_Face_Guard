@@ -6,29 +6,66 @@
 <div class="mb-6">
   <h1 class="text-xl font-semibold tracking-tight text-slate-100">Add a device</h1>
   <p class="mt-1 text-sm text-slate-500">
-    Generate a signed, one-time QR code, then show it to the device camera while the
-    device is in init mode. The code binds that device to this door.
+    Pick the customer, site and door (or add new ones), choose how the device
+    reaches the internet, then show the generated QR to the device camera while
+    it is in init mode. The code binds that device to this door.
   </p>
 </div>
 
-<div class="grid gap-6 lg:grid-cols-[20rem_1fr]">
+<div class="grid gap-6 lg:grid-cols-[22rem_1fr]">
 
   <form id="form" class="space-y-4 rounded-xl border border-slate-800 bg-slate-900/40 p-5">
     {% set field = "mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 outline-none focus:border-sky-500" %}
     {% set label = "block text-xs font-medium uppercase tracking-wider text-slate-500" %}
+    {% set addbtn = "shrink-0 rounded-md border border-slate-700 bg-slate-800 px-3 text-sm text-slate-200 hover:bg-slate-700" %}
 
+    <!-- Customer -->
     <div>
-      <label class="{{ label }}" for="tenant_id">Tenant</label>
-      <input class="{{ field }}" id="tenant_id" name="tenant_id" required placeholder="acme-corp">
+      <label class="{{ label }}" for="customer_select">Customer</label>
+      <div class="mt-1 flex gap-2">
+        <select class="{{ field }} mt-0" id="customer_select"></select>
+        <button type="button" class="{{ addbtn }}" data-add="customer" title="Add customer">+</button>
+      </div>
     </div>
+
+    <!-- Site -->
     <div>
-      <label class="{{ label }}" for="site_id">Site</label>
-      <input class="{{ field }}" id="site_id" name="site_id" required placeholder="tel-aviv-hq">
+      <label class="{{ label }}" for="site_select">Site</label>
+      <div class="mt-1 flex gap-2">
+        <select class="{{ field }} mt-0" id="site_select" disabled></select>
+        <button type="button" class="{{ addbtn }}" data-add="site" title="Add site">+</button>
+      </div>
     </div>
+
+    <!-- Door -->
     <div>
-      <label class="{{ label }}" for="door_id">Door</label>
-      <input class="{{ field }}" id="door_id" name="door_id" required placeholder="main-entrance">
+      <label class="{{ label }}" for="door_select">Door</label>
+      <div class="mt-1 flex gap-2">
+        <select class="{{ field }} mt-0" id="door_select" disabled></select>
+        <button type="button" class="{{ addbtn }}" data-add="door" title="Add door">+</button>
+      </div>
     </div>
+
+    <!-- Network -->
+    <div class="rounded-md border border-slate-800 bg-slate-950/40 p-3">
+      <span class="{{ label }}">Network</span>
+      <div class="mt-2 flex gap-4 text-sm text-slate-300">
+        <label class="flex items-center gap-2">
+          <input type="radio" name="net_mode" value="local" checked> Local (LAN cable)
+        </label>
+        <label class="flex items-center gap-2">
+          <input type="radio" name="net_mode" value="wifi"> Wi-Fi
+        </label>
+      </div>
+      <p id="net_local_note" class="mt-2 text-xs text-slate-500">
+        Assumes the device is plugged into the LAN and already has internet.
+      </p>
+      <div id="net_wifi" class="mt-2 hidden space-y-2">
+        <input class="{{ field }} mt-0" id="wifi_ssid" placeholder="Network name (SSID)">
+        <input class="{{ field }} mt-0" id="wifi_password" type="text" placeholder="Password">
+      </div>
+    </div>
+
     <div>
       <label class="{{ label }}" for="validity_minutes">Valid for (minutes)</label>
       <input class="{{ field }}" id="validity_minutes" name="validity_minutes"
@@ -67,6 +104,23 @@
   </div>
 
 </div>
+
+<!-- Add-new popup: one modal reused for customer/site/door -->
+<dialog id="add_dialog" class="rounded-xl border border-slate-700 bg-slate-900 p-0 text-slate-100 backdrop:bg-black/60">
+  <form method="dialog" id="add_form" class="w-80 space-y-4 p-5">
+    <h3 id="add_title" class="text-sm font-semibold text-slate-100">Add</h3>
+    <input id="add_name"
+           class="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 outline-none focus:border-sky-500"
+           placeholder="Name" autocomplete="off">
+    <p id="add_error" class="hidden text-xs text-red-400"></p>
+    <div class="flex justify-end gap-2">
+      <button type="button" id="add_cancel"
+              class="rounded-md border border-slate-700 bg-slate-800 px-3 py-1.5 text-sm text-slate-200 hover:bg-slate-700">Cancel</button>
+      <button type="button" id="add_save"
+              class="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500">Save</button>
+    </div>
+  </form>
+</dialog>
 {% endblock %}
 
 {% block scripts %}
@@ -77,9 +131,168 @@
   const countdown = document.getElementById("countdown");
   let countdownTimer = null;
 
+  const $ = (id) => document.getElementById(id);
+  const customerSel = $("customer_select");
+  const siteSel = $("site_select");
+  const doorSel = $("door_select");
+
   const escapeHtml = (value) =>
     String(value ?? "").replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  const showError = (msg) => {
+    errorBox.textContent = msg;
+    errorBox.classList.remove("hidden");
+  };
+
+  async function api(path, options) {
+    const response = await fetch(path, options);
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.detail ? JSON.stringify(body.detail) : `HTTP ${response.status}`);
+    }
+    return response.json();
+  }
+
+  function fillSelect(select, items, { placeholder }) {
+    select.innerHTML = "";
+    if (placeholder) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = placeholder;
+      opt.disabled = true;
+      opt.selected = true;
+      select.appendChild(opt);
+    }
+    for (const item of items) {
+      const opt = document.createElement("option");
+      opt.value = item.id;
+      opt.dataset.name = item.name;
+      opt.textContent = item.name;
+      select.appendChild(opt);
+    }
+  }
+
+  const selectedName = (select) =>
+    select.selectedOptions.length ? select.selectedOptions[0].dataset.name : null;
+
+  // Auto-select the first real option (skips the disabled placeholder).
+  function selectFirst(select) {
+    for (const opt of select.options) {
+      if (!opt.disabled && opt.value) {
+        select.value = opt.value;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async function loadCustomers(selectId) {
+    const items = await api("/customers");
+    fillSelect(customerSel, items, { placeholder: "Select a customer" });
+    if (selectId) customerSel.value = String(selectId);
+    else selectFirst(customerSel);
+    await loadSites();
+  }
+
+  async function loadSites(selectId) {
+    siteSel.disabled = true;
+    doorSel.disabled = true;
+    fillSelect(siteSel, [], { placeholder: "Select a site" });
+    fillSelect(doorSel, [], { placeholder: "Select a door" });
+    if (!customerSel.value) return;
+    const items = await api(`/sites?customer_id=${customerSel.value}`);
+    fillSelect(siteSel, items, { placeholder: "Select a site" });
+    siteSel.disabled = false;
+    if (selectId) siteSel.value = String(selectId);
+    else selectFirst(siteSel);
+    await loadDoors();
+  }
+
+  async function loadDoors(selectId) {
+    doorSel.disabled = true;
+    fillSelect(doorSel, [], { placeholder: "Select a door" });
+    if (!siteSel.value) return;
+    const items = await api(`/doors?site_id=${siteSel.value}`);
+    fillSelect(doorSel, items, { placeholder: "Select a door" });
+    doorSel.disabled = false;
+    if (selectId) doorSel.value = String(selectId);
+    else selectFirst(doorSel);
+  }
+
+  customerSel.addEventListener("change", () => loadSites());
+  siteSel.addEventListener("change", () => loadDoors());
+
+  // ---- Add-new popup (native <dialog>), reused for all three levels ----
+  const addDialog = $("add_dialog");
+  const addName = $("add_name");
+  const addError = $("add_error");
+  let addWhich = null;   // "customer" | "site" | "door"
+
+  const LABELS = { customer: "customer", site: "site", door: "door" };
+
+  function openAdd(which) {
+    // Guard: site needs a customer, door needs a site.
+    if (which === "site" && !customerSel.value) return showError("Pick a customer first");
+    if (which === "door" && !siteSel.value) return showError("Pick a site first");
+    errorBox.classList.add("hidden");
+    addWhich = which;
+    $("add_title").textContent = "Add " + LABELS[which];
+    addName.value = "";
+    addError.classList.add("hidden");
+    addDialog.showModal();
+    addName.focus();
+  }
+
+  async function saveAdd() {
+    const name = addName.value.trim();
+    if (!name) { addError.textContent = "Enter a name"; addError.classList.remove("hidden"); return; }
+    try {
+      if (addWhich === "customer") {
+        const created = await api("/customers", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name }),
+        });
+        addDialog.close();
+        await loadCustomers(created.id);
+      } else if (addWhich === "site") {
+        const created = await api("/sites", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ customer_id: Number(customerSel.value), name }),
+        });
+        addDialog.close();
+        await loadSites(created.id);
+      } else if (addWhich === "door") {
+        const created = await api("/doors", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ site_id: Number(siteSel.value), name }),
+        });
+        addDialog.close();
+        await loadDoors(created.id);
+      }
+    } catch (err) {
+      addError.textContent = "Could not save: " + err.message;
+      addError.classList.remove("hidden");
+    }
+  }
+
+  document.querySelectorAll("[data-add]").forEach((btn) => {
+    btn.addEventListener("click", () => openAdd(btn.dataset.add));
+  });
+  $("add_save").addEventListener("click", saveAdd);
+  $("add_cancel").addEventListener("click", () => addDialog.close());
+  addName.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); saveAdd(); }
+  });
+
+  // Network mode toggle
+  document.querySelectorAll("input[name=net_mode]").forEach((radio) => {
+    radio.addEventListener("change", () => {
+      const wifi = document.querySelector("input[name=net_mode]:checked").value === "wifi";
+      $("net_wifi").classList.toggle("hidden", !wifi);
+      $("net_local_note").classList.toggle("hidden", wifi);
+    });
+  });
 
   function startCountdown(expiresAt) {
     clearInterval(countdownTimer);
@@ -88,11 +301,9 @@
     const tick = () => {
       const remaining = Math.floor((expiry - Date.now()) / 1000);
       if (remaining <= 0) {
-        // Make a dead code obvious -- an installer shouldn't be left holding up
-        // a QR the device will silently reject as expired.
         countdown.textContent = "Expired — generate a new code";
         countdown.className = "mt-3 text-center text-sm font-medium text-red-400";
-        document.getElementById("qr").style.opacity = "0.25";
+        $("qr").style.opacity = "0.25";
         clearInterval(countdownTimer);
         return;
       }
@@ -106,32 +317,62 @@
     countdownTimer = setInterval(tick, 1000);
   }
 
+  function buildNetworkProfile() {
+    const mode = document.querySelector("input[name=net_mode]:checked").value;
+    if (mode === "wifi") {
+      return {
+        mode: "wifi",
+        wifi: { ssid: $("wifi_ssid").value.trim(), password: $("wifi_password").value },
+      };
+    }
+    return { mode: "local" };
+  }
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     errorBox.classList.add("hidden");
 
-    const data = Object.fromEntries(new FormData(form));
-    data.validity_minutes = Number(data.validity_minutes);
+    const customer = selectedName(customerSel);
+    const site = selectedName(siteSel);
+    const door = selectedName(doorSel);
+    if (!customer || !site || !door) {
+      return showError("Select a customer, site and door");
+    }
+
+    const netProfile = buildNetworkProfile();
+    if (netProfile.mode === "wifi" && (!netProfile.wifi.ssid || !netProfile.wifi.password)) {
+      return showError("Wi-Fi needs both a network name and a password");
+    }
+
+    const data = {
+      customer_id: customer,
+      site_id: site,
+      door_id: door,
+      network_profile: netProfile,
+      validity_minutes: Number($("validity_minutes").value),
+    };
 
     try {
-      const response = await fetch("/devices/generate-qr", {
+      const payload = await api("/devices/generate-qr", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body.detail ? JSON.stringify(body.detail) : `HTTP ${response.status}`);
-      }
-      const payload = await response.json();
 
-      document.getElementById("qr").src = payload.qr_png;
-      document.getElementById("qr").style.opacity = "1";
-      document.getElementById("payload").textContent = JSON.stringify(payload.payload, null, 2);
-      document.getElementById("meta").innerHTML = [
+      $("qr").src = payload.qr_png;
+      $("qr").style.opacity = "1";
+      $("payload").textContent = JSON.stringify(payload.payload, null, 2);
+
+      const net = payload.payload.network_profile || {};
+      const netLabel = net.mode === "wifi"
+        ? `Wi-Fi — ${net.wifi ? net.wifi.ssid : ""}`
+        : "Local (LAN cable)";
+
+      $("meta").innerHTML = [
         ["Door", payload.payload.door_id],
         ["Site", payload.payload.site_id],
-        ["Tenant", payload.payload.tenant_id],
+        ["Customer", payload.payload.customer_id],
+        ["Network", netLabel],
         ["Registers at", payload.payload.server_url],
         ["Expires", payload.expires_at],
       ].map(([key, value]) => `
@@ -143,9 +384,11 @@
       result.classList.remove("hidden");
       startCountdown(payload.expires_at);
     } catch (err) {
-      errorBox.textContent = "Could not generate: " + err.message;
-      errorBox.classList.remove("hidden");
+      showError("Could not generate: " + err.message);
     }
   });
+
+  // Initial load
+  loadCustomers().catch((err) => showError("Could not load customers: " + err.message));
 </script>
 {% endblock %}

@@ -105,7 +105,7 @@ def main() -> int:
     print(f"registering with {server_url} ...")
     creds = register(server_url, token, nonce)
     print(f"  device_id = {creds['device_id']}")
-    print(f"  door      = {creds['door_id']} @ {creds['site_id']} ({creds['tenant_id']})")
+    print(f"  door      = {creds['door_id']} @ {creds['site_id']} ({creds['customer_id']})")
 
     interval = args.interval or creds.get("heartbeat_interval_sec", 30)
     started_at = time.time()

@@ -72,6 +72,9 @@ def test_generate_qr_returns_signed_payload(qr):
     assert payload["command"] == "provision_device"
     assert payload["server_url"] == "http://testserver"
     assert payload["provisioning_token"] == body["token"]
+    assert payload["customer_id"] == "acme"
+    # Defaults to a "local" network profile when none is supplied.
+    assert payload["network_profile"] == {"mode": "local"}
     assert payload["signature"]["algorithm"] == "Ed25519"
     assert body["qr_png"].startswith("data:image/png;base64,")
 
@@ -158,9 +161,12 @@ def test_register_issues_credentials(client, qr):
     assert body["door_id"] == "main-entrance"
     assert body["heartbeat_interval_sec"] > 0
 
+    assert body["customer_id"] == "acme"
+
     devices = client.get("/devices").json()
     assert len(devices) == 1
     assert devices[0]["mac"] == "aa:bb:cc:dd:ee:ff"
+    assert devices[0]["customer_id"] == "acme"
     # Registered but never heard from -> offline until the first heartbeat.
     assert devices[0]["online"] is False
 
@@ -275,6 +281,137 @@ def test_device_goes_offline_after_timeout(client, qr, monkeypatch):
 def test_unknown_device_detail_is_404(client):
     assert client.get("/devices/does-not-exist").status_code == 404
 
+
+# =====================================================
+# Customer / Site / Door management
+# =====================================================
+
+def test_customer_site_door_crud_and_cascade(client):
+    # Create a customer, then a site under it, then a door under that.
+    cust = client.post("/customers", json={"name": "acme-corp"}).json()
+    assert cust["id"] and cust["name"] == "acme-corp"
+
+    site = client.post(
+        "/sites", json={"customer_id": cust["id"], "name": "tel-aviv-hq"}
+    ).json()
+    assert site["customer_id"] == cust["id"]
+
+    door = client.post(
+        "/doors", json={"site_id": site["id"], "name": "main-entrance"}
+    ).json()
+    assert door["site_id"] == site["id"]
+
+    # Listing is scoped to the parent (cascade).
+    assert [c["name"] for c in client.get("/customers").json()] == ["acme-corp"]
+    assert [s["name"] for s in client.get(f"/sites?customer_id={cust['id']}").json()] == ["tel-aviv-hq"]
+    assert [d["name"] for d in client.get(f"/doors?site_id={site['id']}").json()] == ["main-entrance"]
+    # A different (nonexistent) parent yields nothing.
+    assert client.get("/sites?customer_id=99999").json() == []
+
+def test_create_is_idempotent_by_name(client):
+    first = client.post("/customers", json={"name": "acme"}).json()
+    second = client.post("/customers", json={"name": "acme"}).json()
+    assert first["id"] == second["id"]
+    assert len(client.get("/customers").json()) == 1
+
+def test_site_and_door_require_existing_parent(client):
+    assert client.post("/sites", json={"customer_id": 1, "name": "s"}).status_code == 404
+    assert client.post("/doors", json={"site_id": 1, "name": "d"}).status_code == 404
+
+# =====================================================
+# Network profile
+# =====================================================
+
+def test_wifi_network_profile_is_signed_into_payload(qr):
+    body = qr(network_profile={
+        "mode": "wifi",
+        "wifi": {"ssid": "acme-guest", "password": "s3cr3t"},
+    })
+    profile = body["payload"]["network_profile"]
+    assert profile["mode"] == "wifi"
+    assert profile["wifi"] == {"ssid": "acme-guest", "password": "s3cr3t"}
+
+def test_wifi_profile_requires_credentials(client):
+    # mode=wifi but no wifi block -> validation error.
+    response = client.post("/devices/generate-qr", json={
+        "customer_id": "acme", "site_id": "hq", "door_id": "d",
+        "network_profile": {"mode": "wifi"},
+    })
+    assert response.status_code == 422
+
+def test_network_profile_persists_to_device(client, qr):
+    body = qr(network_profile={
+        "mode": "wifi",
+        "wifi": {"ssid": "acme-guest", "password": "s3cr3t"},
+    })
+    creds = _register(client, body).json()
+    device = client.get(f"/devices/{creds['device_id']}").json()
+    assert device["network_profile"]["mode"] == "wifi"
+    assert device["network_profile"]["wifi"]["ssid"] == "acme-guest"
+
+@needs_device_verifier
+def test_wifi_profile_round_trips_through_device_verifier(qr):
+    body = qr(network_profile={
+        "mode": "wifi",
+        "wifi": {"ssid": "acme-guest", "password": "s3cr3t"},
+    })
+    scanned = QRScanner().scan(_frame(body["qr_png"]))
+    assert scanned is not None
+    assert scanned["network_profile"]["wifi"]["ssid"] == "acme-guest"
+
+# =====================================================
+# Device-side network apply (provisioning/network.py)
+# =====================================================
+
+def test_network_apply_local_is_noop():
+    from provisioning import network
+    assert network.apply({"mode": "local"}) is True
+
+def test_network_apply_wifi_skipped_when_disabled(monkeypatch):
+    import config
+    from provisioning import network
+
+    monkeypatch.setattr(config, "APPLY_NETWORK_PROFILE", False)
+    # Must not shell out to nmcli when the feature is off.
+    called = {"ran": False}
+    monkeypatch.setattr(network, "_run", lambda *a, **k: called.__setitem__("ran", True))
+    assert network.apply({"mode": "wifi", "wifi": {"ssid": "s", "password": "p"}}) is True
+    assert called["ran"] is False
+
+def test_network_apply_wifi_enabled_calls_nmcli(monkeypatch):
+    import config
+    from provisioning import network
+
+    monkeypatch.setattr(config, "APPLY_NETWORK_PROFILE", True)
+    monkeypatch.setattr(network, "_have_nmcli", lambda: True)
+
+    calls = []
+
+    class _Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(args, timeout=None):
+        calls.append(args)
+        return _Result()
+
+    monkeypatch.setattr(network, "_run", fake_run)
+    monkeypatch.setattr(network, "_is_connected", lambda: True)
+
+    assert network.apply({"mode": "wifi", "wifi": {"ssid": "acme", "password": "pw"}}) is True
+    # delete (cleanup) + add + up
+    assert any("add" in c for c in calls)
+    assert any("up" in c for c in calls)
+
+def test_network_apply_wifi_raises_on_missing_nmcli(monkeypatch):
+    import config
+    from provisioning import network
+
+    monkeypatch.setattr(config, "APPLY_NETWORK_PROFILE", True)
+    monkeypatch.setattr(network, "_have_nmcli", lambda: False)
+    with pytest.raises(network.NetworkApplyError):
+        network.apply({"mode": "wifi", "wifi": {"ssid": "s", "password": "p"}})
 
 # =====================================================
 # Dashboard auth

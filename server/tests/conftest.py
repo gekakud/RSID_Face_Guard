@@ -16,6 +16,9 @@ if _REPO_ROOT not in sys.path:
 
 os.environ["DB_PATH"] = os.path.join(tempfile.mkdtemp(prefix="faceguard-test-"), "test.db")
 os.environ["PUBLIC_BASE_URL"] = "http://testserver"
+# Tests assert against empty customer/site/door tables, so don't seed the demo
+# records (production seeds them; see server/db._seed_defaults).
+os.environ["SEED_DEFAULTS"] = "0"
 os.environ.pop("ADMIN_USER", None)
 os.environ.pop("ADMIN_PASSWORD", None)
 
@@ -37,7 +40,8 @@ def client():
     try:
         conn.executescript(
             "DELETE FROM tokens; DELETE FROM devices; "
-            "DELETE FROM status_history; DELETE FROM events;"
+            "DELETE FROM status_history; DELETE FROM events; "
+            "DELETE FROM doors; DELETE FROM sites; DELETE FROM customers;"
         )
         conn.commit()
     finally:
@@ -53,7 +57,7 @@ def qr(client):
 
     def _generate(validity_minutes=10, **overrides):
         body = {
-            "tenant_id": "acme",
+            "customer_id": "acme",
             "site_id": "hq",
             "door_id": "main-entrance",
             "validity_minutes": validity_minutes,

@@ -51,18 +51,21 @@ def _get_private_key():
 
 
 def build_payload(
-    tenant_id: str,
+    customer_id: str,
     site_id: str,
     door_id: str,
     provisioning_token: str,
     validity_minutes: int,
+    network_profile: Optional[dict] = None,
     now: Optional[datetime] = None,
 ) -> dict:
     """Build and sign a provisioning payload.
 
     Field-for-field the same envelope as other/qr_code_poc/gen_qr_code.py, with
     server_url pointing at this deployment so the device learns where to
-    register from the QR itself.
+    register from the QR itself. network_profile tells a not-yet-networked
+    device how to reach that server ("wifi" with ssid/password, or "local" for
+    a device already on a LAN cable); it defaults to local.
     """
     now = now or timeutil.utcnow()
     expires = timeutil.plus_minutes(validity_minutes, now)
@@ -71,17 +74,14 @@ def build_payload(
         "schema": SCHEMA,
         "command": COMMAND,
         "server_url": config.PUBLIC_BASE_URL,
-        "tenant_id": tenant_id,
+        "customer_id": customer_id,
         "site_id": site_id,
         "door_id": door_id,
         "provisioning_token": provisioning_token,
         "issued_at": timeutil.to_ts(now),
         "expires_at": timeutil.to_ts(expires),
         "nonce": str(uuid.uuid4()),
-        "network_profile": {
-            "mode": "ethernet_or_preconfigured_wifi",
-            "wifi_profile_ref": None,
-        },
+        "network_profile": network_profile or {"mode": "local"},
     }
     return sign_payload(payload, _get_private_key(), KEY_ID)
 
@@ -140,11 +140,12 @@ def _decodes(png_bytes: bytes) -> Optional[bool]:
 
 
 def generate(
-    tenant_id: str,
+    customer_id: str,
     site_id: str,
     door_id: str,
     provisioning_token: str,
     validity_minutes: int,
+    network_profile: Optional[dict] = None,
 ) -> Tuple[dict, str]:
     """Build a signed payload and a QR image the device can actually read.
 
@@ -157,7 +158,8 @@ def generate(
 
     for attempt in range(1, _MAX_RENDER_ATTEMPTS + 1):
         payload = build_payload(
-            tenant_id, site_id, door_id, provisioning_token, validity_minutes
+            customer_id, site_id, door_id, provisioning_token, validity_minutes,
+            network_profile=network_profile,
         )
         png = render_qr_png(payload)
 

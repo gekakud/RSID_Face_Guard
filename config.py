@@ -122,6 +122,16 @@ HEARTBEAT_INTERVAL_SEC = 30
 # Reported to the dashboard as app_version.
 APP_VERSION = "face-guard-0.1.0"
 
+# When True, a provisioning QR carrying a Wi-Fi network_profile causes the
+# device to actually join that Wi-Fi (via NetworkManager/nmcli) before it
+# registers. Leave False on dev machines -- it would reconfigure the host's
+# networking. Set True only on the Raspberry Pi kiosk. A "local" profile (LAN
+# cable) is always a no-op regardless of this flag.
+APPLY_NETWORK_PROFILE = False
+
+# Seconds to wait for the Wi-Fi connection to come up after nmcli is invoked.
+NETWORK_APPLY_TIMEOUT_SEC = 30
+
 # =====================================================
 # Authentication
 # =====================================================

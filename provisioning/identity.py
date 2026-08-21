@@ -8,7 +8,7 @@ power cut mid-write can't leave a half-written file that bricks the next boot.
 
 import json
 import os
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from typing import Optional
 
 import config
@@ -30,9 +30,13 @@ class DeviceIdentity:
     device_id: str
     device_token: str
     server_url: str
-    tenant_id: str = ""
+    customer_id: str = ""
     site_id: str = ""
     door_id: str = ""
+    # How this device was told to reach the server ("wifi" + ssid/password, or
+    # "local"). Carried and stored for reference; applying it on the Pi is a
+    # separate concern.
+    network_profile: dict = field(default_factory=dict)
     registered_at: str = ""
     heartbeat_interval_sec: int = 30
 

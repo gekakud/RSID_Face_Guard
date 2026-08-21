@@ -38,10 +38,26 @@ All optional; every value has a working default.
 | `EVENTS_LIMIT` | `500` | Event-log rows kept per device. |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | unset | Both set ⇒ HTTP Basic on the dashboard. Unset ⇒ open. |
 
+## Customer / site / door
+
+Devices are organised as **customer → site → door** (a door belongs to a site,
+a site to a customer). The dashboard's `/new` page selects these from managed
+dropdowns; you create records once and pick them thereafter (`+ add` opens a
+popup to create one). The **names** — not the numeric ids — are what get signed into the QR
+and stored on the device, so the device shows e.g. `acme-corp / main-entrance`.
+
+- `GET /customers` · `POST /customers {name}`
+- `GET /sites?customer_id=` · `POST /sites {customer_id, name}`
+- `GET /doors?site_id=` · `POST /doors {site_id, name}`
+
+POST is idempotent by name within its parent: creating a name that already
+exists returns the existing record rather than erroring.
+
 ## The flow
 
-1. Operator fills the form at `/new` → `POST /devices/generate-qr` mints a
-   one-time token and returns it as a signed QR image.
+1. Operator fills the form at `/new` (customer/site/door + network) →
+   `POST /devices/generate-qr` mints a one-time token and returns it as a
+   signed QR image.
 2. Operator shows the QR to the device camera while the device is in init mode.
 3. The device verifies the Ed25519 signature and expiry locally, then
    `POST /devices/register` redeems the token and receives a `device_token`.
@@ -53,12 +69,43 @@ All optional; every value has a working default.
 ### `POST /devices/generate-qr` — dashboard
 ```jsonc
 // request
-{ "tenant_id": "acme", "site_id": "hq", "door_id": "main-entrance", "validity_minutes": 10 }
+{ "customer_id": "acme", "site_id": "hq", "door_id": "main-entrance",
+  "validity_minutes": 10,
+  // How a not-yet-networked device reaches the server. Defaults to "local".
+  "network_profile": { "mode": "wifi", "wifi": { "ssid": "acme-guest", "password": "s3cr3t" } } }
+  //                 or { "mode": "local" }   -- device already on a LAN cable
 // response
 { "token": "...", "nonce": "...", "issued_at": "...", "expires_at": "...",
-  "payload": { /* the full signed QR payload */ },
+  "payload": { /* the full signed QR payload, incl. network_profile */ },
   "qr_png": "data:image/png;base64,..." }
 ```
+The `network_profile` is signed into the QR (so it is tamper-proof) and stored
+on the device. Note the Wi-Fi password is *signed but not encrypted* — anyone
+who photographs the QR can read it.
+
+**Applying it on the device.** When `config.APPLY_NETWORK_PROFILE` is `True`
+(set it so only on the Pi), scanning a `wifi` QR makes the device actually join
+that network via NetworkManager (`nmcli`) *before* it registers — so a device
+with no LAN cable can come online from the QR alone. It is `False` by default so
+a dev machine is never reconfigured; a `local` profile is always a no-op.
+
+`nmcli`-based joining needs permission. Either run the service as root, or add a
+polkit rule so the `geka` user may manage Wi-Fi, e.g.
+`/etc/polkit-1/rules.d/50-faceguard-nm.rules`:
+```javascript
+polkit.addRule(function (action, subject) {
+  if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 &&
+      subject.user === "geka") {
+    return polkit.Result.YES;
+  }
+});
+```
+If the Pi is joining the *new* Wi-Fi it will drop its current connection, so
+don't provision over the same Wi-Fi you're SSH'd in on.
+
+> **Note:** the dashboard seeds a default **Demo Customer → Demo Site → Demo
+> Door** the first time it starts with an empty database, so `/new` works
+> immediately without creating anything. Real records you add sit alongside it.
 
 ### `POST /devices/register` — device
 No auth; the provisioning token *is* the credential.
@@ -70,7 +117,7 @@ No auth; the provisioning token *is* the credential.
   "device_type": "F455", "fw_version": "6.1.0", "app_version": "face-guard" }
 // response
 { "device_id": "uuid", "device_token": "...", "heartbeat_interval_sec": 30,
-  "tenant_id": "acme", "site_id": "hq", "door_id": "main-entrance" }
+  "customer_id": "acme", "site_id": "hq", "door_id": "main-entrance" }
 ```
 `device_token` is returned **once** and stored server-side only as a SHA-256
 hash. A device that loses it must be re-provisioned with a new QR.
@@ -189,7 +236,7 @@ Checked twice against the same signed `expires_at`:
 python -m pytest server/tests -q
 ```
 
-Three files, 43 tests, no hardware required:
+Three files, 50 tests, no hardware required:
 
 - **`test_provisioning.py`** drives the API through `TestClient`. The tests that
   matter most run server-generated QR *images* through the real, unmodified
@@ -214,7 +261,7 @@ real device will make.
 # 1. generate a QR (or use the /new page and save the payload)
 curl -s -X POST http://localhost:8000/devices/generate-qr \
      -H 'Content-Type: application/json' \
-     -d '{"tenant_id":"acme","site_id":"hq","door_id":"main-entrance"}' \
+     -d '{"customer_id":"acme","site_id":"hq","door_id":"main-entrance"}' \
   | python -c "import json,sys; json.dump(json.load(sys.stdin)['payload'], open('payload.json','w'))"
 
 # 2. register + heartbeat
@@ -242,7 +289,7 @@ Implemented in `provisioning/` at the repo root:
 
 | Module | Role |
 |---|---|
-| `identity.py` | Load/save `device_identity.json` (atomic write; holds the bearer token, so it is gitignored). |
+| `identity.py` | Load/save `device_identity.json` (atomic write; holds the bearer token + the customer/site/door and network_profile, so it is gitignored). |
 | `client.py` | The two HTTP calls — `register()` and `post_status()`. |
 | `heartbeat.py` | Daemon thread posting status every `config.HEARTBEAT_INTERVAL_SEC`, with capped backoff. Never raises into the kiosk. |
 | `binding.py` | `BindingManager` — the flow both GUIs call. |

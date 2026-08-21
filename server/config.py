@@ -15,6 +15,13 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "on")
+
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Where the SQLite file lives. On Render this MUST point at a mounted disk
@@ -52,3 +59,9 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 
 def admin_auth_enabled() -> bool:
     return bool(ADMIN_USER and ADMIN_PASSWORD)
+
+
+# Seed a default Demo Customer/Site/Door on first startup (empty DB) so the
+# /new page works immediately without creating anything. Tests turn this off so
+# they assert against empty tables.
+SEED_DEFAULTS = _env_bool("SEED_DEFAULTS", True)

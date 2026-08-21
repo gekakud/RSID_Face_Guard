@@ -24,8 +24,8 @@
   <table class="w-full text-left text-sm">
     <thead class="border-b border-slate-800 text-xs uppercase tracking-wider text-slate-500">
       <tr>
-        <th class="px-4 py-3 font-medium">Device</th>
-        <th class="px-4 py-3 font-medium">Location</th>
+        <th class="px-4 py-3 font-medium">Door</th>
+        <th class="px-4 py-3 font-medium">Customer / Site</th>
         <th class="px-4 py-3 font-medium">Status</th>
         <th class="px-4 py-3 font-medium">Last seen</th>
         <th class="px-4 py-3 font-medium">Firmware</th>
@@ -76,8 +76,7 @@
           <div class="mt-0.5 font-mono text-xs text-slate-600">${escapeHtml(device.device_id.slice(0, 8))}</div>
         </td>
         <td class="px-4 py-3 text-slate-400">
-          ${dash(device.site_id)}
-          <div class="mt-0.5 text-xs text-slate-600">${dash(device.tenant_id)}</div>
+          ${dash(device.customer_id)} <span class="text-slate-600">/</span> ${dash(device.site_id)}
         </td>
         <td class="px-4 py-3">
           <span class="inline-flex items-center gap-2">

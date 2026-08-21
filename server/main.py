@@ -134,9 +134,10 @@ def _device_summary(row: sqlite3.Row) -> models.DeviceSummary:
     return models.DeviceSummary(
         device_id=row["device_id"],
         name=row["name"],
-        tenant_id=row["tenant_id"],
+        customer_id=row["customer_id"],
         site_id=row["site_id"],
         door_id=row["door_id"],
+        network_profile=_json_loads(row["network_profile"]),
         mac=row["mac"],
         device_type=row["device_type"],
         fw_version=row["fw_version"],
@@ -232,27 +233,31 @@ def generate_qr(
 ):
     """Mint a one-time provisioning token and return it as a signed QR image."""
     token = secrets.token_urlsafe(24)
+    network_profile = body.network_profile.model_dump()
     # generate() may re-sign with a fresh nonce until it produces an image the
     # device's decoder can actually read, so persist the payload it returns --
     # not one built separately.
     payload, qr_data_uri = signing.generate(
-        tenant_id=body.tenant_id,
+        customer_id=body.customer_id,
         site_id=body.site_id,
         door_id=body.door_id,
         provisioning_token=token,
         validity_minutes=body.validity_minutes,
+        network_profile=network_profile,
     )
 
     conn.execute(
         """INSERT INTO tokens
-               (token, nonce, tenant_id, site_id, door_id, issued_at, expires_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (token, nonce, customer_id, site_id, door_id, network_profile,
+                issued_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             token,
             payload["nonce"],
-            body.tenant_id,
+            body.customer_id,
             body.site_id,
             body.door_id,
+            json.dumps(network_profile, separators=(",", ":")),
             payload["issued_at"],
             payload["expires_at"],
         ),
@@ -297,15 +302,17 @@ def register_device(
 
     conn.execute(
         """INSERT INTO devices
-               (device_id, name, tenant_id, site_id, door_id, token_hash, mac,
-                device_type, fw_version, app_version, ip_address, registered_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (device_id, name, customer_id, site_id, door_id, network_profile,
+                token_hash, mac, device_type, fw_version, app_version,
+                ip_address, registered_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             device_id,
             row["door_id"],
-            row["tenant_id"],
+            row["customer_id"],
             row["site_id"],
             row["door_id"],
+            row["network_profile"],
             _hash_token(device_token),
             body.mac,
             body.device_type,
@@ -327,7 +334,7 @@ def register_device(
         device_id=device_id,
         device_token=device_token,
         heartbeat_interval_sec=config.HEARTBEAT_INTERVAL_SEC,
-        tenant_id=row["tenant_id"],
+        customer_id=row["customer_id"],
         site_id=row["site_id"],
         door_id=row["door_id"],
         registered_at=now,
@@ -382,6 +389,125 @@ def post_status(
 
 
 # =====================================================
+# Customer / Site / Door management (dashboard dropdowns)
+# =====================================================
+
+def _get_or_create(
+    conn: sqlite3.Connection, table: str, name: str, parent_col: Optional[str] = None,
+    parent_val: Optional[int] = None,
+) -> sqlite3.Row:
+    """Insert a named record (idempotently) and return the resulting row.
+
+    If a record with the same name (under the same parent) already exists, it is
+    returned rather than erroring -- so the dashboard's "+ add" is safe to click
+    twice and re-selecting an existing name just resolves to it.
+    """
+    now = timeutil.now_ts()
+    if parent_col is not None:
+        existing = conn.execute(
+            f"SELECT * FROM {table} WHERE {parent_col} = ? AND name = ?",
+            (parent_val, name),
+        ).fetchone()
+        if existing is not None:
+            return existing
+        cur = conn.execute(
+            f"INSERT INTO {table} ({parent_col}, name, created_at) VALUES (?, ?, ?)",
+            (parent_val, name, now),
+        )
+    else:
+        existing = conn.execute(
+            f"SELECT * FROM {table} WHERE name = ?", (name,)
+        ).fetchone()
+        if existing is not None:
+            return existing
+        cur = conn.execute(
+            f"INSERT INTO {table} (name, created_at) VALUES (?, ?)", (name, now)
+        )
+    conn.commit()
+    return conn.execute(
+        f"SELECT * FROM {table} WHERE id = ?", (cur.lastrowid,)
+    ).fetchone()
+
+@app.get(
+    "/customers",
+    response_model=List[models.Customer],
+    dependencies=[Depends(require_admin)],
+)
+def list_customers(conn: sqlite3.Connection = Depends(db.get_db)):
+    rows = conn.execute("SELECT id, name FROM customers ORDER BY name").fetchall()
+    return [models.Customer(id=r["id"], name=r["name"]) for r in rows]
+
+@app.post(
+    "/customers",
+    response_model=models.Customer,
+    dependencies=[Depends(require_admin)],
+)
+def create_customer(
+    body: models.CreateCustomerRequest, conn: sqlite3.Connection = Depends(db.get_db)
+):
+    row = _get_or_create(conn, "customers", body.name.strip())
+    return models.Customer(id=row["id"], name=row["name"])
+
+@app.get(
+    "/sites",
+    response_model=List[models.Site],
+    dependencies=[Depends(require_admin)],
+)
+def list_sites(customer_id: int, conn: sqlite3.Connection = Depends(db.get_db)):
+    rows = conn.execute(
+        "SELECT id, customer_id, name FROM sites WHERE customer_id = ? ORDER BY name",
+        (customer_id,),
+    ).fetchall()
+    return [
+        models.Site(id=r["id"], customer_id=r["customer_id"], name=r["name"])
+        for r in rows
+    ]
+
+@app.post(
+    "/sites",
+    response_model=models.Site,
+    dependencies=[Depends(require_admin)],
+)
+def create_site(
+    body: models.CreateSiteRequest, conn: sqlite3.Connection = Depends(db.get_db)
+):
+    if conn.execute(
+        "SELECT 1 FROM customers WHERE id = ?", (body.customer_id,)
+    ).fetchone() is None:
+        raise HTTPException(status_code=404, detail="Unknown customer")
+    row = _get_or_create(
+        conn, "sites", body.name.strip(), "customer_id", body.customer_id
+    )
+    return models.Site(id=row["id"], customer_id=row["customer_id"], name=row["name"])
+
+@app.get(
+    "/doors",
+    response_model=List[models.Door],
+    dependencies=[Depends(require_admin)],
+)
+def list_doors(site_id: int, conn: sqlite3.Connection = Depends(db.get_db)):
+    rows = conn.execute(
+        "SELECT id, site_id, name FROM doors WHERE site_id = ? ORDER BY name",
+        (site_id,),
+    ).fetchall()
+    return [models.Door(id=r["id"], site_id=r["site_id"], name=r["name"]) for r in rows]
+
+@app.post(
+    "/doors",
+    response_model=models.Door,
+    dependencies=[Depends(require_admin)],
+)
+def create_door(
+    body: models.CreateDoorRequest, conn: sqlite3.Connection = Depends(db.get_db)
+):
+    if conn.execute(
+        "SELECT 1 FROM sites WHERE id = ?", (body.site_id,)
+    ).fetchone() is None:
+        raise HTTPException(status_code=404, detail="Unknown site")
+    row = _get_or_create(conn, "doors", body.name.strip(), "site_id", body.site_id)
+    return models.Door(id=row["id"], site_id=row["site_id"], name=row["name"])
+
+# =====================================================
 # Read APIs
 # =====================================================
 
@@ -410,7 +536,7 @@ def list_pending_tokens(conn: sqlite3.Connection = Depends(db.get_db)):
     return [
         models.PendingToken(
             token=row["token"],
-            tenant_id=row["tenant_id"],
+            customer_id=row["customer_id"],
             site_id=row["site_id"],
             door_id=row["door_id"],
             issued_at=row["issued_at"],

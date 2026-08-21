@@ -15,16 +15,16 @@ Payload shape:
   "schema": "acme.provisioning-qr.v1",
   "command": "provision_device",
   "server_url": "https://access.example.com",
-  "tenant_id": "tenant_123",
-  "site_id": "site_456",
-  "door_id": "door_789",
+  "customer_id": "acme-corp",
+  "site_id": "tel-aviv-hq",
+  "door_id": "main-entrance",
   "provisioning_token": "opaque-one-time-token",
   "issued_at": "2026-07-27T15:00:00Z",
   "expires_at": "2026-07-27T15:10:00Z",
   "nonce": "b188...uuid",
-  "network_profile": {
-    "mode": "ethernet_or_preconfigured_wifi",
-    "wifi_profile_ref": null
+  "network_profile": {                 // "wifi" (with ssid/password) or "local"
+    "mode": "wifi",
+    "wifi": {"ssid": "acme-guest", "password": "s3cr3t"}
   },
   "signature": {
     "algorithm": "Ed25519",
@@ -99,7 +99,7 @@ def _load_public_keys(directory: str) -> dict:
 def _payload_context(payload: dict) -> str:
     """Short, safe-to-log summary of a payload for tracing (no secrets)."""
     return (
-        f"tenant_id={payload.get('tenant_id')!r} "
+        f"customer_id={payload.get('customer_id')!r} "
         f"site_id={payload.get('site_id')!r} "
         f"door_id={payload.get('door_id')!r} "
         f"key_id={(payload.get('signature') or {}).get('key_id')!r} "

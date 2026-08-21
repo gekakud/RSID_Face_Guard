@@ -73,9 +73,13 @@ def _issue_qr(base_url, door_id="main-entrance", validity_minutes=10):
     response = requests.post(
         f"{base_url}/devices/generate-qr",
         json={
-            "tenant_id": "acme",
+            "customer_id": "acme",
             "site_id": "hq",
             "door_id": door_id,
+            "network_profile": {
+                "mode": "wifi",
+                "wifi": {"ssid": "acme-guest", "password": "s3cr3t"},
+            },
             "validity_minutes": validity_minutes,
         },
         timeout=10,

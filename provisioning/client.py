@@ -11,6 +11,7 @@ import requests
 import config
 from db.remote_provider import get_mac_address
 from observability.logging_setup import get_logger
+from provisioning import network
 from provisioning.identity import DeviceIdentity
 
 log = get_logger("provision")
@@ -45,6 +46,14 @@ def register(payload: dict, device_type: Optional[str] = None) -> DeviceIdentity
     if not server_url:
         raise RegistrationError("QR contained no server_url")
 
+    # If the QR carries a Wi-Fi profile (and APPLY_NETWORK_PROFILE is on), join
+    # that network first -- a fresh device may have no other route to the
+    # server. A "local" profile or the feature being off makes this a no-op.
+    try:
+        network.apply(payload.get("network_profile") or {})
+    except network.NetworkApplyError as exc:
+        raise RegistrationError(f"Could not join network: {exc}") from exc
+
     body = {
         "token": payload.get("provisioning_token"),
         "nonce": payload.get("nonce"),
@@ -54,7 +63,11 @@ def register(payload: dict, device_type: Optional[str] = None) -> DeviceIdentity
         "app_version": _app_version(),
     }
 
-    log.info("Registering with %s (door_id=%s)", server_url, payload.get("door_id"))
+    net_mode = (payload.get("network_profile") or {}).get("mode")
+    log.info(
+        "Registering with %s (door_id=%s, network=%s)",
+        server_url, payload.get("door_id"), net_mode,
+    )
     try:
         response = requests.post(
             f"{server_url}/devices/register",
@@ -80,9 +93,12 @@ def register(payload: dict, device_type: Optional[str] = None) -> DeviceIdentity
         device_id=data["device_id"],
         device_token=data["device_token"],
         server_url=server_url,
-        tenant_id=data.get("tenant_id", ""),
+        customer_id=data.get("customer_id", ""),
         site_id=data.get("site_id", ""),
         door_id=data.get("door_id", ""),
+        # The server echoes customer/site/door but not the network_profile, so
+        # take that straight from the signed QR payload the device just verified.
+        network_profile=payload.get("network_profile") or {},
         registered_at=data.get("registered_at", ""),
         heartbeat_interval_sec=int(
             data.get("heartbeat_interval_sec", config.HEARTBEAT_INTERVAL_SEC)
