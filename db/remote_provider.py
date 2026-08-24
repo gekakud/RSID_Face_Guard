@@ -71,16 +71,22 @@ class RemoteUserDataProvider:
             events.emit("db_sync_failed", reason="invalid_json")
             return {}
 
-        users = self._parse_users(data)
-        log.info("Remote fetch complete. %d users retrieved.", len(users))
-        events.emit("db_sync_ok", users=len(users))
+        users, skipped = self._parse_users(data)
+        log.info("Remote fetch complete. %d users retrieved, %d skipped.", len(users), skipped)
+        events.emit("db_sync_ok", users=len(users), skipped=skipped)
+        if skipped:
+            events.emit("db_sync_skipped_entries", count=skipped)
         return users
 
     @staticmethod
-    def _parse_users(data) -> Dict[str, dict]:
+    def _parse_users(data):
         """Accept either {badge_id: user_data} directly, or a list of
-        user_data dicts each carrying their own "badge_id" field."""
+        user_data dicts each carrying their own "badge_id" field.
+
+        Returns (users, skipped_count).
+        """
         users: Dict[str, dict] = {}
+        skipped = [0]  # mutable counter, shared with _add_if_valid closures
 
         if isinstance(data, dict):
             # Could be {badge_id: user_data} or a wrapper like {"users": [...]}.
@@ -89,35 +95,43 @@ class RemoteUserDataProvider:
                 entries = candidates
             elif isinstance(candidates, dict):
                 for badge_id, user_data in candidates.items():
-                    RemoteUserDataProvider._add_if_valid(users, str(badge_id), user_data)
-                return users
+                    RemoteUserDataProvider._add_if_valid(users, skipped, str(badge_id), user_data)
+                return users, skipped[0]
             else:
-                log.warning("Unexpected server payload shape: %s", type(data))
-                return users
+                log.error("Unexpected server payload shape: keys=%s", list(data.keys())[:20])
+                events.emit("db_sync_failed", reason="unexpected_payload_shape")
+                return users, skipped[0]
         elif isinstance(data, list):
             entries = data
         else:
-            log.warning("Unexpected server payload type: %s", type(data))
-            return users
+            log.error("Unexpected server payload type: %s", type(data))
+            events.emit("db_sync_failed", reason="unexpected_payload_type")
+            return users, skipped[0]
 
         for entry in entries:
             if not isinstance(entry, dict):
+                skipped[0] += 1
                 continue
             badge_id = entry.get("badge_id") or entry.get("id")
             if not badge_id:
+                log.warning("Skipping entry with no badge_id/id: %s", entry)
+                skipped[0] += 1
                 continue
-            RemoteUserDataProvider._add_if_valid(users, str(badge_id), entry)
+            RemoteUserDataProvider._add_if_valid(users, skipped, str(badge_id), entry)
 
-        return users
+        return users, skipped[0]
 
     @staticmethod
-    def _add_if_valid(users: Dict[str, dict], badge_id: str, user_data: dict):
+    def _add_if_valid(users: Dict[str, dict], skipped: list, badge_id: str, user_data: dict):
         if not isinstance(user_data, dict):
             log.warning("Skipping badge_id %s: not an object", badge_id)
+            skipped[0] += 1
             return
         faceprints = user_data.get("faceprints")
         if not _is_valid_faceprints(faceprints):
             log.warning("Skipping badge_id %s: missing/invalid faceprints", badge_id)
+            events.emit("db_sync_invalid_record", badge_id=badge_id)
+            skipped[0] += 1
             return
         users[badge_id] = {
             "name": user_data.get("name", ""),

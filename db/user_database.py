@@ -16,6 +16,7 @@ from typing import Callable, Dict, Optional
 from .local_provider import LocalUserDataProvider
 from .remote_provider import RemoteUserDataProvider
 
+from observability import events
 from observability.logging_setup import get_logger
 
 log = get_logger("db")
@@ -70,10 +71,18 @@ class UserDatabase:
             return 0
 
         with self._lock:
+            previous_ids = set(self.users.keys())
             self.users = dict(remote_users)
+        removed = previous_ids - set(remote_users.keys())
 
         self._save()
         self.reload()
+        log.info(
+            "Remote sync applied: %d users total (%d removed as revoked/stale)",
+            len(remote_users), len(removed),
+        )
+        if removed:
+            events.emit("db_users_revoked", count=len(removed))
         return len(remote_users)
 
     def start_auto_sync(self, interval_sec: float, on_updated: Optional[Callable[[int], None]] = None):
@@ -100,6 +109,7 @@ class UserDatabase:
                             on_updated(updated)
                 except Exception as e:
                     log.error("UserDatabase auto-sync error: %s", e)
+                    events.emit("db_sync_failed", reason="exception", error=str(e))
             log.info("UserDatabase auto-sync stopped")
 
         self._sync_thread = threading.Thread(target=_loop, daemon=True)
