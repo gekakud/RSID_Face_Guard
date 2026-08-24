@@ -35,10 +35,15 @@ class CameraStreamer:
     frames onto image_queue; this class drains that queue, JPEG-encodes the
     newest frame, and stores the bytes for HTTP handlers to serve."""
 
-    def __init__(self, preview_controller, jpeg_quality: int = 80, mirror: bool = True):
+    def __init__(self, preview_controller, jpeg_quality: int = 55, mirror: bool = True,
+                 max_width: int = 720):
         self.preview = preview_controller
         self.jpeg_quality = jpeg_quality
         self.mirror = mirror
+        # Downscaling before JPEG encode cuts both encode time and the bytes
+        # Chromium has to decode/paint per frame -- a big share of the web
+        # UI's slowness vs the Qt UI's native QLabel path on Pi-class ARM.
+        self.max_width = max_width
         self._latest = None
         self._lock = threading.Lock()
         self._running = False
@@ -84,6 +89,9 @@ class CameraStreamer:
         img = Image.fromarray(np.ascontiguousarray(frame), mode=mode)
         if mode != "RGB":
             img = img.convert("RGB")
+        if self.max_width and img.width > self.max_width:
+            ratio = self.max_width / img.width
+            img = img.resize((self.max_width, max(1, int(img.height * ratio))), Image.BILINEAR)
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=self.jpeg_quality)
         with self._lock:

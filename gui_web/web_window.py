@@ -23,7 +23,6 @@ The shared business/hardware layers (HostModeService, PreviewController,
 config) are reused unchanged, exactly like gui_qt.GUIQt.
 """
 
-import base64
 import io
 import json
 import logging
@@ -81,18 +80,36 @@ BRIDGE_SETUP_JS = """
       img.style.background = '#05040a';
       cam.parentNode.insertBefore(img, cam);
     }
-    // Frames are pushed directly from Python as base64 data URIs via
-    // window.__rsidSetFrame() (see GUIWeb._push_frame in web_window.py),
-    // rather than pointed at an MJPEG URL. QtWebEngine's Chromium network
-    // service can wedge its HTTP stack entirely when the host's network
-    // interface flaps (e.g. Wi-Fi toggled off/on) -- even a loopback-only
-    // request never completes until the stack resets, so no amount of
-    // client-side retrying of a fetch/img.src could recover it. Pushing
-    // frames as data: URIs never touches the network stack at all, so it
-    // can't be affected by a Wi-Fi state change.
-    window.__rsidSetFrame = function(dataUri) {
-      img.src = dataUri;
-    };
+    // Live MJPEG stream served by our own loopback HTTP server (frame_server.py)
+    // -- same origin as the page, so no CORS/mixed-content issues. Chromium
+    // decodes multipart/x-mixed-replace natively, so this is as fast as the
+    // Qt UI's own preview path (no JS/base64 involved).
+    img.src = '/stream.mjpg';
+    // Watchdog: if the stream stalls (e.g. after a brief Wi-Fi flap wedges
+    // the connection), the <img> stops progressing but doesn't fire an error
+    // event on its own. Track how long it's been since the browser last
+    // reported new bytes ('progress' fires repeatedly while an
+    // x-mixed-replace stream is flowing); if too long, force a reconnect by
+    // resetting img.src.
+    img.dataset.rsidLastProgress = Date.now();
+    if (!img.dataset.rsidWatchdogWired) {
+      img.dataset.rsidWatchdogWired = '1';
+      img.addEventListener('progress', function() {
+        img.dataset.rsidLastProgress = Date.now();
+      });
+      img.addEventListener('error', function() {
+        console.log('rsid-camera-img stream error, reconnecting');
+        setTimeout(function() { img.src = '/stream.mjpg?t=' + Date.now(); }, 250);
+      });
+      setInterval(function() {
+        var last = parseInt(img.dataset.rsidLastProgress || '0', 10);
+        if (Date.now() - last > 4000) {
+          console.log('rsid-camera-img stream stalled, reconnecting');
+          img.dataset.rsidLastProgress = Date.now();
+          img.src = '/stream.mjpg?t=' + Date.now();
+        }
+      }, 2000);
+    }
   }
   // Keep the camera-error overlay hidden even if getUserMedia rejects later.
   if (err) {
@@ -272,24 +289,16 @@ class GUIWeb(QMainWindow):
         self._qr_scan_timer = None
 
         # Camera streamer + web/MJPEG server (serve the UI dir over http://).
-        # The MJPEG endpoint itself is unused for display (see _frame_push_timer
-        # below) but the server still serves demo_ui's static files, and the
-        # streamer's encoded JPEGs are reused for on-device QR scanning.
+        # The <img> in demo_ui points straight at /stream.mjpg (see
+        # BRIDGE_SETUP_JS); the streamer's encoded JPEGs are also reused for
+        # on-device QR scanning during init mode.
         self.streamer = CameraStreamer(self.preview_controller)
         self.server = WebServer(
             directory=os.path.join(PROJECT_ROOT, config.WEB_UI_DIR),
             streamer=self.streamer,
             port=config.WEB_FRAME_PORT,
+            stream_fps=10,
         )
-        # Pushes frames into the page directly as base64 data URIs via
-        # window.__rsidSetFrame(), bypassing QtWebEngine's Chromium network
-        # service entirely -- see BRIDGE_SETUP_JS for why an <img src=mjpeg>
-        # URL isn't reliable when the host's network interface flaps.
-        self._frame_push_timer = QTimer(self)
-        self._frame_push_timer.timeout.connect(self._push_frame)
-        self._frame_push_timer.start(66)  # ~15 fps is plenty for a kiosk preview
-        self._last_pushed_frame = None
-
         # Periodic disk-space check (independent of the heartbeat interval).
         # Emits storage_low/storage_ok events on threshold crossings; the
         # latest reading also rides every heartbeat via _collect_metadata().
@@ -371,27 +380,6 @@ class GUIWeb(QMainWindow):
             "storage": storage_monitor.get_storage_metadata(),
         }
 
-
-    def _push_frame(self):
-        """Encode the latest camera frame as a base64 JPEG data URI and push it
-        into the page directly via runJavaScript -- see the note in
-        BRIDGE_SETUP_JS on why this replaced an <img src="/stream.mjpg">.
-
-        Runs on the Qt main thread every _frame_push_timer tick; skips work
-        entirely if the page hasn't set up window.__rsidSetFrame yet, or if
-        the same JPEG bytes were already pushed (camera paused/idle).
-        """
-        if not self._page_ready:
-            return
-        jpeg_bytes = self.streamer.latest()
-        if jpeg_bytes is None or jpeg_bytes is self._last_pushed_frame:
-            return
-        self._last_pushed_frame = jpeg_bytes
-        b64 = base64.b64encode(jpeg_bytes).decode("ascii")
-        data_uri = "data:image/jpeg;base64," + b64
-        self.view.page().runJavaScript(
-            "window.__rsidSetFrame && window.__rsidSetFrame(" + json.dumps(data_uri) + ")"
-        )
 
     def _on_binding_result(self, ok: bool, message: str):
         """Binding finished (marshalled onto the Qt thread by _SignalBridge)."""
@@ -726,8 +714,6 @@ class GUIWeb(QMainWindow):
             self.init_mode_timer.stop()
         if self._qr_scan_timer:
             self._qr_scan_timer.stop()
-        if self._frame_push_timer:
-            self._frame_push_timer.stop()
         try:
             self.server.stop()
         except Exception:
