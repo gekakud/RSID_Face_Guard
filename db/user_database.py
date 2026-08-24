@@ -52,11 +52,15 @@ class UserDatabase:
     # Remote sync
     # =====================================================
 
-    def sync_from_remote(self, overwrite_existing: bool = True) -> int:
-        """Pull users from the remote provider and merge into the local cache.
+    def sync_from_remote(self) -> int:
+        """Pull users from the remote provider and fully replace the local
+        cache with the result -- the server is the source of truth, so a
+        badge revoked server-side (missing from the response) is also
+        removed locally. A failed/empty fetch (network error, timeout, bad
+        payload) is a no-op and never wipes the existing local cache.
 
-        Returns the number of users updated. No-op (returns 0) if no
-        remote provider was configured.
+        Returns the number of users in the cache after a successful sync,
+        or 0 if no remote provider was configured or the fetch failed.
         """
         if self._remote is None:
             return 0
@@ -65,17 +69,12 @@ class UserDatabase:
         if not remote_users:
             return 0
 
-        updated_count = 0
         with self._lock:
-            for badge_id, user_data in remote_users.items():
-                if overwrite_existing or badge_id not in self.users:
-                    self.users[badge_id] = user_data
-                    updated_count += 1
+            self.users = dict(remote_users)
 
-        if updated_count > 0:
-            self._save()
-            self.reload()
-        return updated_count
+        self._save()
+        self.reload()
+        return len(remote_users)
 
     def start_auto_sync(self, interval_sec: float, on_updated: Optional[Callable[[int], None]] = None):
         """Start a background daemon thread that periodically calls

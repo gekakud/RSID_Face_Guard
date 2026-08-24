@@ -2,9 +2,12 @@
 Remote (cloud) user data provider.
 
 Fetches user/faceprint records from the backend server by device MAC
-address, and converts them into the same {badge_id: user_data} shape
-used by the local provider. Read-only: this provider never writes back
-to the server.
+address. The server is expected to return users already in the same
+shape used by the local JSON cache (db/local_provider.py) --
+{badge_id: {"name": ..., "permission_level": ..., "faceprints": {...}}}
+-- either as a dict keyed by badge_id, or as a list of objects each
+carrying their own "badge_id" field. Read-only: this provider never
+writes back to the server.
 """
 
 import uuid
@@ -17,6 +20,11 @@ from observability.logging_setup import get_logger
 
 log = get_logger("db")
 
+# Faceprints keys we require to be present before trusting a record enough
+# to write it into the local auth DB -- catches a malformed/partial record
+# without crashing the whole sync.
+_REQUIRED_FACEPRINTS_KEYS = ("version", "features_type", "flags", "adaptive_descriptor_nomask")
+
 
 def get_mac_address() -> str:
     """Return this device's MAC address, formatted as aa:bb:cc:dd:ee:ff."""
@@ -24,23 +32,10 @@ def get_mac_address() -> str:
     return ':'.join(f'{(mac >> ele) & 0xff:02x}' for ele in range(40, -8, -8))
 
 
-def _embedding_to_faceprints(embedding) -> Optional[dict]:
-    """Convert a raw server embedding list into RealSense faceprints structure."""
-    if not isinstance(embedding, list):
-        return None
-    try:
-        descriptor = [int(x) for x in embedding] + [2, 0, 0]
-    except (ValueError, TypeError):
-        return None
-
-    return {
-        "version": 9,
-        "features_type": 0,
-        "flags": 3,
-        "adaptive_descriptor_nomask": descriptor,
-        "adaptive_descriptor_withmask": [0] * 515,
-        "enroll_descriptor": list(descriptor),
-    }
+def _is_valid_faceprints(faceprints) -> bool:
+    if not isinstance(faceprints, dict):
+        return False
+    return all(k in faceprints for k in _REQUIRED_FACEPRINTS_KEYS)
 
 
 class RemoteUserDataProvider:
@@ -76,57 +71,56 @@ class RemoteUserDataProvider:
             events.emit("db_sync_failed", reason="invalid_json")
             return {}
 
-        remote_entries = self._extract_entries(data)
-        if not remote_entries:
-            return {}
-
-        users: Dict[str, dict] = {}
-        seen_ids = set()
-
-        for entry in remote_entries:
-            badge_raw = entry.get("badgeID")
-            if not badge_raw:
-                continue
-
-            badge_id = str(badge_raw).strip()
-            if badge_id in seen_ids:
-                continue
-            seen_ids.add(badge_id)
-
-            embedding = entry.get("embedding")
-            if not isinstance(embedding, list) or len(embedding) == 0:
-                continue
-
-            faceprints = _embedding_to_faceprints(embedding)
-            if faceprints is None:
-                log.warning("Skipping badgeID %s: bad embedding values", badge_id)
-                continue
-
-            user_obj = entry.get("user", {}) or {}
-            name = user_obj.get("name", "").strip()
-
-            users[badge_id] = {
-                "name": name,
-                "permission_level": "User",
-                "faceprints": faceprints,
-            }
-
+        users = self._parse_users(data)
         log.info("Remote fetch complete. %d users retrieved.", len(users))
         events.emit("db_sync_ok", users=len(users))
         return users
 
     @staticmethod
-    def _extract_entries(data):
-        if isinstance(data, list):
-            return data
+    def _parse_users(data) -> Dict[str, dict]:
+        """Accept either {badge_id: user_data} directly, or a list of
+        user_data dicts each carrying their own "badge_id" field."""
+        users: Dict[str, dict] = {}
+
         if isinstance(data, dict):
-            entries = (
-                data.get("ticketDeviceAccess") or
-                (data.get("data") or {}).get("ticketDeviceAccess") or
-                (data.get("result") or {}).get("ticketDeviceAccess")
-            )
-            if not entries:
-                log.warning("Could not find entries. Top-level keys: %s", list(data.keys())[:50])
-            return entries
-        log.warning("Unexpected JSON type: %s", type(data))
-        return None
+            # Could be {badge_id: user_data} or a wrapper like {"users": [...]}.
+            candidates = data.get("users") if "users" in data else data
+            if isinstance(candidates, list):
+                entries = candidates
+            elif isinstance(candidates, dict):
+                for badge_id, user_data in candidates.items():
+                    RemoteUserDataProvider._add_if_valid(users, str(badge_id), user_data)
+                return users
+            else:
+                log.warning("Unexpected server payload shape: %s", type(data))
+                return users
+        elif isinstance(data, list):
+            entries = data
+        else:
+            log.warning("Unexpected server payload type: %s", type(data))
+            return users
+
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            badge_id = entry.get("badge_id") or entry.get("id")
+            if not badge_id:
+                continue
+            RemoteUserDataProvider._add_if_valid(users, str(badge_id), entry)
+
+        return users
+
+    @staticmethod
+    def _add_if_valid(users: Dict[str, dict], badge_id: str, user_data: dict):
+        if not isinstance(user_data, dict):
+            log.warning("Skipping badge_id %s: not an object", badge_id)
+            return
+        faceprints = user_data.get("faceprints")
+        if not _is_valid_faceprints(faceprints):
+            log.warning("Skipping badge_id %s: missing/invalid faceprints", badge_id)
+            return
+        users[badge_id] = {
+            "name": user_data.get("name", ""),
+            "permission_level": user_data.get("permission_level", "User"),
+            "faceprints": faceprints,
+        }
