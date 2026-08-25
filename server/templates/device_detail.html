@@ -69,6 +69,25 @@
   </section>
 
   <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-5 lg:col-span-2">
+    <h2 class="mb-3 text-xs font-medium uppercase tracking-wider text-slate-500">
+      Assign user database
+    </h2>
+    <p class="mb-3 text-sm text-slate-500">
+      Upload a <code>user_database.json</code> file (badge_id → name/permission_level/faceprints).
+      Replaces this device's whole assigned user set; the device picks it up on its next sync.
+    </p>
+    <div class="flex flex-wrap items-center gap-3">
+      <input id="users-file" type="file" accept="application/json,.json"
+             class="text-sm text-slate-300 file:mr-3 file:rounded-md file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-slate-200 hover:file:bg-slate-600" />
+      <button id="users-upload-btn"
+              class="rounded-md bg-sky-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-500">
+        Upload
+      </button>
+      <span id="users-upload-status" class="text-sm"></span>
+    </div>
+  </section>
+
+  <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-5 lg:col-span-2">
     <div class="mb-3 flex flex-wrap items-center gap-3">
       <h2 class="text-xs font-medium uppercase tracking-wider text-slate-500">Event log</h2>
       <select id="event-filter"
@@ -184,6 +203,52 @@
     filterEl.addEventListener("change", load);
     load();
     setInterval(load, 5000);  // same cadence as the dashboard
+
+    const fileInput = document.getElementById("users-file");
+    const uploadBtn = document.getElementById("users-upload-btn");
+    const statusEl = document.getElementById("users-upload-status");
+
+    uploadBtn.addEventListener("click", function () {
+      const file = fileInput.files[0];
+      if (!file) {
+        statusEl.textContent = "Choose a file first.";
+        statusEl.className = "text-sm text-amber-400";
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = function () {
+        let parsed;
+        try {
+          parsed = JSON.parse(reader.result);
+        } catch (e) {
+          statusEl.textContent = "Invalid JSON: " + e.message;
+          statusEl.className = "text-sm text-red-400";
+          return;
+        }
+        statusEl.textContent = "Uploading…";
+        statusEl.className = "text-sm text-slate-400";
+        fetch("/devices/" + encodeURIComponent(deviceId) + "/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(parsed)
+        })
+          .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+          .then(function (result) {
+            if (result.ok) {
+              statusEl.textContent = "Assigned " + result.body.user_count + " user(s).";
+              statusEl.className = "text-sm text-emerald-400";
+            } else {
+              statusEl.textContent = "Failed: " + (result.body.detail || "unknown error");
+              statusEl.className = "text-sm text-red-400";
+            }
+          })
+          .catch(function () {
+            statusEl.textContent = "Upload failed (network error).";
+            statusEl.className = "text-sm text-red-400";
+          });
+      };
+      reader.readAsText(file);
+    });
   })();
 </script>
 {% endblock %}

@@ -9,7 +9,7 @@ USER_DB_FILE = "user_database.json"
 # "remote" -> periodically syncs from the server into the local JSON cache
 #             (existing behavior); auth lookups still always read the local
 #             cache, the remote fetch just keeps it fresh in the background.
-DB_MODE = "local"
+DB_MODE = "remote"
 
 # =====================================================
 # Hardware Simulation / Mode Flags

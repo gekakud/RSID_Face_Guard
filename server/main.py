@@ -357,6 +357,24 @@ def get_device_users(
     """
     return user_store.get_for_device(device_id)
 
+@app.post("/devices/{device_id}/users", dependencies=[Depends(require_admin)])
+def assign_device_users(
+    device_id: str,
+    body: Dict[str, Any],
+    conn: sqlite3.Connection = Depends(db.get_db),
+):
+    """Dashboard-side: assign/replace this device's whole user_database.json.
+
+    PoC-level: whole-file replace, no per-user validation beyond "is a dict" --
+    the dashboard's upload UI parses the JSON client-side already.
+    """
+    if conn.execute(
+        "SELECT 1 FROM devices WHERE device_id = ?", (device_id,)
+    ).fetchone() is None:
+        raise HTTPException(status_code=404, detail="Unknown device")
+    user_store.set_for_device(device_id, body)
+    return {"ok": True, "device_id": device_id, "user_count": len(body)}
+
 
 @app.post("/devices/{device_id}/status", response_model=models.StatusResponse)
 def post_status(

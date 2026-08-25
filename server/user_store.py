@@ -34,8 +34,22 @@ def _load_all() -> dict:
         return {}
 
 
+def _save_all(data: dict) -> None:
+    path = _store_path()
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp_path, path)
+
 def get_for_device(device_id: str) -> dict:
     """Return {badge_id: user_data} for one device (empty dict if none)."""
     with _lock:
         data = _load_all()
     return data.get(device_id, {})
+
+def set_for_device(device_id: str, users: dict) -> None:
+    """Replace one device's whole user slice (dashboard "assign JSON" upload)."""
+    with _lock:
+        data = _load_all()
+        data[device_id] = users
+        _save_all(data)

@@ -105,6 +105,19 @@ class UserDatabase:
 
         def _loop():
             log.info("UserDatabase auto-sync started (interval=%ds)", interval_sec)
+            # Sync immediately on startup rather than waiting a full interval,
+            # so a freshly-bound device doesn't wait up to interval_sec for
+            # its first batch of users.
+            try:
+                updated = self.sync_from_remote()
+                if updated > 0:
+                    log.info("UserDatabase initial sync: %d user(s) loaded", updated)
+                    if on_updated:
+                        on_updated(updated)
+            except Exception as e:
+                log.error("UserDatabase initial sync error: %s", e)
+                events.emit("db_sync_failed", reason="exception", error=str(e))
+
             while not self._sync_stop_event.wait(interval_sec):
                 try:
                     updated = self.sync_from_remote()
