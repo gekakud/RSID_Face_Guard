@@ -70,3 +70,9 @@ SEED_DEFAULTS = _env_bool("SEED_DEFAULTS", True)
 # shaped {device_id: {badge_id: {name, permission_level, faceprints}}}.
 # Simple file-backed store for now; server-side user management is TBD.
 USER_STORE_FILE = os.environ.get("USER_STORE_FILE", "server_user_database.json")
+
+# JSON file (relative to server/) holding the flat {badge_id: user_data}
+# template every new device is seeded with at registration (PoC: this is the
+# only source of "who gets access" until real server-side user management
+# exists). Admin can later replace a specific device's set via the dashboard.
+DEFAULT_USER_DB_FILE = os.environ.get("DEFAULT_USER_DB_FILE", "default_user_database.json")

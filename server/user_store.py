@@ -53,3 +53,17 @@ def set_for_device(device_id: str, users: dict) -> None:
         data = _load_all()
         data[device_id] = users
         _save_all(data)
+
+def load_default_template() -> dict:
+    """The flat {badge_id: user_data} every newly-registered device is seeded
+    with (server/default_user_database.json). Missing/invalid -> {}."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), config.DEFAULT_USER_DB_FILE)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception as e:
+        log.error("Failed loading default template %s: %s", path, e)
+        return {}

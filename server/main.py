@@ -332,6 +332,12 @@ def register_device(
     )
     conn.commit()
 
+    # PoC seeding: every freshly-registered device starts with the server's
+    # default user template, so its very first sync already has data instead
+    # of needing a manual dashboard upload. Admin can replace it per-device
+    # later via POST /devices/{id}/users.
+    user_store.set_for_device(device_id, user_store.load_default_template())
+
     return models.RegisterResponse(
         device_id=device_id,
         device_token=device_token,

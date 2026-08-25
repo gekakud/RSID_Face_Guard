@@ -166,13 +166,26 @@ users, keyed by badge_id, in the same shape as the device's local
 Backed by a simple per-device JSON file (`server/server_user_database.json`,
 `{device_id: {badge_id: user_data}}`) rather than the SQL device registry —
 server-side user management (who assigns which faces to which device) is not
-built yet, so this is deliberately the simplest thing that works. The device's
+built yet, so this is deliberately the simplest thing that works. Every device
+is auto-seeded at `/devices/register` time with the flat template in
+`server/default_user_database.json` (`{badge_id: user_data}`, PoC-only — this
+is currently the same for every customer/site/door), so a fresh binding already
+has data on its very first sync. An admin can later replace a specific
+device's set via `POST /devices/{device_id}/users` (see below / the dashboard's
+"Assign user database" upload on `/device/{id}`). The device's
 `db.remote_provider.RemoteUserDataProvider` polls this every
-`DB_SYNC_INTERVAL_SEC` when `config.DB_MODE = "remote"`, replacing its local
-cache wholesale on each successful fetch (so a badge removed here is also
-removed on the device). Empty object if nothing is assigned yet; `404` if
-`device_id` doesn't exist; `401`/`403` on bad/mismatched token, same as
-`/status`.
+`DB_SYNC_INTERVAL_SEC` when `config.DB_MODE = "remote"` (and does an immediate
+first sync at startup, not waiting a full interval), replacing its local cache
+wholesale on each successful fetch (so a badge removed here is also removed on
+the device). Empty object if nothing is assigned yet; `404` if `device_id`
+doesn't exist; `401`/`403` on bad/mismatched token, same as `/status`.
+
+### `POST /devices/{device_id}/users` — dashboard
+Admin-authed (`require_admin`, same as other dashboard endpoints). Body is the
+flat `{badge_id: user_data}` shape — replaces this device's whole assigned set
+in one call. The dashboard's `/device/{id}` page has an upload widget that
+reads a local `.json` file and POSTs it here. `404` if `device_id` doesn't
+exist.
 
 ### `DELETE /devices/{device_id}` — dashboard
 Removes a device. This is a **soft delete**: the row is marked `suspended`
