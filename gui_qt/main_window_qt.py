@@ -270,6 +270,12 @@ class GUIQt(QMainWindow):
             # Marshalled onto the Qt thread; the heartbeat thread fires this
             # after the identity has already been dropped.
             on_revoked=lambda: self._bridge.device_revoked.emit(),
+            # Starts/stops/repoints remote face-DB sync as this device binds,
+            # rebinds, or gets revoked (see face_auth/auth_service.py). Runs
+            # synchronously at startup (start_if_bound) or on the binding
+            # worker thread (bind_async) -- UserDatabase does its own locking,
+            # so no marshalling to the Qt thread is needed here.
+            on_bound=self.host_service.on_binding_changed,
         )
         self.binding.start_if_bound()
 

@@ -57,6 +57,29 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+# Faceprints keys required before trusting a record enough to hand it to a
+# device -- mirrors db/remote_provider.py's _is_valid_faceprints.
+_REQUIRED_FACEPRINTS_KEYS = ("version", "features_type", "flags", "adaptive_descriptor_nomask")
+
+
+def _validate_faceprints(faceprints: Dict[str, Any]) -> None:
+    if not isinstance(faceprints, dict) or not all(
+        k in faceprints for k in _REQUIRED_FACEPRINTS_KEYS
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"faceprints must be an object containing keys: {', '.join(_REQUIRED_FACEPRINTS_KEYS)}",
+        )
+
+
+def _purge_device(conn: sqlite3.Connection, device_id: str) -> None:
+    """Hard-delete a device plus its status history and events. Shared by
+    acknowledged removals and rebind's full replace (see register_device)."""
+    conn.execute("DELETE FROM status_history WHERE device_id = ?", (device_id,))
+    conn.execute("DELETE FROM events WHERE device_id = ?", (device_id,))
+    conn.execute("DELETE FROM devices WHERE device_id = ?", (device_id,))
+
+
 def _json_loads(raw: Optional[str]) -> Dict[str, Any]:
     if not raw:
         return {}
@@ -301,6 +324,22 @@ def register_device(
     device_id = str(uuid.uuid4())
     device_token = secrets.token_urlsafe(32)
     now = timeutil.now_ts()
+
+    # Rebind: purge the previous device_id's rows (full replace, not tombstone).
+    if body.previous_device_id:
+        _purge_device(conn, body.previous_device_id)
+    # Safety net: if the identity file was lost, purge stale rows sharing the
+    # same MAC so they don't pile up forever.
+    if body.mac:
+        stale = [
+            r["device_id"]
+            for r in conn.execute(
+                "SELECT device_id FROM devices WHERE mac = ? AND device_id != ?",
+                (body.mac, body.previous_device_id or ""),
+            ).fetchall()
+        ]
+        for stale_id in stale:
+            _purge_device(conn, stale_id)
 
     conn.execute(
         """INSERT INTO devices
@@ -586,10 +625,9 @@ def _purge_acknowledged(conn: sqlite3.Connection) -> None:
     if not acked:
         return
     for device_id in acked:
-        conn.execute("DELETE FROM status_history WHERE device_id = ?", (device_id,))
-        conn.execute("DELETE FROM events WHERE device_id = ?", (device_id,))
-        conn.execute("DELETE FROM devices WHERE device_id = ?", (device_id,))
+        _purge_device(conn, device_id)
     conn.commit()
+
 
 @app.get(
     "/tokens",
@@ -684,6 +722,156 @@ def healthz():
 
 
 # =====================================================
+# Users (server-owned face-auth user records)
+# =====================================================
+
+def _user_to_model(row: sqlite3.Row) -> models.User:
+    return models.User(
+        badge_id=row["badge_id"],
+        name=row["name"] or "",
+        permission_level=row["permission_level"],
+        faceprints=_json_loads(row["faceprints"]) or {},
+        door_id=row["door_id"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+@app.get(
+    "/users",
+    response_model=List[models.User],
+    dependencies=[Depends(require_admin)],
+)
+def list_users(door_id: Optional[int] = None, conn: sqlite3.Connection = Depends(db.get_db)):
+    if door_id is not None:
+        rows = conn.execute(
+            "SELECT * FROM users WHERE door_id = ? ORDER BY badge_id", (door_id,)
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM users ORDER BY badge_id").fetchall()
+    return [_user_to_model(r) for r in rows]
+
+
+@app.post(
+    "/users",
+    response_model=models.User,
+    dependencies=[Depends(require_admin)],
+)
+def create_user(body: models.CreateUserRequest, conn: sqlite3.Connection = Depends(db.get_db)):
+    _validate_faceprints(body.faceprints)
+    if conn.execute("SELECT 1 FROM doors WHERE id = ?", (body.door_id,)).fetchone() is None:
+        raise HTTPException(status_code=404, detail="Unknown door")
+    if conn.execute("SELECT 1 FROM users WHERE badge_id = ?", (body.badge_id,)).fetchone() is not None:
+        raise HTTPException(status_code=409, detail="badge_id already exists")
+
+    now = timeutil.now_ts()
+    conn.execute(
+        """INSERT INTO users (badge_id, name, permission_level, faceprints, door_id,
+                               created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            body.badge_id,
+            body.name,
+            body.permission_level,
+            json.dumps(body.faceprints, separators=(",", ":")),
+            body.door_id,
+            now,
+            now,
+        ),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM users WHERE badge_id = ?", (body.badge_id,)).fetchone()
+    return _user_to_model(row)
+
+
+@app.put(
+    "/users/{badge_id}",
+    response_model=models.User,
+    dependencies=[Depends(require_admin)],
+)
+def update_user(
+    badge_id: str, body: models.UpdateUserRequest, conn: sqlite3.Connection = Depends(db.get_db)
+):
+    row = conn.execute("SELECT * FROM users WHERE badge_id = ?", (badge_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Unknown user")
+
+    if body.faceprints is not None:
+        _validate_faceprints(body.faceprints)
+    if body.door_id is not None and conn.execute(
+        "SELECT 1 FROM doors WHERE id = ?", (body.door_id,)
+    ).fetchone() is None:
+        raise HTTPException(status_code=404, detail="Unknown door")
+
+    name = body.name if body.name is not None else row["name"]
+    permission_level = (
+        body.permission_level if body.permission_level is not None else row["permission_level"]
+    )
+    faceprints_json = (
+        json.dumps(body.faceprints, separators=(",", ":"))
+        if body.faceprints is not None
+        else row["faceprints"]
+    )
+    door_id = body.door_id if body.door_id is not None else row["door_id"]
+
+    conn.execute(
+        """UPDATE users SET name = ?, permission_level = ?, faceprints = ?, door_id = ?,
+                             updated_at = ?
+            WHERE badge_id = ?""",
+        (name, permission_level, faceprints_json, door_id, timeutil.now_ts(), badge_id),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM users WHERE badge_id = ?", (badge_id,)).fetchone()
+    return _user_to_model(row)
+
+
+@app.delete(
+    "/users/{badge_id}",
+    dependencies=[Depends(require_admin)],
+)
+def delete_user(badge_id: str, conn: sqlite3.Connection = Depends(db.get_db)):
+    row = conn.execute("SELECT 1 FROM users WHERE badge_id = ?", (badge_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Unknown user")
+    conn.execute("DELETE FROM users WHERE badge_id = ?", (badge_id,))
+    conn.commit()
+    return {"ok": True, "badge_id": badge_id}
+
+
+@app.get(
+    "/devices/{device_id}/users",
+    response_model=Dict[str, models.DeviceUser],
+)
+def get_device_users(
+    device_id: str,
+    device: sqlite3.Row = Depends(device_auth),
+    conn: sqlite3.Connection = Depends(db.get_db),
+):
+    """Device-facing face-DB fetch, tied to Bearer device_token, not MAC.
+    Same 410-Gone lifecycle as /status for a removed device."""
+    if device["state"] in ("suspended", "revoked_ack"):
+        if device["state"] == "suspended":
+            conn.execute(
+                "UPDATE devices SET state = 'revoked_ack' WHERE device_id = ?",
+                (device_id,),
+            )
+            conn.commit()
+        raise HTTPException(status_code=410, detail="Device was removed")
+
+    rows = conn.execute(
+        "SELECT * FROM users WHERE door_id = ? ORDER BY badge_id", (device["door_id"],)
+    ).fetchall()
+    return {
+        r["badge_id"]: models.DeviceUser(
+            name=r["name"] or "",
+            permission_level=r["permission_level"],
+            faceprints=_json_loads(r["faceprints"]) or {},
+        )
+        for r in rows
+    }
+
+
+# =====================================================
 # Dashboard (HTML)
 # =====================================================
 
@@ -705,6 +893,12 @@ def page_new_device(request: Request):
         "new.html",
         {"default_validity": config.DEFAULT_VALIDITY_MINUTES},
     )
+
+
+@app.get("/users", response_class=HTMLResponse, dependencies=[Depends(require_admin)])
+def page_users(request: Request):
+    # Populated client-side from GET /users, /customers, /sites, /doors.
+    return templates.TemplateResponse(request, "users.html", {})
 
 
 @app.get(

@@ -46,12 +46,14 @@ class HostModeService:
             port: Serial port path (e.g. '/dev/ttyACM0').
         """
         self.port = port
-        use_remote = config.DB_MODE == "remote"
+        # Remote sync only starts once bound (see on_binding_changed below);
+        # start unbound/local-only until the caller wires that in.
         self.user_db = UserDatabase(
             config.USER_DB_FILE,
-            server_url=config.FACEPRINT_SYNC_URL if use_remote else None,
+            identity=None,
             remote_timeout_sec=config.REMOTE_TIMEOUT_SEC,
         )
+        self._remote_sync_active = False
         self._error_backoff_until = 0.0  # epoch time; auth is blocked until this passes
         self.on_reconnect = None  # optional callback fired after successful reconnect
 
@@ -76,18 +78,31 @@ class HostModeService:
             log.warning("Wiegand initialization failed: %s", e)
             events.emit("hardware_error", where="wiegand_tx_init", error=str(e))
 
-        # The DB is fully responsible for keeping itself fresh; nothing
-        # above this layer needs to know about sync scheduling. In "local"
-        # mode there's no remote provider, so auto-sync is skipped entirely
-        # (UserDatabase.sync_from_remote() would just no-op anyway, but
-        # skipping avoids spinning up a pointless background thread).
-        if use_remote:
+    def on_binding_changed(self, identity) -> None:
+        """Wire as BindingManager(on_bound=...): starts/stops/repoints remote
+        DB sync as the device binds, rebinds, or gets revoked.
+
+        `identity` is the new DeviceIdentity, or None once unbound. Safe to
+        call from any thread; UserDatabase does its own locking.
+        """
+        self.user_db.set_identity(identity)
+        if identity is None:
+            if self._remote_sync_active:
+                self.user_db.stop_auto_sync()
+                self._remote_sync_active = False
+            log.info("Device unbound -- remote face-DB sync stopped")
+            return
+
+        # Pull immediately so a fresh bind doesn't wait a full
+        # DB_SYNC_INTERVAL_SEC before the device has any assigned users.
+        self.user_db.sync_from_remote()
+        if not self._remote_sync_active:
             self.user_db.start_auto_sync(
                 config.DB_SYNC_INTERVAL_SEC,
                 on_updated=lambda n: log.info("Auth DB refreshed (%d users)", self.user_db.count()),
             )
-        else:
-            log.info("DB_MODE=local -- using local JSON file only, no remote sync")
+            self._remote_sync_active = True
+        log.info("Device bound (device_id=%s) -- remote face-DB sync active", identity.device_id)
 
     def _reconnect(self):
         """Reset the serial connection after an error, with retries and backoff.

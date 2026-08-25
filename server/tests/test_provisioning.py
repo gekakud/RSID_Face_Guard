@@ -231,8 +231,10 @@ def test_status_rejects_bad_token(client, qr):
 
 
 def test_status_rejects_other_devices_id(client, qr):
-    first = _register(client, qr()).json()
-    second = _register(client, qr()).json()
+    # Distinct MACs: the stale-MAC purge safety net in register_device would
+    # otherwise treat the second registration as replacing the first.
+    first = _register(client, qr(), mac="aa:bb:cc:dd:ee:ff").json()
+    second = _register(client, qr(), mac="11:22:33:44:55:66").json()
 
     # Valid token, but pointed at somebody else's device.
     response = client.post(

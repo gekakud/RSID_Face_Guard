@@ -2,14 +2,10 @@
 # General System Configuration
 # =====================================================
 
-# Database file (local cache / source of truth for face auth)
+# Database file (local cache). Remote sync driven by binding state -- see
+# auth_service.py::HostModeService.on_binding_changed(); no DB_MODE toggle.
 USER_DB_FILE = "user_database.json"
 
-# "local"  -> only read/write the local JSON file, never contacts the server.
-# "remote" -> periodically syncs from the server into the local JSON cache
-#             (existing behavior); auth lookups still always read the local
-#             cache, the remote fetch just keeps it fresh in the background.
-DB_MODE = "local"
 
 # =====================================================
 # Hardware Simulation / Mode Flags
@@ -111,17 +107,14 @@ STORAGE_CHECK_INTERVAL_SEC = 300
 # Remote Sync
 # =====================================================
 
-# How often to sync with server (seconds)
+# How often to sync assigned users/faceprints from the dashboard server
+# (seconds). Only active once bound; see HostModeService.on_binding_changed().
 DB_SYNC_INTERVAL_SEC = 600   # 10 minutes
 
-# Server URL used to fetch remote users/faceprints by device MAC address.
-# Not to be confused with the dashboard's "server_url" (provisioning/,
-# device_identity.json) -- that's a completely separate server for device
-# registration/heartbeat, unrelated to this faceprint sync endpoint.
-FACEPRINT_SYNC_URL = "https://geine-server.onrender.com/getTicketDeviceAccessByMacAdress"
-
-# Network timeout (seconds)
+# Network timeout (seconds), shared by both the device-binding HTTP calls
+# (provisioning/client.py) and the remote face-DB fetch (db/remote_provider.py).
 REMOTE_TIMEOUT_SEC = 10
+
 
 # =====================================================
 # Device Binding (dashboard server -- see server/README.md)

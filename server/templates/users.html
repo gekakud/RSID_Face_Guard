@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% set active = "users" %}
+{% block title %}Users — Face Guard{% endblock %}
+
+{% block content %}
+<div class="mb-6 flex items-end justify-between">
+  <div>
+    <h1 class="text-xl font-semibold tracking-tight text-slate-100">Users</h1>
+    <p class="mt-1 text-sm text-slate-500">
+      Face-auth users are owned by this server. Paste an already-generated
+      faceprints JSON blob and assign it to a door -- devices bound to that
+      door pick it up on their next sync.
+    </p>
+  </div>
+  <button id="add-btn"
+     class="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-sky-500">
+    Add user
+  </button>
+</div>
+
+<div class="overflow-hidden rounded-xl border border-slate-800 bg-slate-900/40">
+  <table class="w-full text-left text-sm">
+    <thead class="border-b border-slate-800 text-xs uppercase tracking-wider text-slate-500">
+      <tr>
+        <th class="px-4 py-3 font-medium">Badge ID</th>
+        <th class="px-4 py-3 font-medium">Name</th>
+        <th class="px-4 py-3 font-medium">Permission</th>
+        <th class="px-4 py-3 font-medium">Door</th>
+        <th class="px-4 py-3 font-medium">Updated</th>
+        <th class="px-4 py-3 font-medium text-right">Actions</th>
+      </tr>
+    </thead>
+    <tbody id="rows" class="divide-y divide-slate-800/70">
+      <tr><td colspan="6" class="px-4 py-10 text-center text-slate-600">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Add/edit modal -->
+<div id="modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/60 p-4">
+  <form id="form" class="w-full max-w-lg space-y-4 rounded-xl border border-slate-800 bg-slate-900 p-5">
+    {% set field = "mt-1 w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 placeholder-slate-600 outline-none focus:border-sky-500" %}
+    {% set label = "block text-xs font-medium uppercase tracking-wider text-slate-500" %}
+    <h2 id="modal-title" class="text-lg font-semibold text-slate-100">Add user</h2>
+
+    <div>
+      <label class="{{ label }}" for="badge_id">Badge ID</label>
+      <input class="{{ field }}" id="badge_id" required>
+    </div>
+    <div>
+      <label class="{{ label }}" for="name">Name</label>
+      <input class="{{ field }}" id="name">
+    </div>
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label class="{{ label }}" for="permission_level">Permission level</label>
+        <input class="{{ field }}" id="permission_level" value="User">
+      </div>
+      <div>
+        <label class="{{ label }}" for="door_select">Door</label>
+        <select class="{{ field }}" id="door_select" required></select>
+      </div>
+    </div>
+    <div>
+      <label class="{{ label }}" for="faceprints">Faceprints JSON</label>
+      <textarea class="{{ field }} font-mono text-xs" id="faceprints" rows="8"
+                placeholder='{"version": 8, "features_type": ..., "flags": ..., "adaptive_descriptor_nomask": [...]}'
+                required></textarea>
+    </div>
+    <p id="error" class="hidden rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-400"></p>
+    <div class="flex justify-end gap-2">
+      <button type="button" id="cancel-btn"
+              class="rounded-md border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-slate-800">
+        Cancel
+      </button>
+      <button type="submit"
+              class="rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-500">
+        Save
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const rows = document.getElementById("rows");
+  const modal = document.getElementById("modal");
+  const form = document.getElementById("form");
+  const errorBox = document.getElementById("error");
+  const doorSelect = document.getElementById("door_select");
+  const $ = (id) => document.getElementById(id);
+
+  const escapeHtml = (value) =>
+    String(value ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  const dash = (value) =>
+    value !== null && value !== undefined && value !== "" ? escapeHtml(value) : '<span class="text-slate-600">—</span>';
+
+  let doorsById = {};
+  let editingBadgeId = null;
+
+  async function api(path, options = {}) {
+    const response = await fetch(path, options);
+    if (!response.ok) {
+      let detail = response.statusText;
+      try { detail = (await response.json()).detail || detail; } catch {}
+      throw new Error(detail);
+    }
+    return response.status === 204 ? null : response.json();
+  }
+
+  async function loadDoors() {
+    // Flatten customers -> sites -> doors into one picker.
+    const customers = await api("/customers");
+    doorsById = {};
+    doorSelect.innerHTML = "";
+    for (const customer of customers) {
+      const sites = await api(`/sites?customer_id=${customer.id}`);
+      for (const site of sites) {
+        const doors = await api(`/doors?site_id=${site.id}`);
+        for (const door of doors) {
+          doorsById[door.id] = `${customer.name} / ${site.name} / ${door.name}`;
+          const opt = document.createElement("option");
+          opt.value = door.id;
+          opt.textContent = doorsById[door.id];
+          doorSelect.appendChild(opt);
+        }
+      }
+    }
+  }
+
+  function renderRow(user) {
+    return `
+      <tr class="transition-colors hover:bg-slate-800/40">
+        <td class="px-4 py-3 font-mono text-xs text-slate-300">${escapeHtml(user.badge_id)}</td>
+        <td class="px-4 py-3 text-slate-100">${dash(user.name)}</td>
+        <td class="px-4 py-3 text-slate-400">${dash(user.permission_level)}</td>
+        <td class="px-4 py-3 text-slate-400">${dash(doorsById[user.door_id] || user.door_id)}</td>
+        <td class="px-4 py-3 text-slate-400">${relativeAge((Date.now() - new Date(user.updated_at)) / 1000)}</td>
+        <td class="px-4 py-3 text-right">
+          <button data-edit="${encodeURIComponent(user.badge_id)}"
+                  class="rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-sky-500/60 hover:text-sky-400">
+            Edit
+          </button>
+          <button data-remove="${encodeURIComponent(user.badge_id)}"
+                  class="ml-1 rounded-md border border-slate-700 bg-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-red-500/60 hover:text-red-400">
+            Delete
+          </button>
+        </td>
+      </tr>`;
+  }
+
+  async function refresh() {
+    try {
+      const users = await api("/users");
+      rows.innerHTML = users.length
+        ? users.map(renderRow).join("")
+        : `<tr><td colspan="6" class="px-4 py-14 text-center text-slate-400">No users yet</td></tr>`;
+    } catch (err) {
+      rows.innerHTML = `<tr><td colspan="6" class="px-4 py-10 text-center text-red-400">${escapeHtml(err.message)}</td></tr>`;
+    }
+  }
+
+  function showError(message) {
+    errorBox.textContent = message;
+    errorBox.classList.remove("hidden");
+  }
+
+  function openModal(user = null) {
+    editingBadgeId = user ? user.badge_id : null;
+    $("modal-title").textContent = user ? "Edit user" : "Add user";
+    $("badge_id").value = user ? user.badge_id : "";
+    $("badge_id").disabled = !!user;
+    $("name").value = user ? user.name : "";
+    $("permission_level").value = user ? user.permission_level : "User";
+    $("door_select").value = user ? user.door_id : (doorSelect.options[0] && doorSelect.options[0].value);
+    $("faceprints").value = user ? JSON.stringify(user.faceprints, null, 2) : "";
+    errorBox.classList.add("hidden");
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
+  }
+
+  function closeModal() {
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  }
+
+  document.getElementById("add-btn").addEventListener("click", () => openModal());
+  document.getElementById("cancel-btn").addEventListener("click", closeModal);
+
+  rows.addEventListener("click", async (event) => {
+    const editBtn = event.target.closest("[data-edit]");
+    if (editBtn) {
+      const badgeId = decodeURIComponent(editBtn.dataset.edit);
+      const user = (await api("/users")).find((u) => u.badge_id === badgeId);
+      if (user) openModal(user);
+      return;
+    }
+    const removeBtn = event.target.closest("[data-remove]");
+    if (removeBtn) {
+      const badgeId = decodeURIComponent(removeBtn.dataset.remove);
+      if (!confirm(`Delete user "${badgeId}"?`)) return;
+      try {
+        await api(`/users/${encodeURIComponent(badgeId)}`, { method: "DELETE" });
+        refresh();
+      } catch (err) {
+        alert("Could not delete: " + err.message);
+      }
+    }
+  });
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    errorBox.classList.add("hidden");
+
+    let faceprints;
+    try {
+      faceprints = JSON.parse($("faceprints").value);
+    } catch {
+      return showError("Faceprints must be valid JSON");
+    }
+
+    const doorId = Number($("door_select").value);
+    if (!doorId) return showError("Select a door");
+
+    try {
+      if (editingBadgeId) {
+        await api(`/users/${encodeURIComponent(editingBadgeId)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: $("name").value,
+            permission_level: $("permission_level").value || "User",
+            faceprints,
+            door_id: doorId,
+          }),
+        });
+      } else {
+        await api("/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            badge_id: $("badge_id").value.trim(),
+            name: $("name").value,
+            permission_level: $("permission_level").value || "User",
+            faceprints,
+            door_id: doorId,
+          }),
+        });
+      }
+      closeModal();
+      refresh();
+    } catch (err) {
+      showError("Could not save: " + err.message);
+    }
+  });
+
+  loadDoors().then(refresh);
+</script>
+{% endblock %}
+
+

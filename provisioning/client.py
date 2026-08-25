@@ -39,12 +39,16 @@ def _fw_version() -> str:
         return "unknown"
 
 
-def register(payload: dict, device_type: Optional[str] = None) -> DeviceIdentity:
+def register(
+    payload: dict,
+    device_type: Optional[str] = None,
+    previous_identity: Optional[DeviceIdentity] = None,
+) -> DeviceIdentity:
     """Redeem a scanned provisioning QR and return this device's credentials.
 
-    `payload` is the verified QR payload straight out of QRScanner.scan(). The
-    server URL comes from the payload rather than config: the QR is what tells
-    a fresh device which deployment it belongs to.
+    `payload` is the verified QR payload from QRScanner.scan(); server_url
+    comes from it, not config. `previous_identity`, if set, tells the server
+    to fully purge that old device_id instead of leaving it behind (rebind).
     """
     server_url = (payload.get("server_url") or "").rstrip("/")
     if not server_url:
@@ -65,6 +69,8 @@ def register(payload: dict, device_type: Optional[str] = None) -> DeviceIdentity
         "device_type": str(device_type) if device_type is not None else None,
         "fw_version": _fw_version(),
         "app_version": _app_version(),
+        # Set on a rebind so the server purges the old device_id's rows.
+        "previous_device_id": previous_identity.device_id if previous_identity else None,
     }
 
     net_mode = (payload.get("network_profile") or {}).get("mode")

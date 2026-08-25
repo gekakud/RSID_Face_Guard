@@ -99,6 +99,8 @@ class RegisterRequest(BaseModel):
     device_type: Optional[str] = None
     fw_version: Optional[str] = None
     app_version: Optional[str] = None
+    # Set on a rebind so the server can purge that old device_id (see main.py).
+    previous_device_id: Optional[str] = None
 
 
 class RegisterResponse(BaseModel):
@@ -166,6 +168,41 @@ class DeleteDeviceResponse(BaseModel):
     ok: bool = True
     device_id: str
     state: str          # "suspended" (awaiting the device to acknowledge)
+
+
+# ----------------------------------------------------------------- users ->
+
+class CreateUserRequest(BaseModel):
+    badge_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(default="", max_length=128)
+    permission_level: str = Field(default="User", max_length=32)
+    faceprints: Dict[str, Any]
+    door_id: int
+
+
+class UpdateUserRequest(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=128)
+    permission_level: Optional[str] = Field(default=None, max_length=32)
+    faceprints: Optional[Dict[str, Any]] = None
+    door_id: Optional[int] = None
+
+
+class User(BaseModel):
+    badge_id: str
+    name: str = ""
+    permission_level: str = "User"
+    faceprints: Dict[str, Any]
+    door_id: int
+    created_at: str
+    updated_at: str
+
+
+class DeviceUser(BaseModel):
+    """Shape returned to a device: {badge_id: {name, permission_level,
+    faceprints}}. See GET /devices/{device_id}/users."""
+    name: str = ""
+    permission_level: str = "User"
+    faceprints: Dict[str, Any]
 
 
 class PendingToken(BaseModel):
