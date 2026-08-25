@@ -26,7 +26,6 @@
         {% set nav_base = "rounded-md px-3 py-1.5 transition-colors" %}
         <a href="/" class="{{ nav_base }} {{ 'bg-slate-800 text-slate-100' if active == 'devices' else 'text-slate-400 hover:text-slate-200' }}">Devices</a>
         <a href="/new" class="{{ nav_base }} {{ 'bg-slate-800 text-slate-100' if active == 'new' else 'text-slate-400 hover:text-slate-200' }}">Add device</a>
-        <a href="/users" class="{{ nav_base }} {{ 'bg-slate-800 text-slate-100' if active == 'users' else 'text-slate-400 hover:text-slate-200' }}">Users</a>
       </nav>
 
       <div class="ml-auto">{% block header_extra %}{% endblock %}</div>

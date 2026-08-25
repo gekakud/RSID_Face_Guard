@@ -25,30 +25,16 @@ log = get_logger("db")
 class UserDatabase:
     """Thread-safe user database backed by a local cache + optional remote sync."""
 
-    def __init__(self, db_file: str, identity=None,
+    def __init__(self, db_file: str, server_url: Optional[str] = None,
                  remote_timeout_sec: float = 10):
-        """`identity` is an optional provisioning.identity.DeviceIdentity --
-        remote sync only starts once bound (see face_auth/auth_service.py)."""
         self._lock = threading.Lock()
         self._local = LocalUserDataProvider(db_file)
-        self._remote_timeout_sec = remote_timeout_sec
-        self._remote: Optional[RemoteUserDataProvider] = None
-        if identity is not None:
-            self._remote = RemoteUserDataProvider(identity, remote_timeout_sec)
+        self._remote = RemoteUserDataProvider(server_url, remote_timeout_sec) if server_url else None
         self.users: Dict[str, dict] = {}
         self.reload()
 
         self._sync_stop_event = threading.Event()
         self._sync_thread: Optional[threading.Thread] = None
-
-    def set_identity(self, identity) -> None:
-        """(Re)point remote sync at a new/changed DeviceIdentity, or None to
-        disable it (e.g. after a revoke). Takes effect on the next sync tick."""
-        with self._lock:
-            self._remote = (
-                RemoteUserDataProvider(identity, self._remote_timeout_sec)
-                if identity is not None else None
-            )
 
     # =====================================================
     # Load / persist local cache
@@ -68,11 +54,14 @@ class UserDatabase:
     # =====================================================
 
     def sync_from_remote(self) -> int:
-        """Replace the local cache with the remote provider's result -- the
-        server is the source of truth, so revoked badges get removed locally
-        too. A failed/empty fetch is a no-op and never wipes the cache.
+        """Pull users from the remote provider and fully replace the local
+        cache with the result -- the server is the source of truth, so a
+        badge revoked server-side (missing from the response) is also
+        removed locally. A failed/empty fetch (network error, timeout, bad
+        payload) is a no-op and never wipes the existing local cache.
 
-        Returns the resulting user count, or 0 if unconfigured/failed.
+        Returns the number of users in the cache after a successful sync,
+        or 0 if no remote provider was configured or the fetch failed.
         """
         if self._remote is None:
             return 0

@@ -1,22 +1,22 @@
 """
-Remote (dashboard server) user data provider.
+Remote (cloud) user data provider.
 
-Fetches this device's assigned users from GET /devices/{device_id}/users on
-the dashboard server, authenticated with the device's Bearer device_token
-(tied to binding identity, not MAC). Returns users in the same shape as the
-local JSON cache (db/local_provider.py):
-{badge_id: {"name": ..., "permission_level": ..., "faceprints": {...}}}.
-Read-only: this provider never writes back to the server.
+Fetches user/faceprint records from the backend server by device MAC
+address. The server is expected to return users already in the same
+shape used by the local JSON cache (db/local_provider.py) --
+{badge_id: {"name": ..., "permission_level": ..., "faceprints": {...}}}
+-- either as a dict keyed by badge_id, or as a list of objects each
+carrying their own "badge_id" field. Read-only: this provider never
+writes back to the server.
 """
 
 import uuid
-from typing import Dict
+from typing import Dict, Optional
 
 import requests
 
 from observability import events
 from observability.logging_setup import get_logger
-from provisioning.identity import DeviceIdentity
 
 log = get_logger("db")
 
@@ -27,10 +27,7 @@ _REQUIRED_FACEPRINTS_KEYS = ("version", "features_type", "flags", "adaptive_desc
 
 
 def get_mac_address() -> str:
-    """Return this device's MAC address, formatted as aa:bb:cc:dd:ee:ff.
-
-    Reported as registration metadata only; not used for the face-DB fetch.
-    """
+    """Return this device's MAC address, formatted as aa:bb:cc:dd:ee:ff."""
     mac = uuid.getnode()
     return ':'.join(f'{(mac >> ele) & 0xff:02x}' for ele in range(40, -8, -8))
 
@@ -42,36 +39,22 @@ def _is_valid_faceprints(faceprints) -> bool:
 
 
 class RemoteUserDataProvider:
-    """Fetches the device's assigned users from the dashboard server, using
-    the device's real binding identity (Bearer device_token) rather than MAC."""
+    """Fetches the device's assigned users from the cloud server."""
 
-    def __init__(self, identity: DeviceIdentity, timeout_sec: float = 10):
-        self.identity = identity
+    def __init__(self, server_url: str, timeout_sec: float = 10):
+        self.server_url = server_url
         self.timeout_sec = timeout_sec
-
-    @property
-    def _users_url(self) -> str:
-        return f"{self.identity.server_url.rstrip('/')}/devices/{self.identity.device_id}/users"
 
     def load_all(self) -> Dict[str, dict]:
         """Fetch users from the server. Returns {} on any failure."""
+        payload = {"mac": get_mac_address()}
+        log.info("Contacting server with MAC: %s", payload["mac"])
+
         try:
-            response = requests.get(
-                self._users_url,
-                headers={"Authorization": f"Bearer {self.identity.device_token}"},
-                timeout=self.timeout_sec,
-            )
+            response = requests.post(self.server_url, json=payload, timeout=self.timeout_sec)
         except Exception as e:
             log.error("Network error: %s", e)
             events.emit("db_sync_failed", reason="network_error", error=str(e))
-            return {}
-
-        if response.status_code == 410:
-            # This device was removed on the server. The heartbeat thread
-            # (provisioning/binding.py) owns dropping the identity and going
-            # unbound; this fetch just backs off for this cycle.
-            log.warning("Server reports this device was removed (410); skipping fetch")
-            events.emit("db_sync_failed", reason="device_revoked")
             return {}
 
         if response.status_code != 200:

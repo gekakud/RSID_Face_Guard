@@ -354,9 +354,6 @@ class GUIWeb(QMainWindow):
             # Marshalled onto the Qt thread; the heartbeat thread fires this
             # after the identity has already been dropped.
             on_revoked=lambda: self._bridge.device_revoked.emit(),
-            # See gui_qt/main_window_qt.py's identical wiring for why this is
-            # safe to call without marshalling to the Qt thread.
-            on_bound=self.host_service.on_binding_changed,
         )
         self.binding.start_if_bound()
 

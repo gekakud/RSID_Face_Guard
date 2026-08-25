@@ -27,8 +27,6 @@ class BindingManager:
         metadata_fn: Optional[Callable[[], dict]] = None,
         status_fn: Optional[Callable[[], str]] = None,
         on_revoked: Optional[Callable[[], None]] = None,
-        on_bound: Optional[Callable[[Optional[DeviceIdentity]], None]] = None,
-
     ):
         self.device_type = device_type
         self._metadata_fn = metadata_fn
@@ -38,20 +36,17 @@ class BindingManager:
         # to the unbound "show a QR to enroll" state. Callers marshal to the UI
         # thread themselves (both GUIs use their _SignalBridge).
         self._on_revoked_ui = on_revoked
-        # Fired whenever the identity becomes set/changed (first bind, rebind,
-        # or resume after restart) so HostModeService can (re)point remote
-        # DB sync at the new DeviceIdentity, without this module knowing
-        # anything about UserDatabase. Called synchronously on whichever
-        # thread performed the bind.
-        self._on_bound = on_bound
         self.identity: Optional[DeviceIdentity] = None
         self._heartbeat: Optional[HeartbeatWorker] = None
-
 
     # ------------------------------------------------------------------ boot
 
     def start_if_bound(self) -> bool:
-        """Resume heartbeating if bound on an earlier run (no QR rescan needed)."""
+        """Resume heartbeating if this device was bound on an earlier run.
+
+        Called at startup so an already-provisioned device comes back online
+        without anyone having to rescan a QR.
+        """
         saved = identity_store.load()
         if saved is None:
             log.info("Device is not bound to a server yet (no identity file)")
@@ -63,13 +58,7 @@ class BindingManager:
             saved.device_id, saved.door_id, saved.server_url,
         )
         self._start_heartbeat()
-        if self._on_bound is not None:
-            try:
-                self._on_bound(saved)
-            except Exception as exc:
-                log.error("on_bound callback failed: %s", exc)
         return True
-
 
     # --------------------------------------------------------------- binding
 
@@ -95,9 +84,7 @@ class BindingManager:
                     self.identity.device_id, self.identity.door_id,
                 )
 
-            new_identity = client.register(
-                payload, device_type=self.device_type, previous_identity=self.identity
-            )
+            new_identity = client.register(payload, device_type=self.device_type)
 
             if not identity_store.save(new_identity):
                 # (heartbeat for any previous binding is left running -- the old
@@ -111,11 +98,6 @@ class BindingManager:
             self._stop_heartbeat()
             self.identity = new_identity
             self._start_heartbeat()
-            if self._on_bound is not None:
-                try:
-                    self._on_bound(new_identity)
-                except Exception as exc:
-                    log.error("on_bound callback failed: %s", exc)
 
             door = new_identity.door_id or new_identity.device_id[:8]
             on_done(True, f"Device registered\n{door}")
@@ -141,20 +123,17 @@ class BindingManager:
         self._heartbeat.start()
 
     def _handle_revoked(self) -> None:
-        """Server removed this device: drop identity, go unbound, notify GUI.
+        """The server removed this device: drop the identity and go unbound.
 
-        Runs on the heartbeat thread, which stops itself after this returns.
-        Local face-DB access is unaffected.
+        Runs on the heartbeat thread. We delete the on-disk identity so a reboot
+        won't silently rebind, forget it in memory, and let the GUI know so it
+        can return to the enroll screen. The heartbeat worker stops itself after
+        this returns. Door access from the local face DB is unaffected.
         """
         log.warning("Device removed on the server -- dropping identity, going unbound")
         identity_store.clear()
         self.identity = None
         self._heartbeat = None
-        if self._on_bound is not None:
-            try:
-                self._on_bound(None)
-            except Exception as exc:
-                log.error("on_bound callback failed: %s", exc)
         if self._on_revoked_ui is not None:
             try:
                 self._on_revoked_ui()
@@ -169,8 +148,10 @@ class BindingManager:
     def shutdown(self, timeout: Optional[float] = None) -> None:
         """Stop heartbeating, flushing any buffered events one last time.
 
-        Emits device_shutdown and tries one best-effort status POST before
-        the heartbeat thread stops; never raises.
+        The heartbeat thread is what normally delivers events, so on the way
+        down we emit device_shutdown and try a single best-effort synchronous
+        status POST to hand off whatever is still buffered before the thread
+        stops. Never raises -- shutdown must not be blocked by the network.
         """
         events.emit("device_shutdown")
         self._flush_events()

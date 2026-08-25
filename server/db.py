@@ -92,25 +92,11 @@ CREATE TABLE IF NOT EXISTS events (
   data        TEXT                    -- JSON of any extra fields (may be NULL/'{}')
 );
 
--- Face-auth users, owned entirely by the server (server creates/assigns,
--- devices only read). Each user is assigned to one door, so
--- GET /devices/{id}/users is a lookup by the device's door_id.
-CREATE TABLE IF NOT EXISTS users (
-  badge_id         TEXT PRIMARY KEY,
-  name             TEXT,
-  permission_level TEXT NOT NULL DEFAULT 'User',
-  faceprints       TEXT NOT NULL,     -- JSON blob
-  door_id          INTEGER NOT NULL REFERENCES doors(id),
-  created_at       TEXT NOT NULL,
-  updated_at       TEXT NOT NULL
-);
-
 CREATE INDEX IF NOT EXISTS idx_history_device ON status_history(device_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_devices_token  ON devices(token_hash);
 CREATE INDEX IF NOT EXISTS idx_events_device  ON events(device_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_sites_customer ON sites(customer_id);
 CREATE INDEX IF NOT EXISTS idx_doors_site     ON doors(site_id);
-CREATE INDEX IF NOT EXISTS idx_users_door     ON users(door_id);
 """
 
 
