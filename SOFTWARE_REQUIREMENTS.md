@@ -220,7 +220,8 @@ indication does not obstruct or delay normal user interaction.
 
 ## 4. Device Operating Modes
 
-The terminal supports three mutually exclusive modes.
+The terminal supports three mutually exclusive **door modes**, plus one
+non-production demo configuration (FR-MODE-05).
 
 | Mode | Trigger | Face step | Relay | Event |
 |---|---|---|---|---|
@@ -228,13 +229,17 @@ The terminal supports three mutually exclusive modes.
 | `card_and_face` | Valid card tap | 1:1 verify against cardholder | opens on match | `access_granted` / `access_denied` |
 | `time_registry` | End user selects IN or OUT, then taps card | per §4.3 face policy | **no door output** | `attendance_event` |
 
+### 4.1 Mode selection and common rules
+
 **FR-MODE-01** The mode shall be provisioned **per door by the server**,
 returned in the registration response and refreshable through the heartbeat
 response. `config.py` shall hold only an install-time fallback default.
 *(Assumption A1.)*
 
 **FR-MODE-02** In every mode, a card that is not present in the local door DB
-shall be rejected **before the camera is started** (§6.3).
+shall be rejected **before the camera is started** (BR-02).
+
+### 4.2 Card modes
 
 **FR-MODE-03 `card_only`** — on a valid card the terminal shall open the relay
 immediately, with no face step. The decision path is
@@ -247,7 +252,7 @@ faceprints only. This is the default production mode.
 
 **FR-MODE-05** A face-only (1:N) trigger by screen tap shall exist as a
 non-production/demo configuration only, and shall not be enabled at a door
-that has a card reader.
+that has a card reader. It is not one of the three door modes above.
 
 ### 4.3 Time-registry mode **[NEW]**
 
