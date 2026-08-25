@@ -9,10 +9,9 @@ from typing import Optional
 import requests
 
 import config
-from db.remote_provider import get_mac_address
 from observability.logging_setup import get_logger
 from provisioning import network
-from provisioning.identity import DeviceIdentity
+from provisioning.identity import DeviceIdentity, get_mac_address
 
 log = get_logger("provision")
 

@@ -46,12 +46,19 @@ class HostModeService:
             port: Serial port path (e.g. '/dev/ttyACM0').
         """
         self.port = port
-        use_remote = config.DB_MODE == "remote"
+        identity = None
+        if config.DB_MODE == "remote":
+            from provisioning.identity import load as load_identity
+            identity = load_identity()
+            if identity is None:
+                log.warning("DB_MODE=remote but device is not bound to a server yet -- "
+                            "remote sync disabled until provisioning completes")
         self.user_db = UserDatabase(
             config.USER_DB_FILE,
-            server_url=config.FACEPRINT_SYNC_URL if use_remote else None,
+            identity=identity,
             remote_timeout_sec=config.REMOTE_TIMEOUT_SEC,
         )
+        use_remote = identity is not None
         self._error_backoff_until = 0.0  # epoch time; auth is blocked until this passes
         self.on_reconnect = None  # optional callback fired after successful reconnect
 

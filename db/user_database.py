@@ -25,11 +25,16 @@ log = get_logger("db")
 class UserDatabase:
     """Thread-safe user database backed by a local cache + optional remote sync."""
 
-    def __init__(self, db_file: str, server_url: Optional[str] = None,
-                 remote_timeout_sec: float = 10):
+    def __init__(self, db_file: str, identity=None, remote_timeout_sec: float = 10):
+        """
+        Args:
+            db_file: path to the local JSON cache (source of truth for auth).
+            identity: a provisioning.identity.DeviceIdentity if this device is
+                bound to a server (enables remote sync); None for local-only.
+        """
         self._lock = threading.Lock()
         self._local = LocalUserDataProvider(db_file)
-        self._remote = RemoteUserDataProvider(server_url, remote_timeout_sec) if server_url else None
+        self._remote = RemoteUserDataProvider(identity, remote_timeout_sec) if identity else None
         self.users: Dict[str, dict] = {}
         self.reload()
 

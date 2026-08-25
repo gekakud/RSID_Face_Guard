@@ -65,3 +65,8 @@ def admin_auth_enabled() -> bool:
 # /new page works immediately without creating anything. Tests turn this off so
 # they assert against empty tables.
 SEED_DEFAULTS = _env_bool("SEED_DEFAULTS", True)
+
+# JSON file (relative to server/) holding per-device face-user records,
+# shaped {device_id: {badge_id: {name, permission_level, faceprints}}}.
+# Simple file-backed store for now; server-side user management is TBD.
+USER_STORE_FILE = os.environ.get("USER_STORE_FILE", "server_user_database.json")

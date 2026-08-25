@@ -150,6 +150,30 @@ stripped from the stored metadata, so it never appears in the "latest metadata"
 panel.
 
 
+### `GET /devices/{device_id}/users` — device
+`Authorization: Bearer <device_token>`. Returns this device's assigned face
+users, keyed by badge_id, in the same shape as the device's local
+`user_database.json`:
+```jsonc
+{
+  "1001": {
+    "name": "alice",
+    "permission_level": "User",
+    "faceprints": { "version": 9, "features_type": 0, "flags": 3, "...": "..." }
+  }
+}
+```
+Backed by a simple per-device JSON file (`server/server_user_database.json`,
+`{device_id: {badge_id: user_data}}`) rather than the SQL device registry —
+server-side user management (who assigns which faces to which device) is not
+built yet, so this is deliberately the simplest thing that works. The device's
+`db.remote_provider.RemoteUserDataProvider` polls this every
+`DB_SYNC_INTERVAL_SEC` when `config.DB_MODE = "remote"`, replacing its local
+cache wholesale on each successful fetch (so a badge removed here is also
+removed on the device). Empty object if nothing is assigned yet; `404` if
+`device_id` doesn't exist; `401`/`403` on bad/mismatched token, same as
+`/status`.
+
 ### `DELETE /devices/{device_id}` — dashboard
 Removes a device. This is a **soft delete**: the row is marked `suspended`
 (kept as a tombstone) rather than erased, so the device's next heartbeat can be

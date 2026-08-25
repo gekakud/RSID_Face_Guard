@@ -34,7 +34,7 @@ from fastapi.security import (
 )
 from fastapi.templating import Jinja2Templates
 
-from server import config, db, models, signing, timeutil
+from server import config, db, models, signing, timeutil, user_store
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(_HERE, "templates"))
@@ -341,6 +341,21 @@ def register_device(
         door_id=row["door_id"],
         registered_at=now,
     )
+
+
+@app.get("/devices/{device_id}/users")
+def get_device_users(
+    device_id: str,
+    device: sqlite3.Row = Depends(device_auth),
+):
+    """Return this device's assigned face users, keyed by badge_id.
+
+    Auth via the same bearer device_token as heartbeats (device_auth already
+    checks the token belongs to device_id). Response shape matches the
+    device's local user_database.json exactly, so RemoteUserDataProvider can
+    write it straight into the local cache.
+    """
+    return user_store.get_for_device(device_id)
 
 
 @app.post("/devices/{device_id}/status", response_model=models.StatusResponse)

@@ -114,11 +114,11 @@ STORAGE_CHECK_INTERVAL_SEC = 300
 # How often to sync with server (seconds)
 DB_SYNC_INTERVAL_SEC = 600   # 10 minutes
 
-# Server URL used to fetch remote users/faceprints by device MAC address.
-# Not to be confused with the dashboard's "server_url" (provisioning/,
-# device_identity.json) -- that's a completely separate server for device
-# registration/heartbeat, unrelated to this faceprint sync endpoint.
-FACEPRINT_SYNC_URL = "https://geine-server.onrender.com/getTicketDeviceAccessByMacAdress"
+# Remote user/faceprint sync now reuses the dashboard server this device is
+# bound to (provisioning/identity.py's DeviceIdentity.users_url), authenticated
+# with the same bearer device_token as heartbeats -- no separate URL/MAC-based
+# lookup needed. DB_MODE=remote requires the device to already be bound (see
+# provisioning/); if it isn't, sync is skipped until binding completes.
 
 # Network timeout (seconds)
 REMOTE_TIMEOUT_SEC = 10

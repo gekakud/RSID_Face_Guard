@@ -1,22 +1,22 @@
 """
 Remote (cloud) user data provider.
 
-Fetches user/faceprint records from the backend server by device MAC
-address. The server is expected to return users already in the same
-shape used by the local JSON cache (db/local_provider.py) --
-{badge_id: {"name": ..., "permission_level": ..., "faceprints": {...}}}
--- either as a dict keyed by badge_id, or as a list of objects each
-carrying their own "badge_id" field. Read-only: this provider never
-writes back to the server.
+Fetches this device's assigned face users from the dashboard server at
+GET {server_url}/devices/{device_id}/users, authenticated with the same
+bearer device_token used for heartbeats (see provisioning/identity.py).
+The response is already shaped exactly like the local JSON cache
+(db/local_provider.py) -- {badge_id: {"name", "permission_level",
+"faceprints"}} -- so callers can drop it straight into the local
+UserDatabase. Read-only: this provider never writes back to the server.
 """
 
-import uuid
 from typing import Dict, Optional
 
 import requests
 
 from observability import events
 from observability.logging_setup import get_logger
+from provisioning.identity import DeviceIdentity
 
 log = get_logger("db")
 
@@ -26,12 +26,6 @@ log = get_logger("db")
 _REQUIRED_FACEPRINTS_KEYS = ("version", "features_type", "flags", "adaptive_descriptor_nomask")
 
 
-def get_mac_address() -> str:
-    """Return this device's MAC address, formatted as aa:bb:cc:dd:ee:ff."""
-    mac = uuid.getnode()
-    return ':'.join(f'{(mac >> ele) & 0xff:02x}' for ele in range(40, -8, -8))
-
-
 def _is_valid_faceprints(faceprints) -> bool:
     if not isinstance(faceprints, dict):
         return False
@@ -39,19 +33,35 @@ def _is_valid_faceprints(faceprints) -> bool:
 
 
 class RemoteUserDataProvider:
-    """Fetches the device's assigned users from the cloud server."""
+    """Fetches this device's assigned users from the dashboard server.
 
-    def __init__(self, server_url: str, timeout_sec: float = 10):
-        self.server_url = server_url
+    Requires a bound device identity (device_id + device_token from
+    provisioning/identity.py) -- an unbound device has no server to ask and
+    load_all() simply returns {}.
+    """
+
+    def __init__(self, identity: Optional[DeviceIdentity], timeout_sec: float = 10):
+        self.identity = identity
         self.timeout_sec = timeout_sec
+
+    @property
+    def users_url(self) -> Optional[str]:
+        if self.identity is None:
+            return None
+        return f"{self.identity.server_url.rstrip('/')}/devices/{self.identity.device_id}/users"
 
     def load_all(self) -> Dict[str, dict]:
         """Fetch users from the server. Returns {} on any failure."""
-        payload = {"mac": get_mac_address()}
-        log.info("Contacting server with MAC: %s", payload["mac"])
+        if self.identity is None:
+            log.warning("No device identity bound yet -- skipping remote user sync")
+            return {}
 
         try:
-            response = requests.post(self.server_url, json=payload, timeout=self.timeout_sec)
+            response = requests.get(
+                self.users_url,
+                headers={"Authorization": f"Bearer {self.identity.device_token}"},
+                timeout=self.timeout_sec,
+            )
         except Exception as e:
             log.error("Network error: %s", e)
             events.emit("db_sync_failed", reason="network_error", error=str(e))

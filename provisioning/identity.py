@@ -8,6 +8,7 @@ power cut mid-write can't leave a half-written file that bricks the next boot.
 
 import json
 import os
+import uuid
 from dataclasses import asdict, dataclass, field, fields
 from typing import Optional
 
@@ -23,6 +24,17 @@ def identity_path() -> str:
     """Absolute path to the identity file (config value may be relative)."""
     path = config.DEVICE_IDENTITY_FILE
     return path if os.path.isabs(path) else os.path.join(PROJECT_ROOT, path)
+
+
+def get_mac_address() -> str:
+    """Return this device's MAC address, formatted as aa:bb:cc:dd:ee:ff.
+
+    Only used at registration time (identifying info sent to the server
+    alongside the provisioning token) -- day-to-day requests use the
+    device_id/device_token issued at registration instead.
+    """
+    mac = uuid.getnode()
+    return ':'.join(f'{(mac >> ele) & 0xff:02x}' for ele in range(40, -8, -8))
 
 
 @dataclass
@@ -43,6 +55,10 @@ class DeviceIdentity:
     @property
     def status_url(self) -> str:
         return f"{self.server_url.rstrip('/')}/devices/{self.device_id}/status"
+
+    @property
+    def users_url(self) -> str:
+        return f"{self.server_url.rstrip('/')}/devices/{self.device_id}/users"
 
 
 def load() -> Optional[DeviceIdentity]:
