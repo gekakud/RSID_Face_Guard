@@ -5,7 +5,7 @@
 | Item | Detail |
 |---|---|
 | Document ID | SRS-FG-001 |
-| Revision | 1.0 |
+| Revision | 1.1 |
 | Product | RSID Face Guard kiosk application |
 | Target platform | Raspberry Pi 5, 720×720 round touch display |
 | Biometric device | Intel RealSense ID F45x (`rsid_py` SDK) |
@@ -97,8 +97,9 @@ requirement onto the delivered modules.
 flowchart LR
     W["End user"] -->|card tap / face / IN-OUT| T["Face Guard Terminal (RPi5)"]
     I["Technician app"] -->|signed QR| T
+    I -->|"POST /devices/generate-qr"| S["Dashboard server"]
     T -->|relay| D["Door strike"]
-    T -->|"POST /devices/register"| S["Dashboard server"]
+    T -->|"POST /devices/register"| S
     T -->|"POST /devices/{id}/status (+events)"| S
     T -->|"GET /devices/{id}/users"| S
     O["Operator"] --> S
@@ -110,21 +111,26 @@ flowchart LR
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Boot
-    Boot --> InitMode: INIT_MODE_ENABLED
+    [*] --> InitMode
     InitMode --> Binding: valid QR
+    InitMode --> BoundIdle: window expires, identity on disk
+    InitMode --> Unbound: window expires, no identity
     Binding --> BoundIdle: registered
-    Binding --> InitMode: rejected
-    InitMode --> Idle: window expires
-    Idle --> BoundIdle: identity on disk
-    BoundIdle --> Session: valid card tap / screen tap
+    Binding --> InitMode: registration failed
+    BoundIdle --> Granted: valid card (card_only)
+    BoundIdle --> Session: valid card (card_and_face) / screen tap (demo)
+    BoundIdle --> DirectionSelected: IN/OUT tap (time_registry)
+    DirectionSelected --> Session: card tap
+    DirectionSelected --> BoundIdle: selection timeout
     Session --> Granted: face match
+    Session --> Attendance: face match (time_registry)
     Session --> Denied: mismatch
     Session --> BoundIdle: timeout
     Granted --> BoundIdle
     Denied --> BoundIdle
+    Attendance --> BoundIdle
     BoundIdle --> Revoked: HTTP 410
-    Revoked --> InitMode: rescan QR
+    Revoked --> InitMode: self-restart
 ```
 
 **Connectivity is orthogonal to the operating state.** Server reachability is
@@ -137,13 +143,15 @@ terminal can *report* and how fresh its data is, never what it can *decide*.
 
 | State | Behaviour |
 |---|---|
-| `boot` | Hardware discovery and initialisation |
-| `init_mode` | Live preview, scanning for a provisioning QR, bounded window |
-| `unbound` | No identity; no server sync; QR instruction shown |
+| `init_mode` | **The entry state.** Hardware discovery and initialisation, then a live preview scanning for a provisioning QR for a bounded window. Entered on every start, whether or not the terminal is already bound, so a technician can re-provision (FR-PROV-10). Only the *duration* is configurable: `INIT_MODE_ENABLED = false` is equivalent to a zero-length window that falls straight through to the resting state |
+| `binding` | QR accepted; network profile applied and registration in flight |
+| `unbound` | No identity; no server sync; QR instruction shown. **Does not scan**; re-provisioning requires a restart into `init_mode` |
 | `bound_idle` | Screensaver; card monitor armed; heartbeat running |
+| `direction_selected` | `time_registry` only: IN or OUT latched, awaiting a card tap or selection timeout |
 | `session` | Camera on, face match retried |
 | `granted` / `denied` | Result screen for a fixed hold |
-| `revoked` | Identity dropped, **local user DB purged, all access denied** |
+| `attendance` | `time_registry` only: direction registered, result screen for a fixed hold, **no relay** |
+| `revoked` | Transient. Identity dropped, **local user DB purged, all access denied**, then orderly self-restart (FR-HB-10) |
 
 | Connectivity attribute | Effect |
 |---|---|
@@ -151,11 +159,13 @@ terminal can *report* and how fresh its data is, never what it can *decide*.
 | `server_offline` | **Access flow unchanged**; events accumulate; DB stays at its last good version; retries back off |
 
 
-**FR-STATE-01** The terminal shall persist its binding across reboots and
+**FR-STATE-01** The terminal shall persist its binding across restarts and
 resume `bound_idle` without operator action.
 
-**FR-STATE-02** The terminal shall never grant access in `unbound` or
-`revoked` state.
+**FR-STATE-02** In `remote` database mode the terminal shall never grant access
+in `unbound` or `revoked` state. In `local` database mode the terminal
+authorises from its local file and the binding states do not apply: an
+unprovisioned `local` terminal is a valid, fully functional configuration.
 
 **FR-STATE-03** A state transition shall never interrupt an in-flight
 authentication; background work shall not pre-empt a session.
@@ -216,7 +226,7 @@ The terminal supports three mutually exclusive modes.
 |---|---|---|---|---|
 | `card_only` | Valid card tap | **skipped** | opens | `access_granted` |
 | `card_and_face` | Valid card tap | 1:1 verify against cardholder | opens on match | `access_granted` / `access_denied` |
-| `time_registry` | End user selects IN or OUT, then taps card | per §4.3 | **no door output** | `attendance_event` |
+| `time_registry` | End user selects IN or OUT, then taps card | per §4.3 face policy | **no door output** | `attendance_event` |
 
 **FR-MODE-01** The mode shall be provisioned **per door by the server**,
 returned in the registration response and refreshable through the heartbeat
@@ -227,7 +237,9 @@ response. `config.py` shall hold only an install-time fallback default.
 shall be rejected **before the camera is started** (§6.3).
 
 **FR-MODE-03 `card_only`** — on a valid card the terminal shall open the relay
-immediately, with no face step. **[NEW]**
+immediately, with no face step. The decision path is
+`Card Reader → Session Orchestration → Access Output`; the Face Authentication
+Service is not involved and no session or camera preview is started. **[NEW]**
 
 **FR-MODE-04 `card_and_face`** — on a valid card the terminal shall start a
 session and verify the live face 1:1 against that cardholder's stored
@@ -241,6 +253,14 @@ that has a card reader.
 
 Working-hours journalling: the end user declares direction, then identifies.
 
+The **face policy** referenced below is an explicit per-door setting with
+exactly two values, provisioned alongside `device_mode` (FR-MODE-01):
+
+| Face policy | Behaviour on card tap |
+|---|---|
+| `none` | The card alone registers the direction; no session, no camera |
+| `verify` | A session is started and the live face is verified 1:1 against the cardholder, exactly as in `card_and_face`; a mismatch registers nothing |
+
 **FR-MODE-06** The terminal shall present an IN/OUT selection screen in place
 of the screensaver. The selection shall be latched until the following card
 tap completes, or until a selection timeout returns the UI to its resting
@@ -248,8 +268,9 @@ state.
 
 **FR-MODE-07** After a direction is selected and a registered card is tapped,
 the terminal shall perform the identification defined by the configured face
-policy and, on success, emit an `attendance_event` carrying `user_id`,
-`direction` (`in`/`out`) and the UTC timestamp.
+policy (`none` or `verify`, above) and, on success, emit an
+`attendance_event` carrying `user_id` (FR-DATA-06), `direction` (`in`/`out`)
+and the UTC timestamp.
 
 **FR-MODE-08** In `time_registry` the terminal shall **not** actuate the
 relay. *(Assumption A2; combined access+attendance is a future extension.)*
@@ -285,12 +306,16 @@ flowchart TD
     HB["Heartbeat & Telemetry Service"]
     LOG["Logging & Storage Monitor"]
     CAM["Camera Preview & MJPEG Transport"]
+    S["Dashboard server (external)"]
 
     CR -->|card id| UI
+    CR -->|registration lookup| DB
     UI -->|start/stop session| CAM
     UI -->|authenticate| FA
     FA -->|lookup faceprints| DB
-    FA -->|on grant| AO
+    FA -->|match result| UI
+    UI -->|access decision| AO
+    CAM -->|frames| PR
     PR -->|identity| DB
     PR --> NET
     UI --> PR
@@ -298,8 +323,20 @@ flowchart TD
     AO --> HB
     DB --> HB
     PR --> HB
-    HB --> LOG
+    LOG -->|storage metrics| HB
+    DB -->|"GET /devices/{id}/users"| S
+    HB -->|"POST /devices/{id}/status"| S
+    PR -->|"POST /devices/register"| S
 ```
+
+The access decision is owned by Session Orchestration, never by the Face
+Authentication Service (FR-FACE-04). In `card_only` the path is
+`CR → UI → AO` with no biometric stage at all. Logging is cross-cutting: every
+service writes through the shared logger tree (FR-LOG-01); the only graph edge
+shown is the storage metric the monitor contributes to each heartbeat
+(FR-LOG-05). Database synchronisation and heartbeating are **independent**
+HTTP paths on separate schedules — events piggyback on the heartbeat (FR-HB-04),
+but the door DB does not.
 
 ### 5.1 Session Orchestration Service
 
@@ -315,12 +352,15 @@ started only for the duration of a session, to avoid a permanently streaming
 camera and its associated restart stutter.
 
 **FR-SESS-03** A session shall be started by a valid card tap (card modes) or
-a screen tap (demo face-only mode), and never while a session, init mode or a
-result screen is already active.
+a screen tap (demo face-only mode), and never while a session or init mode is
+already active. A **different** valid card presented during a result-screen
+hold shall pre-empt the result and start a new session (BR-04).
 
-**FR-SESS-04** During a session the service shall retry face matching every
-`AUTH_RETRY_INTERVAL_SEC` until a match succeeds or
-`AUTH_SESSION_TIMEOUT_SEC` elapses.
+**FR-SESS-04** During a **face-only (demo) session** the service shall retry
+face matching every `AUTH_RETRY_INTERVAL_SEC` until a match succeeds or
+`AUTH_SESSION_TIMEOUT_SEC` elapses. In card-triggered modes the session ends
+on the **first** conclusive mismatch, per BR-05; retrying is not performed
+because the identity to verify against is already known from the card.
 
 **FR-SESS-05** Only one authentication attempt shall be in flight at a time;
 a retry tick arriving while an attempt runs shall be skipped.
@@ -360,7 +400,10 @@ logged denial reason.
 
 **FR-FACE-06** On an SDK/hardware exception the service shall block further
 authentication for a backoff period (20 s), start a background reconnect, and
-report a hardware error event rather than propagating the failure to the UI.
+report a `hardware_error` event. The internal cause shall not be shown to the
+user, but the condition shall be surfaced to the UI as a distinct
+"temporarily unavailable" outcome (FR-UI-12) — a user standing at the door
+after a card tap shall never be left without feedback.
 
 **FR-FACE-07** The service shall never grant access as a result of an internal
 error; all error paths shall be fail-secure.
@@ -415,10 +458,10 @@ recorded distinctly from a denial.
 
 ### 5.5 User Database & Sync Service
 
-**FR-DB-01** The local database shall hold, per user: badge/card id, display
-name, permission level and one or more faceprints, persisted as a local JSON
-store and written atomically (temp file + rename) so a power cut cannot leave
-a truncated file.
+**FR-DB-01** The local database shall hold, per user: badge/card id, stable
+`user_id`, display name, `active` flag, permission level and a list of zero or
+more faceprints, persisted as a local JSON store and written atomically (temp
+file + rename) so a power cut cannot leave a truncated file.
 
 **FR-DB-02** The database shall be the **single authority for authorisation**:
 the server sends only the users relevant to this device's door, therefore
@@ -441,16 +484,22 @@ invalid response shall leave the previous cache intact.
 **FR-DB-07** If the device is not bound, remote sync shall be skipped until
 binding completes.
 
-**FR-DB-08** When the server reports that users were removed, the service
-shall drop them locally and emit `db_users_revoked`.
+**FR-DB-08** The `GET /devices/{id}/users` payload is a **full replacement
+set**, not a delta: the server does not send a removal list. Users present in
+the local cache but **absent from a well-formed payload** shall therefore be
+dropped locally and `db_users_revoked` emitted. This inference is only valid
+for a payload that passed the FR-DB-05 well-formedness check; a malformed or
+failed response shall never be interpreted as "all users removed".
 
 
 ### 5.6 Provisioning & QR Trust Service
 
-**FR-PROV-01** On startup, when init mode is enabled, the terminal shall show
-a live preview and scan for a provisioning QR for `INIT_MODE_DURATION_SEC`.
-If nothing is found the terminal shall continue to normal operation with no
-additional delay.
+**FR-PROV-01** Init mode is the terminal's entry state: on every start it
+shall show a live preview and scan for a provisioning QR for
+`INIT_MODE_DURATION_SEC`, whether or not it is already bound. If nothing is
+found within the window the terminal shall fall through to its resting state
+with no additional delay. Configuration controls only the duration of this
+window, not whether it is entered.
 
 **FR-PROV-02** The QR payload shall be a JSON envelope containing at minimum:
 `schema`, `command`, `server_url`, `customer_id`, `site_id`, `door_id`,
@@ -538,8 +587,11 @@ break the door.
 on the heartbeat.
 
 **FR-HB-05** Events shall be removed from the buffer **only after** a
-successful (2xx) heartbeat. A failed beat shall leave them buffered for the
-next one.
+successful (2xx) heartbeat, and shall be removed **by `event_id`**, never by
+count. Because the buffer is a bounded drop-oldest ring (FR-HB-07), events may
+be evicted while a heartbeat is in flight; acknowledging by position would
+therefore discard entries the server never received. A failed beat shall leave
+the listed events buffered for the next one.
 
 **FR-HB-06** Each event shall carry a UUID `event_id` so the server can
 deduplicate idempotently if a beat is delivered but its response is lost.
@@ -557,12 +609,19 @@ single best-effort synchronous flush of buffered events. Shutdown shall never
 be blocked by the network.
 
 **FR-HB-10 (Revocation — fail-secure)** On HTTP **410** the terminal shall
-treat the device as removed and shall:
-1. stop heartbeating;
-2. delete the stored identity, so a reboot cannot silently rebind;
-3. **purge the local user database**;
-4. **deny all access** from that point on;
-5. return to the unbound state showing the QR enrolment instruction.
+treat the device as removed and shall, in this order:
+1. emit `device_revoked` and make one best-effort synchronous flush of the
+   buffered events (FR-HB-09), **before** the credential is destroyed, so the
+   transition is auditable server-side;
+2. stop heartbeating;
+3. delete the stored identity, so a restart cannot silently rebind;
+4. **purge the local user database**, including all faceprints (FR-DATA-02).
+   This is safe because the server is the master copy of every faceprint
+   (§8.6) and the set is restored by the first sync after re-provisioning;
+5. **deny all access** from that point on;
+6. perform an orderly self-restart under the supervising systemd service
+   (NFR-21), so the terminal re-enters `init_mode` and a technician can
+   re-provision it by presenting a new QR without a power cycle.
 
 Revocation is equivalent to a reset. **[NEW]** — see §12.
 
@@ -621,8 +680,13 @@ could not succeed.
 **BR-03 Face acceptance.** A match is accepted when the SDK reports success
 **or** the score ≥ `CUSTOM_THRESHOLD`.
 
-**BR-04 One tap, one session.** Repeats of the same card inside the cooldown,
-and any read during an active card session, are ignored.
+**BR-04 One tap, one session.** Repeats of the **same** card inside the
+cooldown, and any read during an active card session, are ignored. A
+**different** card presented while a result screen is still held shall
+immediately pre-empt that screen and start a new session, rather than being
+swallowed: the cooldown is a per-card debounce, not a global input lock, and
+`FAIL_DURATION_MS` (3 s) is longer than the cooldown (2 s), so a global lock
+would silently drop a legitimate second user.
 
 **BR-05 A card is either yours or it isn't.** On a card session whose face
 does not match, the terminal shows the denial **once** and returns to rest —
@@ -664,10 +728,11 @@ messages), and — in time-registry mode — the IN/OUT selection screen.
 **FR-UI-02** The status overlay shall be independent of the demo UI's own
 state machine, so provisioning progress can be shown over any state.
 
-**FR-UI-03** After a success hold, the UI shall return explicitly to the
-**screensaver**, not to the live-camera state.
+**FR-UI-03** After a success or attendance hold, the UI shall return explicitly
+to its **resting screen** — the screensaver in card modes, or the IN/OUT
+selection screen in `time_registry` — never to the live-camera state.
 
-### 7.2 Denial behaviour (three distinct paths)
+### 7.2 Denial behaviour (four distinct paths)
 
 **FR-UI-04 Unregistered card** — show the failure screen for
 `FAIL_DURATION_MS` **without starting the camera**, then return to the
@@ -682,6 +747,13 @@ with no failure screen.
 **FR-UI-07** Internal denial reasons (score, SDK status, extraction failure)
 shall **not** be shown to the user; they shall appear only in logs and
 telemetry.
+
+**FR-UI-12 Biometric device unavailable** — while the authentication backoff
+of FR-FACE-06 is active, a valid card tap shall show a distinct
+"temporarily unavailable, try again shortly" screen for `FAIL_DURATION_MS` and
+return to the screensaver. This is a fail-secure outcome: the door does not
+open. It shall be visually distinguishable from a face mismatch, so a user is
+not led to believe their credential was rejected.
 
 ### 7.3 Input and presentation
 
@@ -794,7 +866,7 @@ Heartbeat plus piggybacked events. Bearer authenticated.
     "events": [
       { "event_id": "uuid", "type": "access_granted",
         "ts": "2026-07-27T15:04:11Z",
-        "user": "Emma", "method": "card", "card_id": "12345" }
+        "user_id": "u-8f2c1a", "method": "card" }
     ] } }
 ```
 
@@ -817,9 +889,11 @@ minimisation that makes BR-01 sound.
 
 ```jsonc
 { "users": {
-    "12345": { "name": "Emma Stone",
+    "12345": { "user_id": "u-8f2c1a",
+               "name": "Emma Stone",
+               "active": true,
                "permission_level": "employee",
-               "faceprints": { /* SDK-shaped faceprint object */ } } } }
+               "faceprints": [ /* zero or more SDK-shaped faceprint objects */ ] } } }
 ```
 
 **FR-API-13** The payload shall be per-device; the terminal shall never
@@ -842,17 +916,20 @@ and expose a per-end-user working-hours journal. **[NEW]**
 Keyed by card/badge id in the local JSON store.
 
 ```jsonc
-"12345": {
+"12345": {                            // key = card/badge id
+  "user_id": "u-8f2c1a",              // stable server-side identity (FR-MODE-07)
   "name": "Emma Stone",
-  "permission_level": "employee",   // informational only (BR-01)
-  "faceprints": { /* SDK-shaped faceprint object, restored into
-                     rsid_py.Faceprints for matching */ }
+  "active": true,                     // false = record retained but not authorising
+  "permission_level": "employee",     // informational only (BR-01)
+  "faceprints": [ /* zero or more SDK-shaped faceprint objects, restored
+                     into rsid_py.Faceprints for matching */ ]
 }
 ```
 
-**FR-DATA-01** A record shall be usable for matching only if its faceprint
-object is present and well-formed; otherwise it shall be skipped and counted
-at sync time.
+**FR-DATA-01** A record shall be usable for matching only if `active` is true
+and its `faceprints` list contains at least one well-formed entry; otherwise
+it shall be skipped and counted at sync time. An empty list is a valid record
+in `card_only` mode, where no face step occurs.
 
 **FR-DATA-02** Faceprints are biometric data: they shall never be written to
 ordinary logs and shall be deleted on revocation (FR-HB-10).
@@ -873,28 +950,39 @@ ordinary logs and shall be deleted on revocation (FR-HB-10).
 only, excluded from version control, and deleted on revocation.
 
 **FR-DATA-04** Unknown keys shall be tolerated on load so a newer server
-adding a field cannot stop an already-bound terminal from booting.
+adding a field cannot stop an already-bound terminal from starting.
 
 ### 9.3 Event catalogue
 
 | Event | Emitted when |
 |---|---|
-| `device_boot` / `device_shutdown` | Application start / orderly stop |
+| `device_boot` / `device_shutdown` | Application start (on entering `init_mode`) / orderly stop. Wire identifier retained for compatibility; `device_boot` names an event, not a state |
 | `init_mode_entered` | Provisioning scan window opened |
 | `qr_accepted` / `qr_rejected` | QR verification outcome |
 | `access_granted` | Door opened after a successful decision |
 | `access_denied` | Denial, with reason (`extraction_failed`, `no_faceprints_on_file`, `face_mismatch`) |
 | `card_unknown` | Card absent from the local DB |
 | `relay_opened` | Relay actuated |
+| `access_output_failed` | Decision was approved but the output could not be actuated (FR-OUT-06) — distinct from a denial |
 | `db_sync_ok` / `db_sync_failed` | Door DB refresh outcome |
 | `db_sync_invalid_record` / `db_sync_skipped_entries` | Malformed records seen during sync |
 | `db_users_revoked` | Users removed from this door |
 | `hardware_error` | Camera/reader/relay/SDK fault, with a `where` tag |
+| `device_revoked` | HTTP 410 received; emitted and flushed before the identity is destroyed (FR-HB-10) |
 | `storage_ok` / storage low | Free-space threshold crossing |
 | `attendance_event` **[NEW]** | IN/OUT registered in time-registry mode |
 
 **FR-DATA-05** Every event shall carry `event_id`, `type` and a UTC timestamp,
 plus small, purposeful context fields only — telemetry, not a data dump.
+
+**FR-DATA-06** `user_id` (§9.1) shall be the identifier used in all events
+(`access_granted`, `access_denied`, `attendance_event`); the card id is a
+credential and shall not be used as the subject identifier in telemetry.
+
+**FR-DATA-07** `active` (§9.1) shall be the field referenced by "valid,
+**active** record" in BR-01 and FR-DB-02. A record with `active: false` shall
+be retained in the cache but shall never authorise, allowing the server to
+suspend a user without deleting their enrolment.
 
 ### 9.4 Configuration parameters
 
@@ -959,7 +1047,7 @@ limitation for telemetry, but **not** for attendance (FR-MODE-10).
 ### 10.3 Reliability and data integrity
 
 **NFR-09** Credential and cache files shall be written atomically so a power
-cut cannot leave a partially written file that prevents the next boot.
+cut cannot leave a partially written file that prevents the next start.
 
 **NFR-10** A malformed or partial server payload shall never replace a valid
 local dataset.
@@ -996,7 +1084,9 @@ the same logic serves the web UI and the Qt test harness unchanged.
 backends, simulated hardware) so the application runs off-Pi for development.
 
 **NFR-21** The application shall run under a supervised systemd service that
-starts at boot and restarts on failure.
+starts at host power-on and restarts on failure. Every such start enters
+`init_mode` (FR-PROV-01), including the self-restart after revocation
+(FR-HB-10).
 
 **NFR-22** Tunables shall live in one configuration module (§9.4).
 
@@ -1007,7 +1097,7 @@ starts at boot and restarts on failure.
 
 | Area | Requirements | Implementing modules |
 |---|---|---|
-| Entry point / boot | FR-STATE-01..03 | `main_web.py` |
+| Entry point / init mode | FR-STATE-01..03 | `main_web.py`, `gui_web/web_window.py` |
 | Offline operation | FR-STATE-04..12 | `db/` (cache), `provisioning/heartbeat.py`, `observability/events.py` |
 | Session orchestration | FR-SESS-01..08, FR-UI-* | `gui_web/web_window.py`, `demo_ui/` |
 | Face authentication | FR-FACE-01..07, BR-03 | `face_auth/auth_service.py` |
@@ -1041,13 +1131,16 @@ starts at boot and restarts on failure.
 
 | # | Requirement | Current behaviour | Action |
 |---|---|---|---|
-| D1 | FR-HB-10 revocation is fail-secure | Identity is dropped, but the local DB is retained and the door keeps opening | **Change required** |
+| D1 | FR-HB-10 revocation is fail-secure | `binding.py` clears the identity only; the local DB is retained and the door keeps opening. No `device_revoked` event, no self-restart | **Change required** |
 | D2 | FR-MODE-03 `card_only` | Face always runs when a reader is present | **Implement** |
 | D3 | FR-MODE-06..11 time registry | Not implemented | **Implement** |
-| D4 | FR-MODE-01 server-provisioned mode | Only the boolean `AUTH_ONLY_ON_CARD` exists | **Implement** |
+| D4 | FR-MODE-01 server-provisioned mode | Only the boolean `AUTH_ONLY_ON_CARD` exists; no `DEVICE_MODE` constant | **Implement** |
 | D5 | FR-MODE-10 durable attendance queue | Events are in-memory only, capped at 200 | **Implement** |
 | D6 | FR-UI-09 PIN path disabled | Demo keypad path present in UI assets | Disable for production |
 | D7 | FR-API-12 mode/interval refresh | Heartbeat response is not consumed for config | Optional enhancement |
+| D8 | FR-HB-05 acknowledge by `event_id` | `events.ack(count)` pops by position, which can discard undelivered events if the ring evicts during an in-flight beat | **Change required** |
+| D9 | FR-DATA-06/07, FR-DB-01 record schema | No `user_id` or `active` field; `faceprints` is a single object, not a list. Affects both the device store and the `GET /users` payload | **Implement (device + server)** |
+| D10 | BR-04 / FR-SESS-03 pre-emption, FR-UI-12 | A different card during a result hold is swallowed; no "temporarily unavailable" screen for the FR-FACE-06 backoff | **Implement** |
 
 ### 12.3 Out of scope for this release
 
