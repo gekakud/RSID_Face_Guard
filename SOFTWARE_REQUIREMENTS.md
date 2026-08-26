@@ -5,7 +5,7 @@
 | Item | Detail |
 |---|---|
 | Document ID | SRS-FG-001 |
-| Revision | 1.2 |
+| Revision | 1.3 |
 | Product | RSID Face Guard kiosk application |
 | Target platform | Raspberry Pi 5, 720×720 round touch display |
 | Biometric device | Intel RealSense ID F45x (`rsid_py` SDK) |
@@ -1210,18 +1210,32 @@ Verification methods: **T** = Test, **D** = Demonstration, **I** = Inspection,
 
 ### 12.2 Known deviations (specification vs. current build)
 
+Confirmed by static code audit, 2026-08-26. Per-requirement evidence and the
+ordered remediation tasks are in
+[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+
 | # | Requirement | Current behaviour | Action |
 |---|---|---|---|
-| <a id="d1"></a>D1 | [FR-HB-10](#fr-hb-10) revocation is fail-secure | `binding.py` clears the identity only; the local DB is retained and the door keeps opening. No `device_revoked` event, no self-restart | **Change required** |
-| <a id="d2"></a>D2 | [FR-MODE-03](#fr-mode-03) `card_only` | Face always runs when a reader is present | **Implement** |
-| <a id="d3"></a>D3 | [FR-MODE-06](#fr-mode-06)..[FR-MODE-11](#fr-mode-11) time registry | Not implemented | **Implement** |
-| <a id="d4"></a>D4 | [FR-MODE-01](#fr-mode-01) server-provisioned mode | Only the boolean `AUTH_ONLY_ON_CARD` exists; no `DEVICE_MODE` constant | **Implement** |
-| <a id="d5"></a>D5 | [FR-MODE-10](#fr-mode-10) durable attendance queue | Events are in-memory only, capped at 200 | **Implement** |
-| <a id="d6"></a>D6 | [FR-UI-09](#fr-ui-09) PIN path disabled | Demo keypad path present in UI assets | Disable for production |
+| <a id="d1"></a>D1 | [FR-HB-10](#fr-hb-10) revocation is fail-secure | `binding.py` clears the identity only; the local DB is retained and the door keeps opening. No `device_revoked` event, no self-restart | **Change required** (T6) |
+| <a id="d2"></a>D2 | [FR-MODE-03](#fr-mode-03) `card_only` | Face always runs when a reader is present | **Implement** (T7) |
+| <a id="d3"></a>D3 | [FR-MODE-06](#fr-mode-06)..[FR-MODE-11](#fr-mode-11) time registry | Not implemented | **Implement** (T8) |
+| <a id="d4"></a>D4 | [FR-MODE-01](#fr-mode-01) server-provisioned mode | Only the boolean `AUTH_ONLY_ON_CARD` exists; no `DEVICE_MODE` constant | **Implement** (T4) |
+| <a id="d5"></a>D5 | [FR-MODE-10](#fr-mode-10) durable attendance queue | Events are in-memory only, capped at 200 | **Implement** (T5) |
+| <a id="d6"></a>D6 | [FR-UI-09](#fr-ui-09) PIN path disabled | Demo keypad path present in UI assets | Disable for production (T18) |
 | <a id="d7"></a>D7 | [FR-API-12](#fr-api-12) mode/interval refresh | Heartbeat response is not consumed for config | Deferred — moved to future work ([§12.3](#123-out-of-scope-for-this-release)), rev 1.2 |
-| <a id="d8"></a>D8 | [FR-HB-05](#fr-hb-05) acknowledge by `event_id` | `events.ack(count)` pops by position, which can discard undelivered events if the ring evicts during an in-flight beat | **Change required** |
-| <a id="d9"></a>D9 | [FR-DATA-06](#fr-data-06)/[FR-DATA-07](#fr-data-07), [FR-DB-01](#fr-db-01) record schema | No `user_id` or `active` field; `faceprints` is a single object, not a list. Affects both the device store and the `GET /users` payload | **Implement (device + server)** |
-| <a id="d10"></a>D10 | [BR-04](#br-04) / [FR-SESS-03](#fr-sess-03) pre-emption, [FR-UI-12](#fr-ui-12) | A different card during a result hold is swallowed; no "temporarily unavailable" screen for the [FR-FACE-06](#fr-face-06) backoff | **Implement** |
+| <a id="d8"></a>D8 | [FR-HB-05](#fr-hb-05) acknowledge by `event_id` | `events.ack(count)` pops by position, which can discard undelivered events if the ring evicts during an in-flight beat | **Change required** (T5) |
+| <a id="d9"></a>D9 | [FR-DATA-06](#fr-data-06)/[FR-DATA-07](#fr-data-07), [FR-DB-01](#fr-db-01) record schema | No `user_id` or `active` field; `faceprints` is a single object, not a list. Affects both the device store and the `GET /users` payload | **Implement (device + server)** (T3) |
+| <a id="d10"></a>D10 | [BR-04](#br-04) / [FR-SESS-03](#fr-sess-03) pre-emption, [FR-UI-12](#fr-ui-12) | A different card during a result hold is swallowed; no "temporarily unavailable" screen for the [FR-FACE-06](#fr-face-06) backoff | **Implement** (T9) |
+| <a id="d11"></a>D11 | [FR-FACE-04](#fr-face-04), [FR-OUT-06](#fr-out-06) | `auth_service.py:29-37,198` opens the relay directly from the match callback and emits `access_granted` **before** the relay outcome is known; no `access_output_failed` event | **Change required** (T2) |
+| <a id="d12"></a>D12 | [FR-PROV-03](#fr-prov-03), [NFR-14](#nfr-14) | An in-process nonce set remains (`qr_scanner.py:114-116,173-178`); rev 1.2 moved replay protection server-side | Remove (T6) |
+| <a id="d13"></a>D13 | [FR-PROV-06](#fr-prov-06) | The `command` field is documented but never checked — any signed envelope is honoured | **Implement** (T11) |
+| <a id="d14"></a>D14 | [FR-PROV-09](#fr-prov-09), [FR-DATA-03](#fr-data-03) | Identity file written atomically and gitignored, but no `chmod 0600` anywhere | **Implement** (T10) |
+| <a id="d15"></a>D15 | [FR-PROV-01](#fr-prov-01) | Init mode runs only when `INIT_MODE_ENABLED` (`web_window.py:549`); spec requires entry on every start, config controlling duration only | **Change required** (T16) |
+| <a id="d16"></a>D16 | [FR-API-07](#fr-api-07), [FR-API-13](#fr-api-13) | Server re-registration creates a **new** device row (`server/main.py:301-326`); every device is seeded from one default user template (`:335-339`) | **Change required** (T14) |
+| <a id="d17"></a>D17 | [FR-NET-03](#fr-net-03), [FR-LOG-04](#fr-log-04) | `APPLY_NETWORK_PROFILE = True` is checked in; Wi-Fi password passed on the `nmcli` argv (`network.py:101`) | **Change required** (T15) |
+| <a id="d18"></a>D18 | [NFR-21](#nfr-21) | `docs/rsid-host-mode.service` targets a nonexistent script; `face-guard.service` launches `main_qt.py`, not the web UI | **Change required** (T17) |
+| <a id="d19"></a>D19 | [FR-FACE-06](#fr-face-06) | The 20 s backoff gate is applied only on the face-only path (`auth_service.py:229-232`), not the card path | **Implement** (T9) |
+| <a id="d20"></a>D20 | [NFR-19](#nfr-19) | The session state machine is duplicated between `gui_web/web_window.py` and `gui_qt/main_window_qt.py`; only sub-GUI layers are shared | **Refactor** (T1) |
 
 ### 12.3 Out of scope for this release
 
@@ -1244,4 +1258,5 @@ Verification methods: **T** = Test, **D** = Demonstration, **I** = Inspection,
 | 1.0 | — | project team | Initial baseline |
 | 1.1 | 2026-08-26 | requirements review | Diagram corrections; logic-defect fixes (ack-by-id, fail-secure revocation, offline/local-mode scoping, denial paths); init-mode-as-entry-state; `idle` naming; jump links; full traceability |
 | 1.2 | 2026-08-26 | requirements review | Stakeholder rulings U1–U10 (face policy confirmed, durable attendance mandatory, token-replacement semantics, schema-discard migration, vendor threshold note, relay default, server-side replay protection, `unbound` = dev-only); simplification pass: FR-STATE-06/08/10/12, FR-UI-02, FR-UI-10, FR-API-12 deprecated; rationale prose trimmed |
+| 1.3 | 2026-08-26 | code reconciliation | Static audit of the working tree. Added §5.5 and §5.6 service diagrams; D1–D10 confirmed with evidence and mapped to tasks; new deviations D11–D20 recorded. Companion [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) holds the per-requirement reconciliation table and the ordered task list T1–T18 |
 
