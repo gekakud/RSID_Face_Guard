@@ -461,6 +461,34 @@ recorded distinctly from a denial.
 
 ### 5.5 User Database & Sync Service
 
+The sync cycle ([FR-DB-03](#fr-db-03), [FR-DB-05](#fr-db-05), [FR-DB-08](#fr-db-08)) is fully decoupled from the
+authorisation path ([FR-DB-04](#fr-db-04)): the left side can fail forever without the
+right side ever noticing.
+
+```mermaid
+flowchart TD
+    subgraph SYNC["Background sync (every DB_SYNC_INTERVAL_SEC)"]
+        T0["Sync tick"] --> B{"Device bound?"}
+        B -- "no (FR-DB-07)" --> SKIP["Skip until binding completes"]
+        B -- yes --> GET["GET /devices/{id}/users"]
+        GET -- "network / HTTP error" --> FAIL["Keep previous cache<br/>emit db_sync_failed"]
+        GET -- response --> VAL{"Payload well-formed?<br/>(FR-DB-05)"}
+        VAL -- "wholly invalid" --> FAIL
+        VAL -- yes --> REC["Validate each record<br/>skip + count malformed<br/>(db_sync_invalid_record /<br/>db_sync_skipped_entries)"]
+        REC --> REPL["Atomically replace cache<br/>(temp file + rename, FR-DB-01)"]
+        REPL --> DROP["Drop users absent from payload<br/>emit db_users_revoked (FR-DB-08)"]
+        DROP --> OK["emit db_sync_ok"]
+    end
+
+    subgraph AUTH["Authorisation path (always local, FR-DB-04)"]
+        CARD["Card tap"] --> LOOK["Lookup in local cache"]
+        LOOK -- "present + active (BR-01)" --> AUTHOK["Authorised"]
+        LOOK -- absent --> REJ["Rejected before camera (BR-02)"]
+    end
+
+    REPL -. "new cache visible to next lookup" .-> LOOK
+```
+
 <a id="fr-db-01"></a>**FR-DB-01** The local database shall hold, per user: badge/card id, stable
 `user_id`, display name, `active` flag, permission level and a list of zero or
 more faceprints, persisted as a local JSON store and written atomically (temp
@@ -499,6 +527,29 @@ failed response shall never be interpreted as "all users removed".
 
 
 ### 5.6 Provisioning & QR Trust Service
+
+The provisioning flow, from the init-mode scan window to a persisted identity.
+All trust checks ([FR-PROV-03](#fr-prov-03)) run **offline**; the first network call is the
+registration itself.
+
+```mermaid
+flowchart TD
+    START["Start → init_mode<br/>(FR-PROV-01, scan for INIT_MODE_DURATION_SEC)"] --> FRAME["Camera frames (FR-CAM-01)"]
+    FRAME --> QR{"QR decoded<br/>within window?"}
+    QR -- no --> FALL["Fall through to idle / unbound<br/>(no additional delay)"]
+    QR -- yes --> CHK{"Offline trust checks (FR-PROV-03)<br/>1. schema version<br/>2. key_id in trust store (FR-PROV-04)<br/>3. Ed25519 signature<br/>4. expires_at in future<br/>5. command == provision_device (FR-PROV-06)"}
+    CHK -- "any check fails" --> REJ["Log + classify (FR-PROV-05)<br/>emit qr_rejected<br/>keep scanning until window ends"]
+    REJ --> FRAME
+    CHK -- "all pass" --> ACC["emit qr_accepted → binding state"]
+    ACC --> NET{"Network profile?<br/>(FR-NET-01..04)"}
+    NET -- "wifi (enabled)" --> JOIN["Join via NetworkManager,<br/>bounded timeout"]
+    NET -- "local / disabled" --> REG
+    JOIN -- joined --> REG["POST /devices/register<br/>(one-time token, FR-API-07)"]
+    JOIN -- timeout --> RFAIL
+    REG -- "2xx" --> PERSIST["Persist identity atomically,<br/>owner-only (FR-PROV-09);<br/>replaces any prior binding (FR-PROV-10);<br/>token discarded (FR-PROV-11)"]
+    REG -- "4xx/5xx (incl. used/expired token)" --> RFAIL["Show server reason to technician,<br/>6 s hold (FR-PROV-08)<br/>→ back to init_mode"]
+    PERSIST --> DONE["Show success, 3 s hold → idle"]
+```
 
 <a id="fr-prov-01"></a>**FR-PROV-01** Init mode is the terminal's entry state: on every start it
 shall show a live preview and scan for a provisioning QR for
