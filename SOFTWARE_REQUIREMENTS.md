@@ -63,7 +63,7 @@ requirement onto the delivered modules.
 | Faceprint | Feature vector produced by the RealSense ID SDK, stored per user |
 | Binding / provisioning | Associating a terminal with a server, customer, site and door by scanning a signed QR |
 | Init mode | The terminal's **entry state**: a bounded window, entered on every start, in which it scans for a provisioning QR ([FR-PROV-01](#fr-prov-01)) |
-| Resting screen | The state the UI returns to when idle — the screensaver in card modes, the IN/OUT selection screen in `time_registry` |
+| Idle screen | What the UI shows in `idle` — the screensaver in card modes, the IN/OUT selection screen in `time_registry` |
 | Session | A bounded authentication attempt window with the camera active |
 | Revocation | Server-initiated removal of a terminal (HTTP 410) |
 | Door DB | The per-device user set the server sends to this terminal |
@@ -114,26 +114,26 @@ flowchart LR
 stateDiagram-v2
     [*] --> InitMode
     InitMode --> Binding: valid QR
-    InitMode --> BoundIdle: window expires, identity on disk
+    InitMode --> Idle: window expires, identity on disk
     InitMode --> Unbound: window expires, no identity
-    Binding --> BoundIdle: registered
+    Binding --> Idle: registered
     Binding --> InitMode: registration failed
     Unbound --> InitMode: restart
-    BoundIdle --> Denied: card not in local DB / device unavailable
-    BoundIdle --> Granted: valid card (card_only)
-    BoundIdle --> Session: valid card (card_and_face) / screen tap (demo)
-    BoundIdle --> DirectionSelected: IN/OUT tap (time_registry)
+    Idle --> Denied: card not in local DB / device unavailable
+    Idle --> Granted: valid card (card_only)
+    Idle --> Session: valid card (card_and_face) / screen tap (demo)
+    Idle --> DirectionSelected: IN/OUT tap (time_registry)
     DirectionSelected --> Attendance: card tap (face policy none)
     DirectionSelected --> Session: card tap (face policy verify)
-    DirectionSelected --> BoundIdle: selection timeout
+    DirectionSelected --> Idle: selection timeout
     Session --> Granted: face match
     Session --> Attendance: face match (time_registry)
     Session --> Denied: mismatch / device unavailable
-    Session --> BoundIdle: timeout
-    Granted --> BoundIdle
-    Denied --> BoundIdle
-    Attendance --> BoundIdle
-    BoundIdle --> Revoked: HTTP 410
+    Session --> Idle: timeout
+    Granted --> Idle
+    Denied --> Idle
+    Attendance --> Idle
+    Idle --> Revoked: HTTP 410
     Revoked --> InitMode: self-restart
 ```
 
@@ -147,10 +147,10 @@ terminal can *report* and how fresh its data is, never what it can *decide*.
 
 | State | Behaviour |
 |---|---|
-| `init_mode` | **The entry state.** Hardware discovery and initialisation, then a live preview scanning for a provisioning QR for a bounded window. Entered on every start, whether or not the terminal is already bound, so a technician can re-provision ([FR-PROV-10](#fr-prov-10)). Only the *duration* is configurable: `INIT_MODE_ENABLED = false` is equivalent to a zero-length window that falls straight through to the resting state |
+| `init_mode` | **The entry state.** Hardware discovery and initialisation, then a live preview scanning for a provisioning QR for a bounded window. Entered on every start, whether or not the terminal is already bound, so a technician can re-provision ([FR-PROV-10](#fr-prov-10)). Only the *duration* is configurable: `INIT_MODE_ENABLED = false` is equivalent to a zero-length window that falls straight through to `idle` (or `unbound` if no identity) |
 | `binding` | QR accepted; network profile applied and registration in flight |
 | `unbound` | No identity; no server sync; QR instruction shown. **Does not scan**; re-provisioning requires a restart into `init_mode` |
-| `bound_idle` | Screensaver; card monitor armed; heartbeat running |
+| `idle` | Screensaver; card monitor armed; heartbeat running |
 | `direction_selected` | `time_registry` only: IN or OUT latched, awaiting a card tap or selection timeout |
 | `session` | Camera on, face match retried |
 | `granted` / `denied` | Result screen for a fixed hold |
@@ -164,7 +164,7 @@ terminal can *report* and how fresh its data is, never what it can *decide*.
 
 
 <a id="fr-state-01"></a>**FR-STATE-01** The terminal shall persist its binding across restarts and
-resume `bound_idle` without operator action.
+resume `idle` without operator action.
 
 <a id="fr-state-02"></a>**FR-STATE-02** In `remote` database mode the terminal shall never grant access
 in `unbound` or `revoked` state. In `local` database mode the terminal
@@ -274,7 +274,7 @@ exactly two values, provisioned alongside `device_mode` ([FR-MODE-01](#fr-mode-0
 <a id="fr-mode-06"></a>**FR-MODE-06** The terminal shall present an IN/OUT selection screen in place
 of the screensaver. The selection shall be latched until the following card
 tap completes, or until `DIRECTION_SELECT_TIMEOUT_SEC` elapses, at which point
-the UI shall return to its resting state with nothing registered.
+the UI shall return to the idle screen with nothing registered.
 
 <a id="fr-mode-07"></a>**FR-MODE-07** After a direction is selected and a registered card is tapped,
 the terminal shall perform the identification defined by the configured face
@@ -383,7 +383,7 @@ the result hold.
 shall be marshalled back onto the UI thread for rendering.
 
 <a id="fr-sess-08"></a>**FR-SESS-08** On session end the service shall pause the preview, clear any
-card-session flag and return to the resting screen ([§1.4](#14-definitions)).
+card-session flag and return to the idle screen ([§1.4](#14-definitions)).
 
 ### 5.2 Face Authentication Service
 
@@ -510,8 +510,9 @@ failed response shall never be interpreted as "all users removed".
 <a id="fr-prov-01"></a>**FR-PROV-01** Init mode is the terminal's entry state: on every start it
 shall show a live preview and scan for a provisioning QR for
 `INIT_MODE_DURATION_SEC`, whether or not it is already bound. If nothing is
-found within the window the terminal shall fall through to its resting state
-with no additional delay. Configuration controls only the duration of this
+found within the window the terminal shall fall through to `idle`
+(or `unbound` when no identity exists) with no additional delay.
+Configuration controls only the duration of this
 window, not whether it is entered.
 
 <a id="fr-prov-02"></a>**FR-PROV-02** The QR payload shall be a JSON envelope containing at minimum:
@@ -734,7 +735,7 @@ denies everyone until it is re-provisioned.
 
 ### 7.1 Screen states
 
-<a id="fr-ui-01"></a>**FR-UI-01** The web UI shall implement at least: screensaver (resting),
+<a id="fr-ui-01"></a>**FR-UI-01** The web UI shall implement at least: screensaver (idle),
 live-camera/session, success ("Welcome" with the user's name when available),
 failure ("not authorized"), status overlay (provisioning/maintenance
 messages), and — in time-registry mode — the IN/OUT selection screen.
@@ -743,19 +744,19 @@ messages), and — in time-registry mode — the IN/OUT selection screen.
 state machine, so provisioning progress can be shown over any state.
 
 <a id="fr-ui-03"></a>**FR-UI-03** After a success or attendance hold, the UI shall return explicitly
-to its **resting screen** — the screensaver in card modes, or the IN/OUT
+to the **idle screen** — the screensaver in card modes, or the IN/OUT
 selection screen in `time_registry` — never to the live-camera state.
 
 ### 7.2 Denial behaviour (four distinct paths)
 
 <a id="fr-ui-04"></a>**FR-UI-04 Unregistered card** — show the failure screen for
 `FAIL_DURATION_MS` **without starting the camera**, then return to the
-resting screen.
+idle screen.
 
 <a id="fr-ui-05"></a>**FR-UI-05 Registered card, face mismatch** — show the failure screen once for
-`FAIL_DURATION_MS`, cancel session timers, then return to the resting screen.
+`FAIL_DURATION_MS`, cancel session timers, then return to the idle screen.
 
-<a id="fr-ui-06"></a>**FR-UI-06 Face-only (demo) timeout** — return silently to the resting screen
+<a id="fr-ui-06"></a>**FR-UI-06 Face-only (demo) timeout** — return silently to the idle screen
 with no failure screen.
 
 <a id="fr-ui-07"></a>**FR-UI-07** Internal denial reasons (score, SDK status, extraction failure)
@@ -765,13 +766,13 @@ telemetry.
 <a id="fr-ui-12"></a>**FR-UI-12 Biometric device unavailable** — while the authentication backoff
 of [FR-FACE-06](#fr-face-06) is active, a valid card tap shall show a distinct
 "temporarily unavailable, try again shortly" screen for `FAIL_DURATION_MS` and
-return to the resting screen. This is a fail-secure outcome: the door does not
+return to the idle screen. This is a fail-secure outcome: the door does not
 open. It shall be visually distinguishable from a face mismatch, so a user is
 not led to believe their credential was rejected.
 
 ### 7.3 Input and presentation
 
-<a id="fr-ui-08"></a>**FR-UI-08** A tap on the resting screen shall wake the terminal only in the
+<a id="fr-ui-08"></a>**FR-UI-08** A tap on the idle screen shall wake the terminal only in the
 demo face-only configuration; in card modes the card tap is the sole trigger.
 
 <a id="fr-ui-09"></a>**FR-UI-09** The PIN/keypad code-entry path present in the UI assets is a
@@ -1150,7 +1151,7 @@ Verification methods: **T** = Test, **D** = Demonstration, **I** = Inspection,
 - <a id="a1"></a>**A1** The operating mode is provisioned per door by the server; local
   configuration is only a fallback.
 - <a id="a2"></a>**A2** `time_registry` is attendance-only and does not drive the relay.
-- <a id="a3"></a>**A3** The IN/OUT selection is a new resting screen with a selection
+- <a id="a3"></a>**A3** The IN/OUT selection is a new idle screen with a selection
   timeout; the direction is latched only until the card tap completes.
 - <a id="a4"></a>**A4** Attendance events reuse the existing event channel and idempotency.
 - <a id="a5"></a>**A5** "Presence in the local DB = authorised" is sound **because** the
