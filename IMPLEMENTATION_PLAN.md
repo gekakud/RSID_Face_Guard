@@ -486,7 +486,7 @@ with `APPLY_NETWORK_PROFILE = False` on dev machines without `nmcli`
 | Batch | Content | Status |
 |---|---|---|
 | **B0** | [T10](#t10) + [T11](#t11) + [T12](#t12) | **Implemented — awaiting device validation** |
-| B1 | [T1](#t1)a: `session/controller.py`, web UI ported | pending |
+| B1 | [T1](#t1)a: `session/controller.py`, web UI ported | **Implemented — awaiting device validation** |
 | B2 | [T1](#t1)b: freeze notice in `gui_qt` + [T16](#t16) | pending |
 | B3 | [T2](#t2) decision separation | pending |
 | B4 | [T5](#t5)a ack-by-`event_id` | pending |
@@ -513,4 +513,26 @@ with `APPLY_NETWORK_PROFILE = False` on dev machines without `nmcli`
    `1:1 decision: card=… sdk_success=… score=… threshold=400 -> GRANT` and
    `… -> DENY` respectively.
 
-*(Per-batch checklists for B1+ are added when each batch is implemented.)*
+### B1 device checklist
+
+The session state machine was extracted into `session/controller.py` (pure
+Python — no Qt/`rsid_py`) with `gui_web/web_window.py` reduced to view/scheduler
+adapters. `session/tests/test_controller.py` (14 tests) covers the machine
+off-device with a manual-clock scheduler. On the terminal, confirm the ported
+web UI is behaviourally unchanged:
+
+1. **Grant** — tap a registered card with the matching face present → camera
+   view, then "Welcome, `<name>`", then automatic return to idle after the
+   welcome hold. Log shows the `1:1 decision: … -> GRANT` line (unchanged).
+2. **Card mismatch** — registered card, wrong/absent face → a single brief
+   failure screen, then idle; no retry loop, no relay pulse.
+3. **Unregistered card** — tap an unknown card → brief failure only, with **no**
+   camera preview or auth attempt.
+4. **Session timeout / demo mode** — with `AUTH_ONLY_ON_CARD=False`, a tap
+   starts a face-only session that retries on cadence and falls back to idle
+   after `AUTH_SESSION_TIMEOUT_SEC` with no match.
+5. **Init mode + provisioning** — enter init mode → "Init Mode" overlay +
+   camera; present a valid provisioning QR → binding runs once and scanning
+   stops; overlay times out back to idle after `INIT_MODE_DURATION_SEC`.
+
+*(Per-batch checklists for B2+ are added when each batch is implemented.)*

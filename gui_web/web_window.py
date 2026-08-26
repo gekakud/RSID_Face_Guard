@@ -41,11 +41,11 @@ from face_auth import HostModeService
 from hardware.camera_preview import PreviewController
 from provisioning.binding import BindingManager
 from qr_scanner import QRScanner
+from session import SessionController
 
 from gui_qt.display_utils_qt import find_small_display_geometry
 from .frame_server import CameraStreamer, WebServer
 
-from observability import events
 from observability import storage_monitor
 from observability.logging_setup import get_logger
 
@@ -242,12 +242,80 @@ class Bridge(QObject):
         self.tap_detected.emit()
 
 class _SignalBridge(QObject):
-    """Marshals background-thread auth callbacks onto the Qt main thread."""
-    auth_result = Signal(bool, object)  # success, name
+    """Marshals background-thread callbacks onto the Qt main thread."""
     card_detected = Signal(object)      # card_id
     card_rejected = Signal(object)      # card_id (unregistered)
     binding_result = Signal(bool, str)  # success, message (device provisioning)
     device_revoked = Signal()           # server removed this device
+
+class QtScheduler:
+    """Backs session.Scheduler with QTimer + a Qt signal for UI marshalling.
+
+    ``call_later`` / ``call_interval`` return the QTimer as the opaque handle;
+    ``cancel`` stops it. ``post_to_ui`` emits a queued signal so a worker-thread
+    auth result is executed on the Qt main thread.
+    """
+
+    class _Marshaller(QObject):
+        run = Signal(object)  # callable to invoke on the UI thread
+
+    def __init__(self, parent: QObject):
+        self._parent = parent
+        self._marshaller = self._Marshaller()
+        self._marshaller.run.connect(lambda fn: fn())
+
+    def call_later(self, delay_ms, fn):
+        timer = QTimer(self._parent)
+        timer.setSingleShot(True)
+        timer.timeout.connect(fn)
+        timer.start(int(delay_ms))
+        return timer
+
+    def call_interval(self, interval_ms, fn):
+        timer = QTimer(self._parent)
+        timer.timeout.connect(fn)
+        timer.start(int(interval_ms))
+        return timer
+
+    def cancel(self, handle):
+        if handle is not None:
+            handle.stop()
+
+    def post_to_ui(self, fn):
+        self._marshaller.run.emit(fn)
+
+class WebSessionView:
+    """Adapts the page's DeviceUI + status overlay to session.SessionView."""
+
+    def __init__(self, device_ui: "DeviceUI", page):
+        self._device_ui = device_ui
+        self._page = page
+
+    def show_camera(self):
+        self._device_ui.camera()
+
+    def show_success(self, name):
+        if name:
+            self._device_ui.success(str(name))
+        else:
+            self._device_ui.success()
+
+    def show_failure(self, hold_ms):
+        self._device_ui.failed(hold=hold_ms)
+
+    def show_unavailable(self, hold_ms):
+        # No dedicated screen yet (arrives with T9/FR-UI-12); alias to failure
+        # so behaviour is unchanged in B1.
+        self._device_ui.failed(hold=hold_ms)
+
+    def show_idle(self):
+        self._device_ui.screensaver()
+
+    def show_overlay(self, text):
+        self._page.runJavaScript(_status_overlay_show_js(text))
+
+    def hide_overlay(self):
+        self._page.runJavaScript(STATUS_OVERLAY_HIDE_JS)
 
 class GUIWeb(QMainWindow):
     """Main window hosting the web UI in a QWebEngineView."""
@@ -257,13 +325,11 @@ class GUIWeb(QMainWindow):
         self.setWindowTitle(WINDOW_NAME)
 
         self.port = port
-        self.auth_in_progress = False
         self.running = True
         self._page_ready = False
         self._small_display_origin = None
 
         self._bridge = _SignalBridge()
-        self._bridge.auth_result.connect(self._on_auth_complete)
         self._bridge.card_detected.connect(self._on_card_detected)
         self._bridge.card_rejected.connect(self._on_card_rejected)
         self._bridge.binding_result.connect(self._on_binding_result)
@@ -274,19 +340,9 @@ class GUIWeb(QMainWindow):
         self.host_service = HostModeService(port)
         self.host_service.on_reconnect = self.preview_controller.restart
 
-        # Session state (see module docstring).
-        self._session_active = False
-        self._session_card_id = None
-        self.retry_timer = None
-        self.session_timeout_timer = None
-
-        # Init mode: brief technician-QR scanning window shown on startup,
-        # before falling into the normal idle/session flow. See config.py's
-        # INIT_MODE_ENABLED/INIT_MODE_DURATION_SEC.
-        self._init_mode_active = False
-        self.init_mode_timer = None
+        # QR scanner used by the session controller's init-mode window.
         self._qr_scanner = QRScanner()
-        self._qr_scan_timer = None
+        self._scheduler = QtScheduler(self)
 
         # Camera streamer + web/MJPEG server (serve the UI dir over http://).
         # The <img> in demo_ui points straight at /stream.mjpg (see
@@ -314,11 +370,26 @@ class GUIWeb(QMainWindow):
 
         self.device_ui = DeviceUI(page)
         self.js_bridge = Bridge(self.device_ui)
-        self.js_bridge.tap_detected.connect(self._on_user_tapped)
         self.channel = QWebChannel()
         self.channel.registerObject("pyBridge", self.js_bridge)
         page.setWebChannel(self.channel)
         page.loadFinished.connect(self._on_load_finished)
+
+        # Session state machine (extracted, UI-agnostic). The web window is now
+        # only a view adapter + platform glue (T1 / NFR-19).
+        self._session_view = WebSessionView(self.device_ui, page)
+        self.controller = SessionController(
+            host_service=self.host_service,
+            preview_controller=self.preview_controller,
+            view=self._session_view,
+            scheduler=self._scheduler,
+            run_in_thread=lambda fn: threading.Thread(target=fn, daemon=True).start(),
+            qr_scanner=self._qr_scanner,
+            latest_frame=self._latest_frame,
+            on_qr_payload=self._begin_binding,
+            is_page_ready=lambda: self._page_ready,
+        )
+        self.js_bridge.tap_detected.connect(self.controller.on_user_tapped)
 
         # Window placement (same logic as GUIQt).
         if config.RUN_ON_REAL_SCREEN:
@@ -374,9 +445,9 @@ class GUIWeb(QMainWindow):
             "user_count": self.host_service.user_db.count(),
             "camera_available": bool(self.streamer.available),
             "relay_available": bool(config.RUN_WITH_RELAY),
-            "session_active": bool(self._session_active),
-            "init_mode_active": bool(self._init_mode_active),
-            "auth_in_progress": bool(self.auth_in_progress),
+            "session_active": bool(self.controller.session_active),
+            "init_mode_active": bool(self.controller.init_mode_active),
+            "auth_in_progress": bool(self.controller.auth_in_progress),
             "storage": storage_monitor.get_storage_metadata(),
         }
 
@@ -386,7 +457,7 @@ class GUIWeb(QMainWindow):
         text = message if ok else f"Registration failed\n{message}"
         self.view.page().runJavaScript(_status_overlay_show_js(text))
         # Leave a failure up longer -- an installer needs time to read why.
-        QTimer.singleShot(3000 if ok else 6000, self._end_init_mode)
+        QTimer.singleShot(3000 if ok else 6000, self.controller.end_init_mode)
 
     def _on_device_revoked(self):
         """The dashboard removed this device (marshalled onto the Qt thread).
@@ -401,74 +472,23 @@ class GUIWeb(QMainWindow):
         )
 
     # =====================================================
-    # INIT MODE (technician QR scan on startup)
+    # INIT MODE GLUE (scanning/binding owned by SessionController)
     # =====================================================
 
-    def start_init_mode(self):
-        """Show a brief live preview and scan for a technician QR code.
-        Falls back to normal idle behavior if nothing is found in time."""
-        self._init_mode_active = True
-        events.emit("init_mode_entered")
-        self.device_ui.camera()
-        self.view.page().runJavaScript(_status_overlay_show_js("Init Mode"))
-        self.preview_controller.resume()
-
-        self._qr_scan_timer = QTimer(self)
-        self._qr_scan_timer.timeout.connect(self._qr_scan_tick)
-        self._qr_scan_timer.start(200)
-
-        self.init_mode_timer = QTimer(self)
-        self.init_mode_timer.setSingleShot(True)
-        self.init_mode_timer.timeout.connect(self._end_init_mode)
-        self.init_mode_timer.start(int(config.INIT_MODE_DURATION_SEC * 1000))
-
-    def _qr_scan_tick(self):
-        if not self._init_mode_active:
-            return
+    def _latest_frame(self):
+        """Decode the streamer's newest JPEG into an RGB ndarray for the
+        controller's init-mode QR scanner. Returns None if unavailable."""
         jpeg_bytes = self.streamer.latest()
         if jpeg_bytes is None:
-            return
+            return None
         try:
-            frame = np.array(Image.open(io.BytesIO(jpeg_bytes)).convert("RGB"))
+            return np.array(Image.open(io.BytesIO(jpeg_bytes)).convert("RGB"))
         except Exception:
-            return
-        payload = self._qr_scanner.scan(frame)
-        if payload is not None:
-            self._on_qr_detected(payload)
+            return None
 
-    def _end_init_mode(self):
-        if not self._init_mode_active:
-            return
-        self._init_mode_active = False
-        if self.init_mode_timer:
-            self.init_mode_timer.stop()
-            self.init_mode_timer = None
-        if self._qr_scan_timer:
-            self._qr_scan_timer.stop()
-            self._qr_scan_timer = None
-        self.view.page().runJavaScript(STATUS_OVERLAY_HIDE_JS)
-        self.preview_controller.pause()
-        self.device_ui.screensaver()
-        log.info("Init mode ended -- resuming normal operation")
-
-    def _on_qr_detected(self, payload: dict):
-        """A verified provisioning QR was found during init mode -- bind this
-        device to the server named in the payload."""
-        if not self._init_mode_active:
-            return
-        log.info(
-            "Provisioning QR detected during init mode: door_id=%s site_id=%s customer_id=%s",
-            payload.get("door_id"), payload.get("site_id"), payload.get("customer_id"),
-        )
-        # Stop scanning immediately so a second frame can't start a second
-        # registration with the same (single-use) token.
-        if self.init_mode_timer:
-            self.init_mode_timer.stop()
-            self.init_mode_timer = None
-        if self._qr_scan_timer:
-            self._qr_scan_timer.stop()
-            self._qr_scan_timer = None
-
+    def _begin_binding(self, payload: dict):
+        """A verified provisioning QR was decoded -- bind this device to the
+        server named in the payload (the controller already stopped scanning)."""
         self.view.page().runJavaScript(_status_overlay_show_js("Binding to server..."))
         self.binding.bind_async(
             payload,
@@ -547,149 +567,23 @@ class GUIWeb(QMainWindow):
         # (card mode). Either path calls start_session(). On first load,
         # kick off init mode (technician QR scan window) if enabled.
         if config.INIT_MODE_ENABLED:
-            self.start_init_mode()
+            self.controller.start_init_mode()
         else:
             self.device_ui.screensaver()
 
     # =====================================================
-    # SESSION MANAGEMENT
+    # SESSION ENTRY POINTS (state machine owned by SessionController)
     # =====================================================
-
-    def _on_user_tapped(self):
-        if not config.AUTH_ONLY_ON_CARD and not self._init_mode_active:
-            self.start_session()
 
     def _on_card_detected(self, card_id):
         # start_card_monitoring() already filters unregistered cards, so any
         # card_id reaching here is valid and ready for a face-match session.
-        self.start_session(card_id=card_id)
+        self.controller.on_card_detected(card_id)
 
     def _on_card_rejected(self, card_id):
         """An unregistered card was tapped: no session/camera is started --
         just show a brief failure message, then return to the screensaver."""
-        if self._session_active or self._init_mode_active or not self._page_ready:
-            return
-        self.device_ui.failed(hold=config.FAIL_DURATION_MS)
-        QTimer.singleShot(config.FAIL_DURATION_MS, self.device_ui.screensaver)
-
-    def start_session(self, card_id=None):
-        """Begin a bounded auth session: show the live camera state, start the
-        preview, retry face-match on an interval, and time out back to the
-        screensaver if nothing matches."""
-        if self._session_active or not self._page_ready:
-            return
-        self._session_active = True
-        self._session_card_id = card_id
-
-        if card_id is not None:
-            self.host_service.mark_card_session_active()
-
-        self.device_ui.camera()  # switch to the live-camera ("idle") state
-        self.preview_controller.resume()
-
-        self.retry_timer = QTimer(self)
-        self.retry_timer.timeout.connect(self._session_auth_tick)
-        self.retry_timer.start(int(config.AUTH_RETRY_INTERVAL_SEC * 1000))
-        self._session_auth_tick()  # fire the first attempt immediately
-
-        self.session_timeout_timer = QTimer(self)
-        self.session_timeout_timer.setSingleShot(True)
-        self.session_timeout_timer.timeout.connect(self._session_timeout)
-        self.session_timeout_timer.start(int(config.AUTH_SESSION_TIMEOUT_SEC * 1000))
-
-    def _session_auth_tick(self):
-        if not self.auth_in_progress:
-            self.authenticate()
-
-    def _session_timeout(self):
-        if not self._session_active:
-            return
-        log.info("Auth session timed out with no match -- returning to screensaver")
-        self._end_session()
-        self.device_ui.screensaver()
-
-    def _end_session(self):
-        if not self._session_active:
-            return
-        self._session_active = False
-        if self.retry_timer:
-            self.retry_timer.stop()
-            self.retry_timer = None
-        if self.session_timeout_timer:
-            self.session_timeout_timer.stop()
-            self.session_timeout_timer = None
-        self.preview_controller.pause()
-        if self._session_card_id is not None:
-            self.host_service.mark_card_session_done()
-        self._session_card_id = None
-
-    # =====================================================
-    # AUTHENTICATION
-    # =====================================================
-
-    def authenticate(self):
-        if self.auth_in_progress:
-            return
-        self.auth_in_progress = True
-        threading.Thread(target=self._run_authentication, daemon=True).start()
-
-    def _run_authentication(self):
-        self.preview_controller.pause()
-        try:
-            if self._session_card_id is not None:
-                success, name, permission = self.host_service.authenticate_with_card(self._session_card_id)
-            else:
-                success, name, permission = self.host_service.authenticate_face_only()
-            if success:
-                log.info("Access granted: %s (%s)", name, permission)
-            else:
-                log.warning("Access denied: %s", permission)
-            self._bridge.auth_result.emit(success, name)
-        except Exception as e:
-            log.error("Authentication error: %s", e)
-            self._bridge.auth_result.emit(False, None)
-        finally:
-            if self._session_active:
-                self.preview_controller.resume()
-
-    def _on_auth_complete(self, success: bool, name):
-        self.auth_in_progress = False
-        if success:
-            # Stop retrying immediately -- otherwise the still-running
-            # retry_timer/session_timeout_timer fire again during the welcome
-            # hold below (before the delayed _end_session() gets a chance to
-            # stop them), triggering a second, unwanted auth attempt.
-            if self.retry_timer:
-                self.retry_timer.stop()
-                self.retry_timer = None
-            if self.session_timeout_timer:
-                self.session_timeout_timer.stop()
-                self.session_timeout_timer = None
-
-            if name:
-                self.device_ui.success(str(name))
-            else:
-                self.device_ui.success()
-            # The web UI's built-in hold+then auto-dismiss defaults to the
-            # live-camera ("idle") screen, not the resting screensaver, so
-            # explicitly drive it back to the screensaver ourselves once the
-            # welcome hold ends, alongside tearing down the camera session.
-            QTimer.singleShot(config.WELCOME_DURATION_MS, self._end_session)
-            QTimer.singleShot(config.WELCOME_DURATION_MS, self.device_ui.screensaver)
-        elif self._session_card_id is not None:
-            # Card session with a non-matching face: don't keep retrying for
-            # the full session timeout -- a card is either yours or it isn't.
-            # Show the failure once and return to the screensaver immediately.
-            if self.retry_timer:
-                self.retry_timer.stop()
-                self.retry_timer = None
-            if self.session_timeout_timer:
-                self.session_timeout_timer.stop()
-                self.session_timeout_timer = None
-
-            self.device_ui.failed(hold=config.FAIL_DURATION_MS)
-            QTimer.singleShot(config.FAIL_DURATION_MS, self._end_session)
-            QTimer.singleShot(config.FAIL_DURATION_MS, self.device_ui.screensaver)
+        self.controller.on_card_rejected(card_id)
 
     # =====================================================
     # SHUTDOWN
@@ -706,14 +600,7 @@ class GUIWeb(QMainWindow):
             return
         self._cleaned_up = True
         self.running = False
-        if self.retry_timer:
-            self.retry_timer.stop()
-        if self.session_timeout_timer:
-            self.session_timeout_timer.stop()
-        if self.init_mode_timer:
-            self.init_mode_timer.stop()
-        if self._qr_scan_timer:
-            self._qr_scan_timer.stop()
+        self.controller.cancel_all_timers()
         try:
             self.server.stop()
         except Exception:
