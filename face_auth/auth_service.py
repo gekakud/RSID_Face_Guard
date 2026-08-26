@@ -194,7 +194,17 @@ class HostModeService:
                 new_prints, db_faceprints, updated_faceprints
             )
 
-            if match_result.success or (match_result.score is not None and match_result.score >= config.CUSTOM_THRESHOLD):
+            granted = match_result.success or (
+                match_result.score is not None and match_result.score >= config.CUSTOM_THRESHOLD
+            )
+            # FR-FACE-03: the score-fallback value must be visible in the
+            # decision log for every 1:1 decision, grant or deny.
+            log.info(
+                "1:1 decision: card=%s sdk_success=%s score=%s threshold=%s -> %s",
+                card_id, match_result.success, match_result.score,
+                config.CUSTOM_THRESHOLD, "GRANT" if granted else "DENY",
+            )
+            if granted:
                 _open_access_point(card_id)
                 events.emit("access_granted", user=user_info['name'], method="card", card_id=str(card_id))
                 result[0] = (True, user_info['name'], user_info['permission_level'])
@@ -272,10 +282,19 @@ class HostModeService:
                     selected_user_info = user_info
 
             if selected_user_id:
+                # FR-FACE-03: log the winning score against the threshold.
+                log.info(
+                    "1:N decision: user=%s best_score=%s threshold=%s -> GRANT",
+                    selected_user_id, max_score, config.CUSTOM_THRESHOLD,
+                )
                 _open_access_point(selected_user_id)
                 events.emit("access_granted", user=selected_user_info['name'], method="face")
                 result[0] = (True, selected_user_info['name'], selected_user_info['permission_level'])
             else:
+                log.info(
+                    "1:N decision: no user reached threshold=%s -> DENY",
+                    config.CUSTOM_THRESHOLD,
+                )
                 events.emit("access_denied", method="face", reason="no_match")
                 result[0] = (False, None, "No match found")
 

@@ -5,16 +5,19 @@
 | Item | Detail |
 |---|---|
 | Document ID | PLAN-FG-001 |
-| Revision | 1.0 |
+| Revision | 1.1 |
 | Date | 2026-08-26 |
 | Specification | [`SOFTWARE_REQUIREMENTS.md`](SOFTWARE_REQUIREMENTS.md) rev 1.3 |
 | Basis | Static audit of the working tree; every status below carries `file:line` evidence |
 | Scope | Device application **and** the reference server (`server/`) |
+| Delivery model | Small batches (B0..B13, [§3](#3-batches-and-device-validation)); each batch is device-validated by the owner before the next starts |
+| Decision | `gui_qt/` is **frozen**: it receives no new features and is not ported to the shared controller. Web UI is the only maintained front-end |
 
 **How to read this.** [§1](#1-reconciliation-table) states, per requirement, what the
 code does *today*. [§2](#2-task-list) turns every gap into a task, ordered so that
 architectural changes land first and no later task forces a rewrite of an
-earlier one. [§3](#3-test--validation-strategy) is reserved for the test strategy.
+earlier one. [§3](#3-batches-and-device-validation) is the batch schedule and
+per-batch device-validation checklists.
 
 Status legend: **✅ IMPLEMENTED** · **⚠️ PARTIAL** · **❌ MISSING** ·
 **➖ DEPRECATED** (withdrawn in SRS rev 1.2, no work required).
@@ -270,7 +273,7 @@ dependencies are done**; following the order avoids reworking earlier tasks.
 
 ### Phase A — Architecture
 
-#### <a id="t1"></a>T1. Extract a shared `SessionController`
+#### <a id="t1"></a>T1. Extract a shared `SessionController` *(scope reduced: web UI only, `gui_qt` frozen)*
 
 **Why first.** Every behavioural task below touches session logic. While it
 lives twice, each of those tasks costs double and can drift.
@@ -280,15 +283,15 @@ lives twice, each of those tasks costs double and can drift.
 card and tap triggers, result holds, auth dispatch to a worker thread, and the
 idle-screen return. Define a narrow view interface
 (`show_camera / show_success / show_failure / show_idle / show_overlay`) that
-`gui_web` and `gui_qt` implement. Reduce `web_window.py` and
-`main_window_qt.py` to view adapters + platform glue.
+`gui_web` implements. Reduce `web_window.py` to a view adapter + platform
+glue. **`gui_qt` is frozen by decision** (2026-08-26): it keeps its current
+duplicated logic, receives no new features, and is not ported.
 
-**Files.** New `session/`; `gui_web/web_window.py:558-692`;
-`gui_qt/main_window_qt.py:449-484`.
+**Files.** New `session/`; `gui_web/web_window.py:558-692`.
 
-**Accept.** No session/timer logic remains in either GUI module; both GUIs
-drive the same controller; existing behaviour unchanged (FR-SESS-01..08 still
-pass); `web_window.py` materially smaller.
+**Accept.** No session/timer logic remains in `gui_web/web_window.py`; the web
+GUI drives the controller; existing behaviour unchanged (FR-SESS-01..08 still
+pass); `web_window.py` materially smaller. `gui_qt` untouched.
 
 ---
 
@@ -430,17 +433,20 @@ no session can start during init mode.
 
 ### Phase C — Isolated fixes (no refactoring)
 
-#### <a id="t10"></a>T10. Identity file permissions
+#### <a id="t10"></a>T10. Identity file permissions ✅ *(implemented 2026-08-26, batch B0 — pending device validation)*
 `os.chmod(path, 0o600)` inside the atomic write in `provisioning/identity.py:89-96`.
 **Accept.** File mode is `0600` after registration and after rewrite.
+**Done.** Temp file now created `0o600` via `os.open` before content is written; mode re-asserted on the final path after `os.replace`. Verified off-Pi: fresh save → `0600`; rewrite of a pre-existing `0644` file → `0600`.
 
-#### <a id="t11"></a>T11. Validate the QR `command`
+#### <a id="t11"></a>T11. Validate the QR `command` ✅ *(implemented 2026-08-26, batch B0 — pending device validation)*
 Reject envelopes whose `command != "provision_device"`, classified benign, emitting `qr_rejected` (`qr_scanner/qr_scanner.py`).
 **Accept.** A signed envelope with any other command is rejected and logged.
+**Done.** `EXPECTED_COMMAND` check added in `_verify` after the schema check, warning-level (benign per FR-PROV-05). Verified off-Pi with re-signed envelopes: good command accepted; `factory_reset` and missing command rejected; all 62 server tests (incl. QR device-compat round-trips) pass.
 
-#### <a id="t12"></a>T12. Log score and threshold
+#### <a id="t12"></a>T12. Log score and threshold ✅ *(implemented 2026-08-26, batch B0 — pending device validation)*
 Record the score and `CUSTOM_THRESHOLD` on every decision (`face_auth/auth_service.py:197,266-268`).
 **Accept.** Grant and denial log lines both show score vs threshold.
+**Done.** One decision log line per path: `1:1 decision: card=… sdk_success=… score=… threshold=… -> GRANT/DENY` and `1:N decision: …`. Compile-checked only (rsid_py unavailable off-Pi) — device validation confirms.
 
 #### <a id="t13"></a>T13. HTTP error classification
 Distinguish connect error / timeout / permanent 4xx / transient 5xx in `provisioning/client.py:80-92,130-142` and `db/remote_provider.py:65-73`; only transient classes back off.
@@ -468,9 +474,43 @@ Remove the hardcoded `1234` from `demo_ui/app.js:103` and `gui_web/web_window.py
 
 ---
 
-## 3. Test & validation strategy
+## 3. Batches and device validation
 
-*Reserved.* To be produced after the task list is agreed, keyed to the
-verification methods (**T/D/I/A**) in
-[SRS §11](SOFTWARE_REQUIREMENTS.md#11-traceability), with a test case per
-acceptance criterion above.
+Delivery model: each batch is a small, independently revertable change set.
+After every batch the owner validates on the real device using the checklist
+below; the next batch starts only after sign-off. The existing server test
+suite (`server/tests/`, 62 tests) must stay green after every batch — run
+with `APPLY_NETWORK_PROFILE = False` on dev machines without `nmcli`
+([D17](SOFTWARE_REQUIREMENTS.md#d17)).
+
+| Batch | Content | Status |
+|---|---|---|
+| **B0** | [T10](#t10) + [T11](#t11) + [T12](#t12) | **Implemented — awaiting device validation** |
+| B1 | [T1](#t1)a: `session/controller.py`, web UI ported | pending |
+| B2 | [T1](#t1)b: freeze notice in `gui_qt` + [T16](#t16) | pending |
+| B3 | [T2](#t2) decision separation | pending |
+| B4 | [T5](#t5)a ack-by-`event_id` | pending |
+| B5 | [T6](#t6) fail-secure revocation | pending |
+| B6 | [T3](#t3) schema v2 (server, then device) | pending |
+| B7 | [T4](#t4) `device_mode` / `face_policy` | pending |
+| B8 | [T7](#t7) `card_only` | pending |
+| B9 | [T9](#t9) pre-emption + backoff + unavailable screen | pending |
+| B10 | [T5](#t5)b durable attendance queue | pending |
+| B11 | [T8](#t8) server half (attendance intake + journal) | pending |
+| B12 | [T8](#t8) device half (IN/OUT flow) | pending |
+| B13 | [T13](#t13) + [T14](#t14) + [T15](#t15) + [T17](#t17) + [T18](#t18) | pending |
+
+### B0 device checklist
+
+1. **T10** — provision (or re-provision) the terminal, then:
+   `ls -l device_identity.json` → must show `-rw-------`.
+2. **T11** — scan a QR with a non-`provision_device` command → rejected with
+   log line `QR rejected (unsupported command …)` at WARNING; a normal QR
+   still binds. To mint a wrong-command QR, use `other/qr_code_poc/gen_qr_code.py`
+   with the command edited, or skip this step (covered by automated tests
+   off-device).
+3. **T12** — perform one grant and one deny → the log shows
+   `1:1 decision: card=… sdk_success=… score=… threshold=400 -> GRANT` and
+   `… -> DENY` respectively.
+
+*(Per-batch checklists for B1+ are added when each batch is implemented.)*

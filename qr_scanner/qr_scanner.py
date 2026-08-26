@@ -70,6 +70,10 @@ from observability.logging_setup import get_logger
 log = get_logger("qr_scanner")
 
 EXPECTED_SCHEMA = "acme.provisioning-qr.v1"
+# Only device provisioning is accepted in this release (FR-PROV-06): the
+# envelope stays extensible, but no factory-reset/maintenance command is
+# honoured. Must match the issuer side (other/qr_code_poc/qr_common.py).
+EXPECTED_COMMAND = "provision_device"
 
 def _load_public_keys(directory: str) -> dict:
     """Load all "<key_id>.pem" files in directory into {key_id: public_key}."""
@@ -131,6 +135,13 @@ class QRScanner:
                         payload.get("schema"), ctx)
             return False
 
+        # FR-PROV-06: benign rejection -- a validly signed envelope carrying a
+        # command we don't support is a version/feature mismatch, not forgery.
+        if payload.get("command") != EXPECTED_COMMAND:
+            log.warning("QR rejected (unsupported command %r) -- %s",
+                        payload.get("command"), ctx)
+            return False
+
         sig = payload.get("signature")
         if not isinstance(sig, dict) or sig.get("algorithm") != "Ed25519":
             log.error("SECURITY: QR rejected (missing/unsupported signature "
@@ -177,7 +188,7 @@ class QRScanner:
                 return False
             self._seen_nonces.add(nonce)
 
-        log.info("QR signature/expiry/nonce checks passed -- %s", ctx)
+        log.info("QR schema/command/signature/expiry/nonce checks passed -- %s", ctx)
         return True
 
     def scan(self, frame: np.ndarray) -> Optional[dict]:

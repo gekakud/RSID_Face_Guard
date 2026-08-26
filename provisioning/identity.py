@@ -87,13 +87,21 @@ def load() -> Optional[DeviceIdentity]:
 
 
 def save(identity: DeviceIdentity) -> bool:
-    """Atomically persist the identity. Returns False on failure."""
+    """Atomically persist the identity. Returns False on failure.
+
+    The file holds the bearer token, so it is created owner-read/write only
+    (0600) *before* any content is written, and the mode is re-asserted on the
+    final path in case an earlier version left looser permissions (FR-PROV-09,
+    FR-DATA-03).
+    """
     path = identity_path()
     tmp_path = path + ".tmp"
     try:
-        with open(tmp_path, "w", encoding="utf-8") as handle:
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             json.dump(asdict(identity), handle, indent=2)
         os.replace(tmp_path, path)
+        os.chmod(path, 0o600)
         log.info(
             "Device identity saved: device_id=%s door_id=%s server_url=%s",
             identity.device_id, identity.door_id, identity.server_url,
