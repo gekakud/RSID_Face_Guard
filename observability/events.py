@@ -53,7 +53,8 @@ def emit(event_type: str, **fields: Any) -> None:
 
     Args:
         event_type: one of the known type strings (device_boot, access_granted,
-            qr_rejected, ...). Free-form; the server stores whatever it gets.
+            access_output_failed, auth_matched, qr_rejected, ...). Free-form;
+            the server stores whatever it gets.
         **fields: optional extra context (e.g. user="alice", score=471,
             reason="expired"). Kept small -- this is telemetry, not a data dump.
     """

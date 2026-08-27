@@ -68,10 +68,12 @@ class RelayController:
             return
         lgpio.gpio_write(self._handle, self.relay_pin, 1 if self.active_low else 0)
 
-    def open_door(self, seconds: float = 3.0):
+    def open_door(self, seconds: float = 3.0) -> bool:
+        """Pulse the strike open for ``seconds``. Returns True if the pulse
+        completed (or was a no-op SIM pulse), False if the GPIO write failed."""
         if lgpio is None or self._unavailable:
             log.info("[SIM] open_door(%s)", seconds)
-            return
+            return True
 
         if self._handle is None:
             self.initialize()
@@ -80,9 +82,11 @@ class RelayController:
             self._set_on()
             time.sleep(max(0.0, seconds))
             self._set_off()
+            return True
         except Exception as e:
             log.error("Relay open_door failed: %s", e)
             events.emit("hardware_error", where="relay_open", error=str(e))
+            return False
 
 
     def disconnect(self):
@@ -113,11 +117,13 @@ def initialize_relay(relay_pin: int = 18, active_low: bool = True, default_off: 
     _relay.initialize()
 
 
-def open_door(seconds: float = 3.0):
+def open_door(seconds: float = 3.0) -> bool:
+    """Pulse the door strike. Returns True on a completed pulse, False if the
+    relay actuation failed (so callers can emit access_output_failed)."""
     if _relay is None:
         initialize_relay()
     events.emit("relay_opened", seconds=seconds)
-    _relay.open_door(seconds)
+    return _relay.open_door(seconds)
 
 
 def disconnect_relay():

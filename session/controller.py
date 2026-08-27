@@ -19,6 +19,7 @@ thread.
 """
 
 import config
+from observability import events
 from observability.logging_setup import get_logger
 
 log = get_logger("session")
@@ -33,6 +34,7 @@ class SessionController:
         view,
         scheduler,
         run_in_thread,
+        relay=None,
         qr_scanner=None,
         latest_frame=None,
         on_qr_payload=None,
@@ -47,6 +49,10 @@ class SessionController:
             view: a ``SessionView``.
             scheduler: a ``Scheduler``.
             run_in_thread: ``callable(fn)`` running ``fn`` on a daemon worker.
+            relay: optional Access Output Service ``callable() -> bool`` that
+                pulses the door strike and returns whether it opened. ``None``
+                (or ``RUN_WITH_RELAY`` off) means no physical door -- grants
+                still show the welcome screen.
             qr_scanner: optional ``QRScanner`` for init mode.
             latest_frame: optional ``callable() -> np.ndarray | None``.
             on_qr_payload: optional ``callable(payload)`` to perform binding.
@@ -57,6 +63,7 @@ class SessionController:
         self._view = view
         self._sched = scheduler
         self._run_in_thread = run_in_thread
+        self._relay = relay
         self._qr_scanner = qr_scanner
         self._latest_frame = latest_frame
         self._on_qr_payload = on_qr_payload
@@ -168,8 +175,15 @@ class SessionController:
         self._run_in_thread(self._run_authentication)
 
     def _run_authentication(self) -> None:
-        """Runs on a worker thread; marshals the result back via post_to_ui."""
+        """Runs on a worker thread; marshals the result back via post_to_ui.
+
+        On a match the door is actuated here (off the UI thread, since the
+        relay pulse blocks ~3 s). The controller -- not the auth service --
+        owns actuation and emits access_granted only after a successful pulse
+        (T2 / FR-ACCESS); a failed pulse yields access_output_failed.
+        """
         self._preview.pause()
+        method = "card" if self._session_card_id is not None else "face"
         try:
             if self._session_card_id is not None:
                 success, name, permission = self._host.authenticate_with_card(
@@ -177,21 +191,50 @@ class SessionController:
                 )
             else:
                 success, name, permission = self._host.authenticate_face_only()
+
+            pulsed = False
             if success:
-                log.info("Access granted: %s (%s)", name, permission)
+                pulsed = self._open_access_point()
+                if pulsed:
+                    log.info("Access granted: %s (%s)", name, permission)
+                else:
+                    log.error("Access output FAILED after match: %s (%s)", name, permission)
             else:
                 log.warning("Access denied: %s", permission)
-            self._sched.post_to_ui(lambda: self._on_auth_complete(success, name))
+            self._sched.post_to_ui(
+                lambda: self._on_auth_complete(success, pulsed, name, method)
+            )
         except Exception as exc:
             log.error("Authentication error: %s", exc)
-            self._sched.post_to_ui(lambda: self._on_auth_complete(False, None))
+            self._sched.post_to_ui(
+                lambda: self._on_auth_complete(False, False, None, method)
+            )
         finally:
             if self._session_active:
                 self._preview.resume()
 
-    def _on_auth_complete(self, success: bool, name) -> None:
+    def _open_access_point(self) -> bool:
+        """Actuate the door via the injected Access Output Service.
+
+        Returns True when the strike pulsed successfully. When no relay is
+        wired (``relay`` is None / ``RUN_WITH_RELAY`` off) this is a no-op that
+        reports success so demo grants still show the welcome screen.
+        """
+        if self._relay is None:
+            return True
+        try:
+            return bool(self._relay())
+        except Exception as exc:
+            log.error("Access output error: %s", exc)
+            return False
+
+    def _on_auth_complete(self, success: bool, pulsed: bool, name, method) -> None:
         self._auth_in_progress = False
-        if success:
+        if success and pulsed:
+            # Door opened: only now is it a grant (T2 -- access_granted never
+            # precedes actuation).
+            events.emit("access_granted", user=str(name) if name else None,
+                        method=method)
             # Stop retrying immediately so no further attempt fires during the
             # welcome hold (FR-SESS-06).
             self._cancel_session_timers()
@@ -200,6 +243,15 @@ class SessionController:
             # back to idle explicitly (FR-UI-03) as the session is torn down.
             self._sched.call_later(config.WELCOME_DURATION_MS, self._end_session)
             self._sched.call_later(config.WELCOME_DURATION_MS, self._view.show_idle)
+        elif success and not pulsed:
+            # Matched but the door would not open: fail secure. Distinct from a
+            # denial -- surfaced as access_output_failed, shown as a failure.
+            events.emit("access_output_failed", user=str(name) if name else None,
+                        method=method)
+            self._cancel_session_timers()
+            self._view.show_failure(hold_ms=config.FAIL_DURATION_MS)
+            self._sched.call_later(config.FAIL_DURATION_MS, self._end_session)
+            self._sched.call_later(config.FAIL_DURATION_MS, self._view.show_idle)
         elif self._session_card_id is not None:
             # Card session, non-matching face: show denial once, return to idle
             # -- a card is either yours or it isn't (BR-05).
@@ -224,8 +276,6 @@ class SessionController:
         normal operation. ``end_init_mode`` is idempotent, so an enter-then-end
         with no user-visible lingering overlay is safe.
         """
-        from observability import events
-
         self._init_mode_active = True
         events.emit("init_mode_entered")
 

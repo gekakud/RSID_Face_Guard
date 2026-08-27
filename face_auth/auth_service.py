@@ -19,22 +19,12 @@ from db import UserDatabase
 from hardware.card_reader_api import (
     send_w32, initialize_wiegand_tx, disconnect_card_reader, close_wiegand_tx, get_card_id,
 )
-from hardware.relay_api import open_door, disconnect_relay
+from hardware.relay_api import disconnect_relay
 
 from observability import events
 from observability.logging_setup import get_logger
 
 log = get_logger("auth")
-
-def _open_access_point(identifier=None):
-    """Open the door/access-point on successful auth.
-
-    Currently relay-only (send_w32/Wiegand echo-back to an external panel
-    is unused here for now). This is the single point to wire up a future
-    pluggable Wiegand/relay door-opening API.
-    """
-    if config.RUN_WITH_RELAY:
-        threading.Thread(target=open_door, args=(3.0,), daemon=True).start()
 
 class HostModeService:
     """Business logic for host mode authentication."""
@@ -205,8 +195,11 @@ class HostModeService:
                 config.CUSTOM_THRESHOLD, "GRANT" if granted else "DENY",
             )
             if granted:
-                _open_access_point(card_id)
-                events.emit("access_granted", user=user_info['name'], method="card", card_id=str(card_id))
+                # Decision only (T2): recognition emits a low-level breadcrumb;
+                # the controller actuates the door and emits access_granted
+                # only after a successful relay pulse.
+                events.emit("auth_matched", user=user_info['name'], method="card",
+                            card_id=str(card_id), score=match_result.score)
                 result[0] = (True, user_info['name'], user_info['permission_level'])
             else:
                 events.emit("access_denied", method="card", card_id=str(card_id), reason="face_mismatch")
@@ -287,8 +280,8 @@ class HostModeService:
                     "1:N decision: user=%s best_score=%s threshold=%s -> GRANT",
                     selected_user_id, max_score, config.CUSTOM_THRESHOLD,
                 )
-                _open_access_point(selected_user_id)
-                events.emit("access_granted", user=selected_user_info['name'], method="face")
+                events.emit("auth_matched", user=selected_user_info['name'],
+                            method="face", score=max_score)
                 result[0] = (True, selected_user_info['name'], selected_user_info['permission_level'])
             else:
                 log.info(

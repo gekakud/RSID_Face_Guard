@@ -104,7 +104,7 @@ Active requirements: 149. **Compliance today: 108/149 = 72 %.**
 | [FR-FACE-01](SOFTWARE_REQUIREMENTS.md#fr-face-01) | ✅ | `face_auth/auth_service.py:71-77` connect; 1:1 `:160`, 1:N `:219` |
 | [FR-FACE-02](SOFTWARE_REQUIREMENTS.md#fr-face-02) | ✅ | `face_auth/auth_service.py:170,184-195` |
 | [FR-FACE-03](SOFTWARE_REQUIREMENTS.md#fr-face-03) | ⚠️ | Rule correct (`:197,266-268`) but threshold/score **never logged** → **T12** |
-| [FR-FACE-04](SOFTWARE_REQUIREMENTS.md#fr-face-04) | ⚠️ | `auth_service.py:29-37,198,275` calls the relay **directly** from the match callback — no distinct decision stage → **T2** |
+| [FR-FACE-04](SOFTWARE_REQUIREMENTS.md#fr-face-04) | ✅ | **T2 done.** Decision/actuation split: `auth_service.py` emits `auth_matched` only (`:198-202,282-284`) and has no relay import (`:22`); the controller actuates (`session/controller.py:209-222`) |
 | [FR-FACE-05](SOFTWARE_REQUIREMENTS.md#fr-face-05) | ✅ | `:179-181`, `:186-188`, `:202`, `:279` distinct reasons |
 | [FR-FACE-06](SOFTWARE_REQUIREMENTS.md#fr-face-06) | ⚠️ | Backoff + reconnect + event exist (`:212-215,289-292`) but the gate is only on the face-only path (`:229-232`), **not** the card path; no UI feedback → **T9** |
 | [FR-FACE-07](SOFTWARE_REQUIREMENTS.md#fr-face-07) | ✅ | All exception paths return deny (`:210-216,287-293`) |
@@ -124,7 +124,7 @@ All ✅. `hardware/card_reader_api.py:35-76` backend selection; `face_auth/auth_
 | [FR-OUT-03](SOFTWARE_REQUIREMENTS.md#fr-out-03) | ✅ | `relay_api.py:119` |
 | [FR-OUT-04](SOFTWARE_REQUIREMENTS.md#fr-out-04) | ✅ | `auth_service.py:79-84` non-fatal |
 | [FR-OUT-05](SOFTWARE_REQUIREMENTS.md#fr-out-05) | ✅ | `relay_api.py:49-59` degrades gracefully |
-| [FR-OUT-06](SOFTWARE_REQUIREMENTS.md#fr-out-06) | ❌ | No `access_output_failed`; worse, `access_granted` is emitted **before** the relay result is known (`auth_service.py:198-199`) → **T2** |
+| [FR-OUT-06](SOFTWARE_REQUIREMENTS.md#fr-out-06) | ✅ | **T2 done.** `access_granted` is emitted only after a successful pulse (`session/controller.py:226-230`); a failed/raising pulse yields the new `access_output_failed` (`:239-243`), distinct from `access_denied` |
 
 ### 1.8 User DB & sync — FR-DB
 
@@ -313,6 +313,27 @@ after** a successful pulse; on failure emit the new `access_output_failed`.
 **Accept.** `auth_service` contains no relay import or call; `access_granted`
 never precedes actuation; relay failure after approval yields
 `access_output_failed`, distinct from `access_denied`.
+
+**Done (B3).** `auth_service.py:22` imports only `disconnect_relay` (no
+`open_door`); the match branches emit `auth_matched` (`:198-202` card, `:282-284`
+face) and return the result tuple — no actuation. The controller injects an
+Access Output Service callable (`session/controller.py:37,66`), pulses it off
+the UI thread (`_open_access_point`, `:209-222`), and in `_on_auth_complete`
+(`:224-247`) emits `access_granted` only on a successful pulse or
+`access_output_failed` (fail-secure failure screen) otherwise. `relay_api.open_door`
+now returns `bool` (`hardware/relay_api.py:71-89,120-126`); SIM/unavailable → `True`.
+`web_window.py:387,490-496` injects `_pulse_door` gated by `RUN_WITH_RELAY`
+(→ `None` off, so demo grants still succeed). Granted timeline:
+`auth_matched` → `relay_opened` → `access_granted`. Covered off-device by 5 new
+`session/tests/test_controller.py` cases (pulse-success order, pulse-failure,
+relay-exception, no-relay grant, denial-no-pulse); session suite **23 passed**,
+server green-gate **62 passed**.
+
+**Downstream note.** `access_granted` is now emitted *post-pulse* by the
+controller (not by `auth_service`). Consumers added later — T8 attendance
+(B11/B12) and any grant-driven telemetry (B10) — must key off the controller's
+`access_granted`/`access_output_failed`, and treat `auth_matched` as a decision
+breadcrumb only.
 
 ---
 
@@ -505,7 +526,7 @@ with `APPLY_NETWORK_PROFILE = False` on dev machines without `nmcli`
 | **B0** | [T10](#t10) + [T11](#t11) + [T12](#t12) | **Implemented — awaiting device validation** |
 | B1 | [T1](#t1)a: `session/controller.py`, web UI ported | **Implemented — awaiting device validation** |
 | B2 | [T1](#t1)b: freeze notice in `gui_qt` + [T16](#t16) | **Implemented — awaiting device validation** |
-| B3 | [T2](#t2) decision separation | pending |
+| B3 | [T2](#t2) decision separation | **Implemented — awaiting device validation** |
 | B4 | [T5](#t5)a ack-by-`event_id` | pending |
 | B5 | [T6](#t6) fail-secure revocation | pending |
 | B6 | [T3](#t3) schema v2 (server, then device) | pending |
@@ -571,4 +592,25 @@ now 18 tests; server green-gate 62 passed. On the terminal confirm:
 4. **`gui_qt` unchanged** — `main_qt.py` still launches the frozen Qt harness
    with its prior behaviour; only the freeze banner is new.
 
-*(Per-batch checklists for B3+ are added when each batch is implemented.)*
+### B3 device checklist
+
+Access **decision** (recognition) is now separated from door **actuation** (T2):
+`face_auth/auth_service.py` decides and emits `auth_matched` only; the
+`SessionController` pulses the relay and emits `access_granted` **only after** a
+successful pulse, or `access_output_failed` (fail-secure) if the strike will not
+open. `session/tests/` is now 23 tests; server green-gate 62 passed. On the
+terminal (with `RUN_WITH_RELAY=True` and a strike wired) confirm:
+
+1. **Grant opens the door before "Welcome"** — tap a registered card with the
+   matching face → the strike pulses, *then* the welcome screen shows. The event
+   log order is `auth_matched` → `relay_opened` → `access_granted` (never
+   `access_granted` before the pulse).
+2. **Relay failure fails secure** — with the strike disconnected / forced to
+   fault, repeat a matching grant → a **failure** screen (not welcome), an
+   `access_output_failed` event, and **no** `access_granted`.
+3. **Denial never pulses** — registered card, wrong/absent face → failure
+   screen, `access_denied`, and the relay does **not** pulse (no `relay_opened`).
+4. **Relay-off demo still grants** — set `RUN_WITH_RELAY=False` → a match shows
+   "Welcome" and emits `access_granted` with no physical pulse.
+
+*(Per-batch checklists for B4+ are added when each batch is implemented.)*

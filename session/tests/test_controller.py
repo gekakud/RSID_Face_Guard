@@ -6,7 +6,7 @@ and timeouts deterministically (see conftest.py). These lock in the FR-SESS-*
 """
 
 import config
-from session.tests.conftest import FakeHost
+from session.tests.conftest import FakeHost, FakeRelay
 
 
 # --------------------------------------------------------------------------- #
@@ -281,4 +281,94 @@ def test_start_init_mode_when_already_active_re_enters(make_controller, sched, v
     c.start_init_mode()
     assert c.init_mode_active is True
     assert [e["type"] for e in ev.snapshot()].count("init_mode_entered") == 2
+
+
+# --------------------------------------------------------------------------- #
+# T2 / B3 -- access decision separated from door actuation
+# --------------------------------------------------------------------------- #
+
+def test_grant_pulses_relay_then_emits_access_granted(make_controller, sched, view, host):
+    # The controller -- not the auth service -- opens the door, and
+    # access_granted is emitted only AFTER a successful pulse.
+    from observability import events as ev
+    ev.clear()
+    relay = FakeRelay(opens=True)
+
+    c = make_controller(relay=relay, WELCOME_DURATION_MS=3000)
+    c.on_card_detected("card-1")
+
+    assert relay.pulses == 1
+    types = [e["type"] for e in ev.snapshot()]
+    assert "access_granted" in types
+    assert ("success", "Alice") in view.calls
+    # access_granted is a controller event; auth_service no longer emits it
+    # (auth_matched is emitted inside the fake-free real service, not here).
+    granted = next(e for e in ev.snapshot() if e["type"] == "access_granted")
+    assert granted["method"] == "card"
+
+
+def test_relay_failure_after_match_is_access_output_failed_not_granted(make_controller, sched, view, host):
+    # Matched, but the door would not open -> fail secure: a distinct
+    # access_output_failed event, a failure screen, and NO access_granted.
+    from observability import events as ev
+    ev.clear()
+    relay = FakeRelay(opens=False)
+
+    c = make_controller(relay=relay, FAIL_DURATION_MS=2000)
+    c.on_card_detected("card-1")
+
+    assert relay.pulses == 1
+    types = [e["type"] for e in ev.snapshot()]
+    assert "access_output_failed" in types
+    assert "access_granted" not in types
+    assert ("failure", 2000) in view.calls
+    assert ("success", "Alice") not in view.calls
+
+    sched.advance(2000)
+    assert view.calls[-1] == ("idle",)
+
+
+def test_relay_exception_is_treated_as_output_failure(make_controller, sched, view, host):
+    from observability import events as ev
+    ev.clear()
+    relay = FakeRelay(raises=True)
+
+    c = make_controller(relay=relay, FAIL_DURATION_MS=2000)
+    c.on_card_detected("card-1")
+
+    assert relay.pulses == 1
+    types = [e["type"] for e in ev.snapshot()]
+    assert "access_output_failed" in types
+    assert "access_granted" not in types
+    assert ("failure", 2000) in view.calls
+
+
+def test_no_relay_wired_still_grants(make_controller, sched, view, host):
+    # RUN_WITH_RELAY off / no relay injected: a match still shows the welcome
+    # screen and emits access_granted (demo / no-door deployments).
+    from observability import events as ev
+    ev.clear()
+
+    c = make_controller(relay=None, WELCOME_DURATION_MS=3000)
+    c.on_card_detected("card-1")
+
+    types = [e["type"] for e in ev.snapshot()]
+    assert "access_granted" in types
+    assert ("success", "Alice") in view.calls
+
+
+def test_denied_face_never_pulses_relay(make_controller, sched, view):
+    from observability import events as ev
+    ev.clear()
+    relay = FakeRelay(opens=True)
+    host = FakeHost(result=(False, None, "no_match"))
+
+    c = make_controller(host_service=host, relay=relay, FAIL_DURATION_MS=2000)
+    c.on_card_detected("card-1")
+
+    assert relay.pulses == 0
+    types = [e["type"] for e in ev.snapshot()]
+    assert "access_granted" not in types
+    assert "access_output_failed" not in types
+    assert ("failure", 2000) in view.calls
 

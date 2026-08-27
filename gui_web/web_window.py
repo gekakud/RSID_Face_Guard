@@ -384,6 +384,7 @@ class GUIWeb(QMainWindow):
             view=self._session_view,
             scheduler=self._scheduler,
             run_in_thread=lambda fn: threading.Thread(target=fn, daemon=True).start(),
+            relay=self._pulse_door if config.RUN_WITH_RELAY else None,
             qr_scanner=self._qr_scanner,
             latest_frame=self._latest_frame,
             on_qr_payload=self._begin_binding,
@@ -485,6 +486,14 @@ class GUIWeb(QMainWindow):
             return np.array(Image.open(io.BytesIO(jpeg_bytes)).convert("RGB"))
         except Exception:
             return None
+
+    def _pulse_door(self) -> bool:
+        """Access Output Service for the controller: pulse the door strike and
+        report whether it opened. Runs on the controller's auth worker thread
+        (the ~3 s pulse must never block the UI). ``open_door`` returns False
+        on a relay failure so the controller can emit access_output_failed."""
+        from hardware.relay_api import open_door
+        return open_door(3.0)
 
     def _begin_binding(self, payload: dict):
         """A verified provisioning QR was decoded -- bind this device to the

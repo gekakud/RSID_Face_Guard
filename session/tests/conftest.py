@@ -172,6 +172,22 @@ class FakeHost:
         self.session_done_marks += 1
 
 
+class FakeRelay:
+    """Scriptable Access Output Service. Records pulses; ``opens`` controls
+    whether each pulse reports success. ``raises`` forces the except-path."""
+
+    def __init__(self, opens=True, raises=False):
+        self.opens = opens
+        self.raises = raises
+        self.pulses = 0
+
+    def __call__(self):
+        self.pulses += 1
+        if self.raises:
+            raise RuntimeError("relay boom")
+        return self.opens
+
+
 class FakeQRScanner:
     """Yields ``payload`` once, then None (so a second frame decodes nothing)."""
 
@@ -215,7 +231,7 @@ def make_controller(sched, view, preview, host):
     created = []
 
     def _make(host_service=None, page_ready=True, qr_payload=None,
-              frame=object(), on_qr_payload=None, **config_overrides):
+              frame=object(), on_qr_payload=None, relay=None, **config_overrides):
         saved = {k: getattr(config, k) for k in config_overrides}
         for k, v in config_overrides.items():
             setattr(config, k, v)
@@ -227,6 +243,7 @@ def make_controller(sched, view, preview, host):
             view=view,
             scheduler=sched,
             run_in_thread=sched.run_in_thread,
+            relay=relay,
             qr_scanner=FakeQRScanner(qr_payload),
             latest_frame=lambda: frame,
             on_qr_payload=on_qr_payload,
