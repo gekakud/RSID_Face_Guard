@@ -127,3 +127,50 @@ def test_no_events_key_is_harmless(client, qr):
     )
     assert resp.status_code == 200
     assert client.get(f"/devices/{device_id}/events").json() == []
+
+
+def test_clear_events_removes_the_log(client, qr):
+    device_id, token = _register(client, qr)
+    _post_status(client, device_id, token, [
+        _event("access_granted", user="alice"),
+        _event("access_denied", reason="card_unregistered", card_id="2587154354"),
+        _event("device_boot"),
+    ])
+    assert len(client.get(f"/devices/{device_id}/events").json()) == 3
+
+    resp = client.delete(f"/devices/{device_id}/events")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["device_id"] == device_id
+    assert body["deleted"] == 3
+
+    # Log is now empty, but the device row itself survives.
+    assert client.get(f"/devices/{device_id}/events").json() == []
+    assert client.get(f"/devices/{device_id}").status_code == 200
+
+
+def test_clear_events_is_idempotent(client, qr):
+    device_id, token = _register(client, qr)
+    # Clearing an already-empty log succeeds and reports zero removed.
+    resp = client.delete(f"/devices/{device_id}/events")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["deleted"] == 0
+
+
+def test_clear_events_unknown_device_404(client):
+    resp = client.delete("/devices/does-not-exist/events")
+    assert resp.status_code == 404
+
+
+def test_clear_events_only_affects_target_device(client, qr):
+    dev_a, tok_a = _register(client, qr)
+    dev_b, tok_b = _register(client, qr)
+    _post_status(client, dev_a, tok_a, [_event("access_granted")])
+    _post_status(client, dev_b, tok_b, [_event("access_granted"), _event("device_boot")])
+
+    client.delete(f"/devices/{dev_a}/events")
+
+    assert client.get(f"/devices/{dev_a}/events").json() == []
+    # Device B's log is untouched.
+    assert len(client.get(f"/devices/{dev_b}/events").json()) == 2

@@ -1020,7 +1020,7 @@ adding a field cannot stop an already-bound terminal from starting.
 | `init_mode_entered` | Provisioning scan window opened |
 | `qr_accepted` / `qr_rejected` | QR verification outcome |
 | `access_granted` | Door opened after a successful decision |
-| `access_denied` | Denial, with reason (`extraction_failed`, `no_faceprints_on_file`, `face_mismatch`) |
+| `access_denied` | Denial, with reason (`face_extraction_failed`, `no_faceprints_on_file`, `face_mismatch`) |
 | `card_unknown` | Card absent from the local DB |
 | `relay_opened` | Relay actuated |
 | `access_output_failed` | Decision was approved but the output could not be actuated ([FR-OUT-06](#fr-out-06)) — distinct from a denial |

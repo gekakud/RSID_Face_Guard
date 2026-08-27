@@ -226,7 +226,7 @@ class HostModeService:
         def on_fp_auth_result(status, new_prints):
             if status != rsid_py.AuthenticateStatus.Success or not new_prints:
                 events.emit("access_denied", method="card", card_id=str(card_id),
-                            reason="extraction_failed", status=str(status))
+                            reason="face_extraction_failed", status=str(status))
                 result[0] = (False, None, f"Face extraction failed: {status}")
                 return
 
@@ -302,7 +302,7 @@ class HostModeService:
         def on_fp_auth_result(status, new_prints):
             if status != rsid_py.AuthenticateStatus.Success or not new_prints:
                 events.emit("access_denied", method="face",
-                            reason="extraction_failed", status=str(status))
+                            reason="face_extraction_failed", status=str(status))
                 result[0] = (False, None, f"Face extraction failed: {status}")
                 return
 
@@ -405,6 +405,15 @@ class HostModeService:
 
                         if not self.card_is_registered(card_id):
                             log.warning("Card %s not registered -- ignoring", card_id)
+                            # Audit telemetry: an unknown badge presented at the
+                            # door is a real access attempt. Emitted here (once
+                            # per de-dupe window, since the cooldown check above
+                            # already dropped rapid repeats of the same card) so
+                            # the same badge held on the reader can't flood the
+                            # bounded event buffer during an outage.
+                            events.emit("access_denied", method="card",
+                                        card_id=str(card_id),
+                                        reason="card_unregistered")
                             last_card_id = card_id
                             last_read_time = current_time
                             if on_card_rejected:

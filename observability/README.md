@@ -149,7 +149,7 @@ delivered but whose response was lost (and therefore resent) never duplicates.
 |---|---|
 | `device_boot` | `main_qt.py` / `main_web.py` `main()` |
 | `device_shutdown` | `provisioning/binding.py` `shutdown()` |
-| `access_granted` / `access_denied` | `face_auth/auth_service.py` — `access_denied` carries a `reason`: `face_mismatch`, `no_match`, `extraction_failed`, or `no_faceprints_on_file` |
+| `access_granted` / `access_denied` | `face_auth/auth_service.py` — `access_denied` carries a `reason`: `face_mismatch`, `no_match`, `face_extraction_failed`, or `no_faceprints_on_file` |
 | `card_unknown` | `face_auth/auth_service.py` |
 | `hardware_error` | `face_auth/auth_service.py` (`authenticator_connect`, `wiegand_tx_init`, `authenticate_face_only`, `authenticate_with_card`, `card_monitor`), `hardware/relay_api.py` (`relay_init`, `relay_open`), `hardware/camera_preview.py` (`preview_frame`, `preview_restart`, `preview_resume`), `card_backends_impl/gwiot_hid_card_reader.py` (`gwiot_reader`), `qr_scanner/qr_scanner.py` (`qr_scanner`), `observability/storage_monitor.py` (`storage_monitor`), `main_qt.py` / `main_web.py` `main()` (`boot_device_discovery`, `boot_device_config`, `boot_card_reader`, `boot_relay` — best-effort only: emitted before any heartbeat thread/BindingManager exists, so these never reach the server the boot cycle they fire in, but still land in the local log) — every occurrence carries a `where` field identifying the failure site plus an `error` string |
 | `relay_opened` | `hardware/relay_api.py` `open_door()` |

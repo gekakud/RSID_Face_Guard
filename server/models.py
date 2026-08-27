@@ -168,6 +168,12 @@ class DeleteDeviceResponse(BaseModel):
     state: str          # "suspended" (awaiting the device to acknowledge)
 
 
+class ClearEventsResponse(BaseModel):
+    ok: bool = True
+    device_id: str
+    deleted: int        # number of event rows removed
+
+
 class PendingToken(BaseModel):
     token: str
     customer_id: str

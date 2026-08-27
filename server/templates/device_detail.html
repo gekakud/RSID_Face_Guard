@@ -107,6 +107,11 @@
         <option value="init_mode_entered">init_mode_entered</option>
       </select>
       <span id="event-count" class="text-xs text-slate-600"></span>
+      <button id="clear-events-btn" type="button"
+              class="ml-auto rounded-md border border-slate-700 bg-slate-800 px-3 py-1 text-xs text-slate-300 transition-colors hover:border-red-500/50 hover:text-red-400">
+        Clear log
+      </button>
+      <span id="clear-events-status" class="text-xs text-slate-600"></span>
     </div>
     <ol id="event-log" class="text-sm">
       <li class="py-2 text-sm text-slate-600">Loading events…</li>
@@ -203,6 +208,34 @@
     filterEl.addEventListener("change", load);
     load();
     setInterval(load, 5000);  // same cadence as the dashboard
+
+    const clearBtn = document.getElementById("clear-events-btn");
+    const clearStatus = document.getElementById("clear-events-status");
+    clearBtn.addEventListener("click", function () {
+      if (!confirm("Clear the entire event log for this device? This cannot be undone.")) {
+        return;
+      }
+      clearBtn.disabled = true;
+      clearStatus.textContent = "Clearing…";
+      clearStatus.className = "text-xs text-slate-400";
+      fetch("/devices/" + encodeURIComponent(deviceId) + "/events", { method: "DELETE" })
+        .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
+        .then(function (result) {
+          if (result.ok) {
+            clearStatus.textContent = "Cleared " + result.body.deleted + " event(s).";
+            clearStatus.className = "text-xs text-emerald-400";
+            load();  // refresh immediately
+          } else {
+            clearStatus.textContent = "Failed: " + (result.body.detail || "unknown error");
+            clearStatus.className = "text-xs text-red-400";
+          }
+        })
+        .catch(function () {
+          clearStatus.textContent = "Failed (network error).";
+          clearStatus.className = "text-xs text-red-400";
+        })
+        .finally(function () { clearBtn.disabled = false; });
+    });
 
     const fileInput = document.getElementById("users-file");
     const uploadBtn = document.getElementById("users-upload-btn");

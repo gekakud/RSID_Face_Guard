@@ -717,6 +717,34 @@ def list_device_events(
         for r in rows
     ]
 
+
+@app.delete(
+    "/devices/{device_id}/events",
+    response_model=models.ClearEventsResponse,
+    dependencies=[Depends(require_admin)],
+)
+def clear_device_events(
+    device_id: str, conn: sqlite3.Connection = Depends(db.get_db)
+):
+    """Clear this device's stored event log.
+
+    Removes only the `events` rows for this device -- the device row, its
+    status history, and its assigned users are left untouched. Idempotent:
+    clearing an already-empty log returns deleted=0. Because ingestion is keyed
+    by device-generated event_id, cleared events are not re-created unless the
+    device actually resends them on a later heartbeat.
+    """
+    if conn.execute(
+        "SELECT 1 FROM devices WHERE device_id = ?", (device_id,)
+    ).fetchone() is None:
+        raise HTTPException(status_code=404, detail="Unknown device")
+
+    cur = conn.execute("DELETE FROM events WHERE device_id = ?", (device_id,))
+    conn.commit()
+    return models.ClearEventsResponse(
+        ok=True, device_id=device_id, deleted=cur.rowcount
+    )
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True, "server_time": timeutil.now_ts()}
