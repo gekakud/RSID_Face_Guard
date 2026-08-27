@@ -123,17 +123,49 @@ class BindingManager:
         self._heartbeat.start()
 
     def _handle_revoked(self) -> None:
-        """The server removed this device: drop the identity and go unbound.
+        """Fail-secure revocation (FR-HB-10). The server removed this device, so
+        we tear the binding down and hand off to the GUI to return to init mode.
 
-        Runs on the heartbeat thread. We delete the on-disk identity so a reboot
-        won't silently rebind, forget it in memory, and let the GUI know so it
-        can return to the enroll screen. The heartbeat worker stops itself after
-        this returns. Door access from the local face DB is unaffected.
+        Runs on the heartbeat thread. The order is deliberate and must not change:
+
+          1. Emit ``device_revoked`` and *flush* it (plus any still-buffered
+             events) to the server while the credential is STILL valid --
+             ``_flush_events`` early-returns once ``self.identity`` is None, so
+             this has to happen before step 3.
+          2. Stop the bounded-device services (this heartbeat worker). We are
+             running on that worker's own thread, so we only drop the reference
+             and let the loop return; joining ourselves would deadlock.
+          3. Delete the on-disk identity so a reboot can't silently rebind, and
+             forget it in memory.
+          4. Notify the GUI (marshalled to the UI thread by the caller), which
+             wipes the local user DB incl. faceprints and re-enters init mode --
+             the exact same "first start, no identity" path used at boot.
+
+        Every step is defensive: revocation must complete even if the network,
+        disk, or UI callback misbehaves. This runs on the heartbeat thread and
+        must never raise back into the worker loop.
         """
-        log.warning("Device removed on the server -- dropping identity, going unbound")
-        identity_store.clear()
-        self.identity = None
+        log.warning("Device revoked on the server -- fail-secure teardown, returning to init mode")
+
+        # 1. Best-effort final notification while the token is still valid.
+        try:
+            events.emit("device_revoked")
+            self._flush_events()
+        except Exception as exc:
+            log.error("Revoke flush failed (ignored): %s", exc)
+
+        # 2. Stop bounded-device services. We are on the heartbeat thread itself,
+        #    so just drop the reference; the loop returns after we do.
         self._heartbeat = None
+
+        # 3. Destroy the credential.
+        try:
+            identity_store.clear()
+        except Exception as exc:
+            log.error("Clearing identity failed (ignored): %s", exc)
+        self.identity = None
+
+        # 4. Hand off to the GUI: wipe local user data + re-enter init mode.
         if self._on_revoked_ui is not None:
             try:
                 self._on_revoked_ui()

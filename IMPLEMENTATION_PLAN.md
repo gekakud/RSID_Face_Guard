@@ -56,7 +56,7 @@ Active requirements: 149. **Compliance today: 108/149 = 72 %.**
 | ID | Status | Evidence / gap |
 |---|---|---|
 | [FR-STATE-01](SOFTWARE_REQUIREMENTS.md#fr-state-01) | ✅ | `provisioning/binding.py:44-61` `start_if_bound()` resumes from persisted identity |
-| [FR-STATE-02](SOFTWARE_REQUIREMENTS.md#fr-state-02) | ⚠️ | Deny-all in `revoked` not implemented — see [FR-HB-10](#fr-hb-10-row) → **T6** |
+| [FR-STATE-02](SOFTWARE_REQUIREMENTS.md#fr-state-02) | ✅ | Revocation resets to init mode in-process (no identity + init active = deny-all) — see [FR-HB-10](#fr-hb-10-row) → **T6** |
 | [FR-STATE-03](SOFTWARE_REQUIREMENTS.md#fr-state-03) | ✅ | Session guarded by `_session_active` / `auth_in_progress` (`gui_web/web_window.py:579,600-602`) |
 | [FR-STATE-04](SOFTWARE_REQUIREMENTS.md#fr-state-04) | ✅ | Full flow runs from local cache; no server call on the door path |
 | [FR-STATE-05](SOFTWARE_REQUIREMENTS.md#fr-state-05) | ✅ | `db/user_database.py:148-150` in-memory cache lookup |
@@ -167,7 +167,7 @@ All ✅. `hardware/card_reader_api.py:35-76` backend selection; `face_auth/auth_
 | [FR-HB-01](SOFTWARE_REQUIREMENTS.md#fr-hb-01)..[04](SOFTWARE_REQUIREMENTS.md#fr-hb-04) | ✅ | `provisioning/heartbeat.py:53-59,77-97`; `observability/events.py:43-73` |
 | [FR-HB-05](SOFTWARE_REQUIREMENTS.md#fr-hb-05) | ✅ | Ack **by `event_id`**, never by position (`events.ack(event_ids)` `events.py:87-103`; `heartbeat.py:119`, `binding.py:181`) — **B4/T5a** |
 | [FR-HB-06](SOFTWARE_REQUIREMENTS.md#fr-hb-06)..[09](SOFTWARE_REQUIREMENTS.md#fr-hb-09) | ✅ | uuid4 `:62`; cap 200 `:41-44`; backoff `heartbeat.py:134`; shutdown flush `binding.py:148-183` |
-| [FR-HB-10](SOFTWARE_REQUIREMENTS.md#fr-hb-10) <a id="fr-hb-10-row"></a> | ❌ | On 410 the code deletes the identity and shows a message (`binding.py:125-141`, `web_window.py:391-401`). **No** `device_revoked`, **no** flush, **no** DB purge, **no** deny-all, **no** self-restart → **T6** |
+| [FR-HB-10](SOFTWARE_REQUIREMENTS.md#fr-hb-10) <a id="fr-hb-10-row"></a> | ✅ | On 410: emit `device_revoked` + flush while bound → stop heartbeat/sync → delete identity → purge user DB incl. faceprints → in-process return to init mode (deny-all). `binding.py` `_handle_revoked`, `web_window.py` `_on_device_revoked`. Server-side revoke-ack out of scope → **T6** |
 
 ### 1.12 Logging & storage — FR-LOG
 
@@ -208,7 +208,7 @@ All ✅. `hardware/camera_preview.py:24,152-177`; `gui_web/frame_server.py:63-14
 | ID | Status | Evidence / gap |
 |---|---|---|
 | [FR-DATA-01](SOFTWARE_REQUIREMENTS.md#fr-data-01) | ⚠️ | Faceprint validity checked (`remote_provider.py:29-32`), but **no `active` field** exists → **T3** |
-| [FR-DATA-02](SOFTWARE_REQUIREMENTS.md#fr-data-02) | ⚠️ | Never logged ✅; **not deleted on revocation** — deliberately kept (`web_window.py:394-397`) → **T6** |
+| [FR-DATA-02](SOFTWARE_REQUIREMENTS.md#fr-data-02) | ✅ | Never logged ✅; **deleted on revocation** via `UserDatabase.clear()` (faceprints are in the one JSON cache) → **T6** |
 | [FR-DATA-03](SOFTWARE_REQUIREMENTS.md#fr-data-03) | ⚠️ | Atomic + deleted on revocation ✅; **no `0600`** → **T10** |
 | [FR-DATA-04](SOFTWARE_REQUIREMENTS.md#fr-data-04) | ✅ | `provisioning/identity.py:78-83` |
 | [FR-DATA-05](SOFTWARE_REQUIREMENTS.md#fr-data-05) | ✅ | `observability/events.py:60-67` |
@@ -392,18 +392,53 @@ telemetry still capped at 200 drop-oldest.
 
 #### <a id="t6"></a>T6. Fail-secure revocation
 
-**Do.** On HTTP 410, in order: emit `device_revoked` + best-effort flush →
-stop heartbeat → delete identity → **purge the user DB incl. faceprints** →
-deny all → orderly `sys.exit` so systemd restarts into init mode. Also delete
-the in-process nonce set (replay protection is server-side from rev 1.2).
+**Done.** On HTTP 410, in order: emit `device_revoked` + best-effort flush
+(while the credential is still valid) → stop the heartbeat/bounded-device
+services → delete the identity → **purge the user DB incl. faceprints** →
+return to init mode. Per the approved design this is an **in-process reset**
+(`SessionController.start_init_mode()` — the same entry point used at boot),
+not a `sys.exit`: with no identity and init mode active, all auth is denied
+(deny-all) until a fresh QR re-enrolls the device. Faceprints live entirely in
+the one local JSON cache, so `UserDatabase.clear()` erases them — no separate
+blob files. Remote DB sync is torn down via `HostModeService.disable_remote_sync()`
+(`stop_auto_sync` + `detach_remote`).
 
-**Files.** `provisioning/binding.py:125-141`; `provisioning/heartbeat.py:101-111`;
-`db/user_database.py`; `qr_scanner/qr_scanner.py:114-116,173-178`;
-`gui_web/web_window.py:391-401`; `main_web.py`.
+**Server-side lifecycle (why best-effort device cleanup is safe).** Revocation
+is server-authoritative via a tombstone handshake, so the device's local cleanup
+never needs to be guaranteed:
 
-**Accept.** After a simulated 410: `device_revoked` reaches the server, the
-user DB file is empty, a card tap is denied, the process exits and comes back
-in init mode. No nonce set remains in `qr_scanner`.
+1. Operator removes the device → its row flips `active` → `suspended`
+   (`server/main.py` `delete_device`, soft delete — the row is kept as a
+   tombstone, not hard-deleted). From this instant the device is untrusted:
+   `post_status` refuses every heartbeat from a `suspended`/`revoked_ack` row and
+   always answers `410` (`main.py:403-412`).
+2. The device's next heartbeat is answered `410` and the row flips to
+   `revoked_ack`; the device then runs its local teardown (this task).
+3. The `revoked_ack` tombstone is purged on the next device-list load
+   (`_purge_acknowledged`).
+
+Because the server is the sole authority, a comms failure or a failed local DB
+wipe can't leave the device trusted: if it never sees the `410` it simply stays
+locked out server-side, and our `_handle_revoked` destroys the identity even if
+the DB wipe throws. Re-enrollment is collision-free by construction — every bind
+mints a fresh `device_id` (`str(uuid.uuid4())`, `main.py:301`) and token, so the
+old id is never reused. **No separate revoke-ack endpoint is needed**; the
+"suspended → 410 → revoked_ack → purge" flow is the complete mechanism. The
+in-process nonce set is recreated empty on the next init-mode entry.
+
+**Files.** `provisioning/binding.py` (`_handle_revoked`);
+`db/user_database.py` (`detach_remote`); `face_auth/auth_service.py`
+(`disable_remote_sync`); `gui_web/web_window.py` (`_on_device_revoked`,
+`_return_to_init_mode`, `return_to_init` signal).
+
+**Tests.** `provisioning/tests/test_revocation.py` (flush-before-clear ordering,
+heartbeat dropped, UI callback fired, teardown survives flush/UI failures);
+`db/tests/test_revocation_wipe.py` (faceprints gone on disk, remote sync
+detached).
+
+**Accept.** After a simulated 410: `device_revoked` is flushed while bound, the
+user DB file is emptied, remote sync stops, and the app re-enters init mode
+in-process (card taps denied there) — no reboot needed.
 
 ---
 
@@ -528,7 +563,7 @@ with `APPLY_NETWORK_PROFILE = False` on dev machines without `nmcli`
 | B2 | [T1](#t1)b: freeze notice in `gui_qt` + [T16](#t16) | **Implemented — awaiting device validation** |
 | B3 | [T2](#t2) decision separation | **Implemented — awaiting device validation** |
 | B4 | [T5](#t5)a ack-by-`event_id` | **Implemented — awaiting device validation** |
-| B5 | [T6](#t6) fail-secure revocation | pending |
+| B5 | [T6](#t6) fail-secure revocation | **Implemented — awaiting device validation** |
 | B6 | [T3](#t3) schema v2 (server, then device) | pending |
 | B7 | [T4](#t4) `device_mode` / `face_policy` | pending |
 | B8 | [T7](#t7) `card_only` | pending |

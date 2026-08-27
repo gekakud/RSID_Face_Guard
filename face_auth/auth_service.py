@@ -129,6 +129,22 @@ class HostModeService:
         self._start_remote_sync()
         return True
 
+    def disable_remote_sync(self) -> None:
+        """Tear down remote DB sync on revocation (FR-HB-10).
+
+        Stops the auto-sync thread and detaches the remote provider so the
+        device stops pulling users from a server it's no longer bound to. Safe
+        to call in local mode or when sync was never enabled. Idempotent.
+        """
+        if config.DB_MODE != "remote":
+            return
+        log.info("Disabling remote DB sync (device revoked)")
+        try:
+            self.user_db.stop_auto_sync()
+        except Exception as e:
+            log.error("stop_auto_sync failed (ignored): %s", e)
+        self.user_db.detach_remote()
+
     def _reconnect(self):
         """Reset the serial connection after an error, with retries and backoff.
 

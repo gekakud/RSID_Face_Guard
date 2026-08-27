@@ -247,6 +247,7 @@ class _SignalBridge(QObject):
     card_rejected = Signal(object)      # card_id (unregistered)
     binding_result = Signal(bool, str)  # success, message (device provisioning)
     device_revoked = Signal()           # server removed this device
+    return_to_init = Signal()           # revocation cleanup done -> re-enter init mode
 
 class QtScheduler:
     """Backs session.Scheduler with QTimer + a Qt signal for UI marshalling.
@@ -334,6 +335,7 @@ class GUIWeb(QMainWindow):
         self._bridge.card_rejected.connect(self._on_card_rejected)
         self._bridge.binding_result.connect(self._on_binding_result)
         self._bridge.device_revoked.connect(self._on_device_revoked)
+        self._bridge.return_to_init.connect(self._return_to_init_mode)
 
         # Shared, GUI-agnostic layers (same as GUIQt).
         self.preview_controller = PreviewController(port, camera_index, device_type)
@@ -471,16 +473,57 @@ class GUIWeb(QMainWindow):
             ).start()
 
     def _on_device_revoked(self):
-        """The dashboard removed this device (marshalled onto the Qt thread).
+        """Fail-secure revocation handler (FR-HB-10 / FR-STATE-02), marshalled
+        onto the Qt thread by ``_SignalBridge`` after BindingManager has already
+        flushed final events and dropped the identity.
 
-        BindingManager has already dropped the identity; here we just tell the
-        operator. Face auth from the local DB keeps working; the device can be
-        re-enrolled by scanning a fresh QR.
+        The GUI owns the two collaborators BindingManager can't reach, so it
+        finishes the teardown here:
+
+          * stop remote DB sync + wipe the local user DB **including faceprints**
+            (they all live in the one JSON file), and
+          * return the running app to the "first start, no identity" init state
+            by calling ``start_init_mode()`` -- the exact same entry point used
+            at boot, so no reboot is needed. With no identity and init mode
+            active, all auth is denied (deny-all) until a fresh QR re-enrolls
+            the device.
+
+        The DB teardown touches disk/network, so it runs on a worker thread; the
+        init-mode re-entry is marshalled back onto the UI thread.
         """
-        log.info("Device was removed from the server; now unbound")
+        log.warning("Device revoked -- wiping local data and returning to init mode")
         self.view.page().runJavaScript(
             _status_overlay_show_js("Device removed\nRescan a QR to re-enroll")
         )
+
+        def _wipe_and_reset():
+            try:
+                self.host_service.disable_remote_sync()
+            except Exception as exc:
+                log.error("disable_remote_sync failed (ignored): %s", exc)
+            try:
+                self.host_service.user_db.clear()
+                log.info("Local user DB wiped on revocation (faceprints cleared)")
+            except Exception as exc:
+                log.error("Local user DB wipe failed (ignored): %s", exc)
+            # Return to init mode on the UI thread (start_init_mode is Qt-bound).
+            self._bridge.return_to_init.emit()
+
+        threading.Thread(
+            target=_wipe_and_reset, name="revoke-cleanup", daemon=True
+        ).start()
+
+    def _return_to_init_mode(self):
+        """Re-enter the QR-scan init state after a revocation wipe (UI thread).
+
+        Ends any in-flight session/init window first so re-entry is clean, then
+        starts init mode -- the same path a freshly-booted, unbound device takes.
+        """
+        try:
+            self.controller.end_init_mode()
+        except Exception:
+            pass
+        self.controller.start_init_mode()
 
     # =====================================================
     # INIT MODE GLUE (scanning/binding owned by SessionController)

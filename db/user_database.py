@@ -160,6 +160,17 @@ class UserDatabase:
         self._sync_thread.join(timeout=2)
         self._sync_thread = None
 
+    def detach_remote(self) -> None:
+        """Drop the remote provider so the DB is local-only again.
+
+        Used on device revocation (FR-HB-10): after ``stop_auto_sync`` halts the
+        background puller, this forgets the server binding so ``is_remote_enabled``
+        reports False and a later re-bind re-attaches from a clean slate.
+        """
+        with self._lock:
+            self._remote = None
+        log.info("Remote provider detached (device unbound) -- remote sync disabled")
+
     # =====================================================
     # Getters
     # =====================================================
