@@ -128,10 +128,40 @@ def test_full_replace_removes_revoked_user():
     finally:
         server.shutdown()
 
+def test_attach_remote_enables_sync_after_unbound_boot():
+    """FR-DB-07: a device that boots UNBOUND must start syncing the moment
+    binding completes -- attaching the provider at runtime, no reboot."""
+    server, port = _run_mock_server()
+    tmp_dir = tempfile.mkdtemp()
+    db_file = os.path.join(tmp_dir, "user_database.json")
+    try:
+        db = UserDatabase(db_file, identity=None)
+        assert db.is_remote_enabled() is False
+        assert db.sync_from_remote() == 0
+        assert db.count() == 0
+
+        db.attach_remote(_make_identity(port))
+        assert db.is_remote_enabled() is True
+
+        updated = db.sync_from_remote()
+        assert updated == 2
+        assert db.count() == 2
+        assert db.get_user("1001")["name"] == "alice"
+    finally:
+        server.shutdown()
+
+def test_attach_remote_ignores_none_identity():
+    tmp_dir = tempfile.mkdtemp()
+    db = UserDatabase(os.path.join(tmp_dir, "user_database.json"), identity=None)
+    db.attach_remote(None)
+    assert db.is_remote_enabled() is False
+
 if __name__ == "__main__":
     test_remote_provider_load_all()
     test_remote_provider_rejects_bad_token()
     test_remote_provider_no_identity()
     test_user_database_sync_from_remote()
     test_full_replace_removes_revoked_user()
+    test_attach_remote_enables_sync_after_unbound_boot()
+    test_attach_remote_ignores_none_identity()
     print("All remote sync tests passed.")

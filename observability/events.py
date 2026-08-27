@@ -84,18 +84,23 @@ def snapshot() -> List[Dict[str, Any]]:
         return list(_buffer)
 
 
-def ack(count: int) -> None:
-    """Drop the oldest ``count`` events after a successful heartbeat.
+def ack(event_ids) -> None:
+    """Drop the acknowledged events after a successful heartbeat.
 
-    ``count`` is the length of the previously sent :func:`snapshot`. Only that
-    many are removed, so events emitted while the beat was in flight are
-    preserved for the next one.
+    ``event_ids`` is the collection of ``event_id`` strings from the
+    previously sent :func:`snapshot` that the server confirmed. Events are
+    removed **by id, never by position**: the ring may evict old entries or
+    gain new ones while a beat is in flight, so positional removal could drop
+    undelivered events. Anything not in ``event_ids`` (e.g. emitted mid-beat)
+    is preserved for the next beat. Unknown ids are ignored.
     """
-    if count <= 0:
+    acked = set(event_ids or ())
+    if not acked:
         return
     with _lock:
-        for _ in range(min(count, len(_buffer))):
-            _buffer.popleft()
+        kept = [e for e in _buffer if e.get("event_id") not in acked]
+        _buffer.clear()
+        _buffer.extend(kept)
 
 
 def pending_count() -> int:

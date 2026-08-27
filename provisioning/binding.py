@@ -178,6 +178,6 @@ class BindingManager:
                 except Exception:
                     pass
             if client.post_status(self.identity, status, metadata):
-                events.ack(len(pending))
+                events.ack([e["event_id"] for e in pending])
         except Exception as exc:
             log.debug("Final event flush failed (ignored): %s", exc)

@@ -165,7 +165,7 @@ All ✅. `hardware/card_reader_api.py:35-76` backend selection; `face_auth/auth_
 | ID | Status | Evidence / gap |
 |---|---|---|
 | [FR-HB-01](SOFTWARE_REQUIREMENTS.md#fr-hb-01)..[04](SOFTWARE_REQUIREMENTS.md#fr-hb-04) | ✅ | `provisioning/heartbeat.py:53-59,77-97`; `observability/events.py:43-73` |
-| [FR-HB-05](SOFTWARE_REQUIREMENTS.md#fr-hb-05) | ⚠️ | `events.ack(len(pending))` by **count** (`heartbeat.py:119`, `events.py:86-97`) → **T5** |
+| [FR-HB-05](SOFTWARE_REQUIREMENTS.md#fr-hb-05) | ✅ | Ack **by `event_id`**, never by position (`events.ack(event_ids)` `events.py:87-103`; `heartbeat.py:119`, `binding.py:181`) — **B4/T5a** |
 | [FR-HB-06](SOFTWARE_REQUIREMENTS.md#fr-hb-06)..[09](SOFTWARE_REQUIREMENTS.md#fr-hb-09) | ✅ | uuid4 `:62`; cap 200 `:41-44`; backoff `heartbeat.py:134`; shutdown flush `binding.py:148-183` |
 | [FR-HB-10](SOFTWARE_REQUIREMENTS.md#fr-hb-10) <a id="fr-hb-10-row"></a> | ❌ | On 410 the code deletes the identity and shows a message (`binding.py:125-141`, `web_window.py:391-401`). **No** `device_revoked`, **no** flush, **no** DB purge, **no** deny-all, **no** self-restart → **T6** |
 
@@ -527,7 +527,7 @@ with `APPLY_NETWORK_PROFILE = False` on dev machines without `nmcli`
 | B1 | [T1](#t1)a: `session/controller.py`, web UI ported | **Implemented — awaiting device validation** |
 | B2 | [T1](#t1)b: freeze notice in `gui_qt` + [T16](#t16) | **Implemented — awaiting device validation** |
 | B3 | [T2](#t2) decision separation | **Implemented — awaiting device validation** |
-| B4 | [T5](#t5)a ack-by-`event_id` | pending |
+| B4 | [T5](#t5)a ack-by-`event_id` | **Implemented — awaiting device validation** |
 | B5 | [T6](#t6) fail-secure revocation | pending |
 | B6 | [T3](#t3) schema v2 (server, then device) | pending |
 | B7 | [T4](#t4) `device_mode` / `face_policy` | pending |
@@ -613,4 +613,58 @@ terminal (with `RUN_WITH_RELAY=True` and a strike wired) confirm:
 4. **Relay-off demo still grants** — set `RUN_WITH_RELAY=False` → a match shows
    "Welcome" and emits `access_granted` with no physical pulse.
 
+### B4 device checklist
+
+Event acknowledgement is now **by `event_id`**, not by position (FR-HB-05):
+`events.ack(event_ids)` removes only the confirmed events from the buffer, so an
+event emitted (or a ring eviction) *during* an in-flight heartbeat can no longer
+be dropped. Server-side dedup is unchanged (`INSERT OR IGNORE` on `event_id`).
+On the terminal, with the device bound to a reachable server, confirm:
+
+1. **Events still deliver end-to-end** — trigger a few events (a grant, a
+   denial, a QR rejection) and confirm each appears exactly once in the server's
+   event log after the next heartbeat, with no duplicates.
+2. **Nothing lost under load** — generate a burst of events (rapid taps) so
+   several ride one beat; confirm every one lands server-side and the device's
+   pending buffer drains to 0 after a successful beat.
+3. **Failed beat keeps events** — briefly block the server / pull the network
+   during a beat; the events stay buffered and are delivered on the next
+   successful beat (none dropped).
+4. **Shutdown flush** — stop the app with pending events; the final flush
+   (`binding.py`) delivers them and acks by id.
+
 *(Per-batch checklists for B4+ are added when each batch is implemented.)*
+
+## Fix: remote DB sync not re-armed after runtime binding (FR-DB-07)
+
+**Regression.** A device that booted **unbound** and then bound via QR never
+fetched its remote user DB — leaving a bound `remote`-mode device with no source
+of truth for door access. `HostModeService.__init__` decided remote-vs-local
+**once at boot** (`face_auth/auth_service.py`): first boot has no identity →
+`UserDatabase(identity=None)` → `self._remote = None`
+(`db/user_database.py:37`) → `start_auto_sync` skipped. QR binding saved the
+identity but nothing re-armed the DB provider, so remote sync only engaged on the
+next reboot — violating **FR-DB-07** ("remote sync skipped **until binding
+completes**", i.e. resume *on* bind).
+
+**Fix.**
+- `db/user_database.py` — new `attach_remote(identity, timeout)` /
+  `is_remote_enabled()` wire a `RemoteUserDataProvider` **after** construction.
+- `face_auth/auth_service.py` — extracted `_start_remote_sync()`; new
+  `enable_remote_sync()` loads the freshly-saved identity, attaches the provider,
+  does an **immediate blocking** `sync_from_remote()` (users appear right after
+  pairing, not one interval later), then starts periodic auto-sync. No-op in
+  `local` mode or when already remote-enabled.
+- `gui_web/web_window.py` — `_on_binding_result` calls
+  `host_service.enable_remote_sync()` on a daemon thread (off the UI thread; the
+  first fetch is blocking HTTP) on binding success. `gui_qt` left frozen.
+
+**Telemetry.** FR-DB-06 events (`db_sync_ok` / `db_sync_failed` /
+`db_sync_invalid_record` / `db_sync_skipped_entries`) already fire from
+`db/remote_provider.py` on every fetch, so the post-bind fetch is now fully
+observable; added log breadcrumbs on the unbound→bound transition and the
+post-pairing user count.
+
+**Tests.** `db/test_remote_sync.py` +2 (unbound-boot → `attach_remote` → sync
+fetches; `attach_remote(None)` no-op). DB + session suites: **30 passed**.
+

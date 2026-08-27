@@ -58,6 +58,25 @@ class UserDatabase:
     # Remote sync
     # =====================================================
 
+    def is_remote_enabled(self) -> bool:
+        """True once a remote provider has been wired (device is bound)."""
+        with self._lock:
+            return self._remote is not None
+
+    def attach_remote(self, identity, remote_timeout_sec: float = 10) -> None:
+        """Wire (or replace) the remote provider after construction.
+
+        Lets a device that booted unbound start syncing the moment binding
+        completes, without a restart (FR-DB-07: sync resumes *when binding
+        completes*, not at the next boot). Idempotent-friendly: re-binding to a
+        new server simply swaps the provider.
+        """
+        if identity is None:
+            return
+        with self._lock:
+            self._remote = RemoteUserDataProvider(identity, remote_timeout_sec)
+        log.info("Remote provider attached (device bound) -- remote sync enabled")
+
     def sync_from_remote(self) -> int:
         """Pull users from the remote provider and fully replace the local
         cache with the result -- the server is the source of truth, so a

@@ -78,13 +78,56 @@ class HostModeService:
         # mode there's no remote provider, so auto-sync is skipped entirely
         # (UserDatabase.sync_from_remote() would just no-op anyway, but
         # skipping avoids spinning up a pointless background thread).
-        if use_remote:
-            self.user_db.start_auto_sync(
-                config.DB_SYNC_INTERVAL_SEC,
-                on_updated=lambda n: log.info("Auth DB refreshed (%d users)", self.user_db.count()),
-            )
+        if config.DB_MODE == "remote":
+            if use_remote:
+                self._start_remote_sync()
+            # else: booted unbound -- sync stays off until enable_remote_sync()
+            # is called when provisioning completes (FR-DB-07).
         else:
             log.info("DB_MODE=local -- using local JSON file only, no remote sync")
+
+    def _start_remote_sync(self) -> None:
+        """Kick an immediate refresh, then start the periodic auto-sync."""
+        self.user_db.start_auto_sync(
+            config.DB_SYNC_INTERVAL_SEC,
+            on_updated=lambda n: log.info("Auth DB refreshed (%d users)", self.user_db.count()),
+        )
+
+    def enable_remote_sync(self) -> bool:
+        """Wire remote sync after the device is bound at runtime (FR-DB-07).
+
+        Called once provisioning completes (see the GUI's binding-result
+        handler): loads the freshly-saved identity, attaches the remote
+        provider to the DB, and starts an immediate + periodic sync so the
+        door DB is fetched right after pairing rather than only on the next
+        reboot. No-op in local mode or if already remote-enabled. Returns True
+        if remote sync is (now or already) active.
+
+        Runs a blocking HTTP fetch on first sync, so callers must invoke it off
+        the UI thread.
+        """
+        if config.DB_MODE != "remote":
+            return False
+        if self.user_db.is_remote_enabled():
+            log.info("Remote sync already enabled -- binding refresh is a no-op")
+            return True
+
+        from provisioning.identity import load as load_identity
+        identity = load_identity()
+        if identity is None:
+            log.warning("enable_remote_sync called but no device identity on disk yet")
+            return False
+
+        log.info("Provisioning complete -- enabling remote DB sync and fetching users")
+        self.user_db.attach_remote(identity, config.REMOTE_TIMEOUT_SEC)
+        try:
+            fetched = self.user_db.sync_from_remote()
+            log.info("Post-pairing DB sync: %d user(s) fetched", fetched)
+        except Exception as e:
+            log.error("Post-pairing DB sync failed: %s", e)
+            events.emit("db_sync_failed", reason="exception", error=str(e))
+        self._start_remote_sync()
+        return True
 
     def _reconnect(self):
         """Reset the serial connection after an error, with retries and backoff.

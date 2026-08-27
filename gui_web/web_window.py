@@ -459,6 +459,16 @@ class GUIWeb(QMainWindow):
         self.view.page().runJavaScript(_status_overlay_show_js(text))
         # Leave a failure up longer -- an installer needs time to read why.
         QTimer.singleShot(3000 if ok else 6000, self.controller.end_init_mode)
+        if ok:
+            # The device is now bound: wire up remote DB sync and pull the door
+            # user set immediately (FR-DB-07) instead of waiting for a reboot.
+            # The first fetch is a blocking HTTP call, so run it off the UI
+            # thread.
+            threading.Thread(
+                target=self.host_service.enable_remote_sync,
+                name="post-bind-db-sync",
+                daemon=True,
+            ).start()
 
     def _on_device_revoked(self):
         """The dashboard removed this device (marshalled onto the Qt thread).

@@ -116,7 +116,7 @@ class HeartbeatWorker:
                 ok = False
 
             if ok:
-                events.ack(len(pending))
+                events.ack([e["event_id"] for e in pending])
                 delay = interval
                 self._consecutive_failures = 0
             else:
