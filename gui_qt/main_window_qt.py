@@ -1,6 +1,14 @@
 """
 Main PySide6 (Qt6) GUI window for RealSense ID Host Mode.
 
+    ============================ FROZEN (2026-08-26) ============================
+    This Qt-widgets front-end is a FROZEN debug harness. Do NOT add new feature
+    work here -- direct all new work to ``gui_web/`` (the shipping front-end) and
+    ``session/`` (the UI-agnostic state machine). In particular it intentionally
+    does NOT track rev 1.3 T16 "init mode is the entry state" semantics; the init
+    hook below is left as-was on purpose.
+    ============================================================================
+
 Session-based flow: the camera preview is OFF while idle and only turns on
 for a bounded auth "session" -- triggered by a click anywhere on the window
 (AUTH_ONLY_ON_CARD=False) or a valid card tap (AUTH_ONLY_ON_CARD=True).

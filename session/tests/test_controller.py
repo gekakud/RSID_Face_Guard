@@ -214,3 +214,71 @@ def test_end_init_mode_is_idempotent(make_controller, view):
     c.end_init_mode()  # second call must be a no-op
     assert view.names().count("idle") == idle_count
 
+
+# --------------------------------------------------------------------------- #
+# Init mode -- always the entry state (T16 / rev 1.3)
+# --------------------------------------------------------------------------- #
+
+def test_disabled_init_mode_enters_then_immediately_ends(make_controller, sched, view, preview):
+    # INIT_MODE_ENABLED=False no longer skips entry: we enter (single path),
+    # then hand off to normal operation via a delay-0 end. No scan window, no
+    # lingering overlay, no camera preview.
+    from observability import events as ev
+    ev.clear()
+
+    c = make_controller(INIT_MODE_ENABLED=False)
+    c.start_init_mode()
+
+    # Entry happened and the lifecycle event fired exactly as when enabled.
+    assert c.init_mode_active is True
+    assert [e["type"] for e in ev.snapshot()] == ["init_mode_entered"]
+    # Zero-length window: no scan preview / overlay while "in" init mode.
+    assert ("camera",) not in view.calls
+    assert ("overlay", "Init Mode") not in view.calls
+    assert preview.resumed == 0
+
+    # The delay-0 end fires on the first clock tick -> back to idle.
+    sched.advance(0)
+    assert c.init_mode_active is False
+    assert view.calls[-1] == ("idle",)
+
+
+def test_disabled_init_mode_does_not_scan(make_controller, sched, view, preview):
+    seen = []
+    payload = {"door_id": "d1", "site_id": "s1", "customer_id": "c1"}
+    c = make_controller(
+        INIT_MODE_ENABLED=False,
+        qr_payload=payload,
+        on_qr_payload=lambda p: seen.append(p),
+    )
+    c.start_init_mode()
+    sched.advance(1000)
+
+    # No scan interval was scheduled, so the QR is never decoded / bound.
+    assert seen == []
+    assert view.calls[-1] == ("idle",)
+
+
+def test_zero_duration_falls_back_to_immediate_end(make_controller, sched, view, preview):
+    # Enabled but a zero-length duration collapses onto the same single path.
+    c = make_controller(INIT_MODE_ENABLED=True, INIT_MODE_DURATION_SEC=0.0)
+    c.start_init_mode()
+
+    assert ("overlay", "Init Mode") not in view.calls
+    assert preview.resumed == 0
+    sched.advance(0)
+    assert c.init_mode_active is False
+    assert view.calls[-1] == ("idle",)
+
+
+def test_start_init_mode_when_already_active_re_enters(make_controller, sched, view):
+    # A second start (re-provision) still enters + re-emits the event.
+    from observability import events as ev
+    ev.clear()
+
+    c = make_controller(INIT_MODE_DURATION_SEC=8.0)
+    c.start_init_mode()
+    c.start_init_mode()
+    assert c.init_mode_active is True
+    assert [e["type"] for e in ev.snapshot()].count("init_mode_entered") == 2
+

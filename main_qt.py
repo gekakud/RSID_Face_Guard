@@ -3,6 +3,14 @@
 """
 Entry point for the RealSense ID Host Mode application (PySide6/Qt6 GUI).
 
+    ============================ FROZEN (2026-08-26) ============================
+    This Qt entry point + gui_qt window are a FROZEN debug harness. Do NOT add
+    new feature work here -- direct all new work to ``gui_web/`` (the shipping
+    front-end, launched via ``main_web.py``) and ``session/`` (the UI-agnostic
+    state machine). It intentionally does NOT track rev 1.3 T16 "init mode is
+    the entry state" semantics.
+    ============================================================================
+
 Identical device discovery/configuration flow to main.py, but launches
 the PySide6 GUI (gui_qt.main_window_qt.GUIQt) instead of the Tkinter one.
 All business/hardware layers (config, db, hardware, face_auth) are

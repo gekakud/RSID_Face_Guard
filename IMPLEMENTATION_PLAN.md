@@ -143,7 +143,7 @@ All ✅. `hardware/card_reader_api.py:35-76` backend selection; `face_auth/auth_
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-PROV-01](SOFTWARE_REQUIREMENTS.md#fr-prov-01) | ⚠️ | Init mode runs only when `INIT_MODE_ENABLED` (`web_window.py:549`); SRS rev 1.2 requires it on **every** start, config controlling duration only → **T16** |
+| [FR-PROV-01](SOFTWARE_REQUIREMENTS.md#fr-prov-01) | ✅ | Init mode is the entry state on **every** start (T16): `session/controller.py:215-243` always enters + emits `init_mode_entered`, then either runs the scan window or ends at delay 0; `gui_web/web_window.py:568-571` calls it unconditionally. `INIT_MODE_ENABLED` now sizes the window only (`config.py:49-61`) |
 | [FR-PROV-02](SOFTWARE_REQUIREMENTS.md#fr-prov-02) | ✅ | `qr_scanner/qr_scanner.py:13-34,129,134,162,173` |
 | [FR-PROV-03](SOFTWARE_REQUIREMENTS.md#fr-prov-03) | ⚠️ | All four offline checks present (`:129,140-144,152-157,162-171`) but an in-process **nonce set** remains (`:116,173-178`); rev 1.2 moved replay protection server-side → **T6** |
 | [FR-PROV-04](SOFTWARE_REQUIREMENTS.md#fr-prov-04) | ✅ | `qr_scanner.py:74-97`; empty store rejects all |
@@ -292,6 +292,11 @@ duplicated logic, receives no new features, and is not ported.
 **Accept.** No session/timer logic remains in `gui_web/web_window.py`; the web
 GUI drives the controller; existing behaviour unchanged (FR-SESS-01..08 still
 pass); `web_window.py` materially smaller. `gui_qt` untouched.
+
+**T1b (freeze notice) — done (2026-08-26).** A `FROZEN (2026-08-26)` banner was
+added to `gui_qt/main_window_qt.py:1-17` and `main_qt.py:1-15` directing all new
+work to `gui_web/` + `session/`. This is a comment-only change — `gui_qt`
+behaviour is deliberately unchanged and does **not** track T16 semantics.
 
 ---
 
@@ -460,8 +465,20 @@ Re-registration **replaces** the prior device row rather than creating a second 
 Ship `APPLY_NETWORK_PROFILE = False` (`config.py:148`); pass the Wi-Fi password to `nmcli` via stdin/file instead of argv (`provisioning/network.py:101`).
 **Accept.** A dev machine is never reconfigured by default; the password is absent from the process list.
 
-#### <a id="t16"></a>T16. Init mode on every start
-Enter init mode unconditionally; `INIT_MODE_ENABLED` becomes duration-only (0 = skip) (`gui_web/web_window.py:549-552`, `gui_qt/main_window_qt.py:280`).
+#### <a id="t16"></a>T16. Init mode on every start — **done**
+Enter init mode unconditionally; `INIT_MODE_ENABLED` becomes window-length only
+(0-length = enter-then-immediately-end). Single code path: `start_init_mode()`
+always enters and emits `init_mode_entered`, then schedules `end_init_mode` at
+`INIT_MODE_DURATION_SEC*1000` when enabled with a positive duration, else at
+delay `0` (`end_init_mode` is idempotent).
+**Done (2026-08-26):** `session/controller.py:215-243`,
+`gui_web/web_window.py:568-571`, `config.py:49-61`. Tests:
+`session/tests/test_controller.py` (disabled ⇒ enters + emits + immediately
+ends, no scan/overlay/preview; zero-duration collapses to the same path;
+already-active re-entry re-emits). Session suite 18 passed; server green-gate 62
+passed (`APPLY_NETWORK_PROFILE=False` on dev, D17). `gui_qt` intentionally does
+**not** track this (frozen harness — T1b) and is left as-is
+(`gui_qt/main_window_qt.py:280-281`).
 **Accept.** An already-bound terminal still scans at startup, so a technician can re-provision without a reset.
 
 #### <a id="t17"></a>T17. systemd unit
@@ -487,7 +504,7 @@ with `APPLY_NETWORK_PROFILE = False` on dev machines without `nmcli`
 |---|---|---|
 | **B0** | [T10](#t10) + [T11](#t11) + [T12](#t12) | **Implemented — awaiting device validation** |
 | B1 | [T1](#t1)a: `session/controller.py`, web UI ported | **Implemented — awaiting device validation** |
-| B2 | [T1](#t1)b: freeze notice in `gui_qt` + [T16](#t16) | pending |
+| B2 | [T1](#t1)b: freeze notice in `gui_qt` + [T16](#t16) | **Implemented — awaiting device validation** |
 | B3 | [T2](#t2) decision separation | pending |
 | B4 | [T5](#t5)a ack-by-`event_id` | pending |
 | B5 | [T6](#t6) fail-secure revocation | pending |
@@ -535,4 +552,23 @@ web UI is behaviourally unchanged:
    camera; present a valid provisioning QR → binding runs once and scanning
    stops; overlay times out back to idle after `INIT_MODE_DURATION_SEC`.
 
-*(Per-batch checklists for B2+ are added when each batch is implemented.)*
+### B2 device checklist
+
+Init mode is now the entry state on **every** start (T16): `start_init_mode()`
+always enters via a single code path, and `INIT_MODE_ENABLED` only sizes the
+scan window (0-length window when `False`/zero duration). `gui_qt` + `main_qt.py`
+gained a `FROZEN (2026-08-26)` banner (comment-only; T1b). `session/tests/`
+now 18 tests; server green-gate 62 passed. On the terminal confirm:
+
+1. **Already-bound terminal still scans** — boot a bound device with
+   `INIT_MODE_ENABLED=True` → "Init Mode" overlay + camera appears at startup;
+   presenting a valid provisioning QR re-provisions without a factory reset.
+2. **Window timeout** — with nothing presented, the overlay times out after
+   `INIT_MODE_DURATION_SEC` and the UI returns to idle / normal operation.
+3. **Disabled = zero-length window** — set `INIT_MODE_ENABLED=False` and boot →
+   no lingering "Init Mode" overlay or camera preview; the app proceeds straight
+   to idle, and an `init_mode_entered` event is still emitted (single path).
+4. **`gui_qt` unchanged** — `main_qt.py` still launches the frozen Qt harness
+   with its prior behaviour; only the freeze banner is new.
+
+*(Per-batch checklists for B3+ are added when each batch is implemented.)*

@@ -46,12 +46,17 @@ AUTH_SESSION_TIMEOUT_SEC = 30.0
 #   False -> normal draggable, bordered window (handy for editor-side debugging).
 KIOSK_BORDERLESS = False
 
-# Init mode: on startup, before the normal idle/session flow, show a brief
-# live camera preview and scan for a technician QR code (maintenance/reset/
-# config). If a valid, signed QR is detected within INIT_MODE_DURATION_SEC,
-# a maintenance flow is entered instead of normal operation. If the timer
-# expires with nothing detected, the app proceeds with regular boot exactly
-# as before.
+# Init mode: init mode is the entry state on every start (rev 1.3 / T16). The
+# app always enters init mode first -- a brief live camera preview that scans
+# for a technician QR code (maintenance/reset/config) -- before the normal
+# idle/session flow. If a valid, signed QR is detected within
+# INIT_MODE_DURATION_SEC, a maintenance flow is entered; otherwise the app
+# hands off to regular operation.
+#
+# INIT_MODE_ENABLED no longer gates *entry* -- it only sizes the scan window:
+#   True  -> a real INIT_MODE_DURATION_SEC-long QR-scan window.
+#   False -> a zero-length window (enter, then immediately end); provisioning
+#            stays reachable through the exact same code path.
 INIT_MODE_ENABLED = True
 INIT_MODE_DURATION_SEC = 8.0
 

@@ -213,20 +213,34 @@ class SessionController:
     # --- init mode (technician QR scan on startup) --------------------- #
 
     def start_init_mode(self) -> None:
-        """Show a brief live preview and scan for a technician QR, falling back
-        to idle if nothing is found in the window (FR-PROV-01)."""
+        """Enter init mode -- the entry state on every start (T16 / FR-PROV-01).
+
+        Init mode is *always* entered so provisioning is reachable via a single
+        code path. ``INIT_MODE_ENABLED`` no longer gates entry: it merely picks
+        the window length. When enabled (and the configured duration is > 0) we
+        run a real QR-scan window that falls back to idle on timeout; otherwise
+        the window has zero length -- we enter, emit the same lifecycle event,
+        then schedule ``end_init_mode`` at delay 0 so we immediately hand off to
+        normal operation. ``end_init_mode`` is idempotent, so an enter-then-end
+        with no user-visible lingering overlay is safe.
+        """
         from observability import events
 
         self._init_mode_active = True
         events.emit("init_mode_entered")
-        self._view.show_camera()
-        self._view.show_overlay("Init Mode")
-        self._preview.resume()
 
-        self._qr_scan_handle = self._sched.call_interval(200, self._qr_scan_tick)
-        self._init_timer_handle = self._sched.call_later(
-            int(config.INIT_MODE_DURATION_SEC * 1000), self.end_init_mode
-        )
+        duration_ms = int(config.INIT_MODE_DURATION_SEC * 1000)
+        if config.INIT_MODE_ENABLED and duration_ms > 0:
+            self._view.show_camera()
+            self._view.show_overlay("Init Mode")
+            self._preview.resume()
+            self._qr_scan_handle = self._sched.call_interval(200, self._qr_scan_tick)
+            self._init_timer_handle = self._sched.call_later(
+                duration_ms, self.end_init_mode
+            )
+        else:
+            # Zero-length window: enter then immediately end (single path).
+            self._init_timer_handle = self._sched.call_later(0, self.end_init_mode)
 
     def _qr_scan_tick(self) -> None:
         if not self._init_mode_active or self._qr_scanner is None:

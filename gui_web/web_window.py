@@ -565,11 +565,10 @@ class GUIWeb(QMainWindow):
         # UI rests on its native screensaver; the user wakes it by tapping
         # (no-card mode) or the card monitor detects a registered card
         # (card mode). Either path calls start_session(). On first load,
-        # kick off init mode (technician QR scan window) if enabled.
-        if config.INIT_MODE_ENABLED:
-            self.controller.start_init_mode()
-        else:
-            self.device_ui.screensaver()
+        # init mode is always the entry state (T16 / rev 1.3): the controller
+        # enters it unconditionally, then hands off to normal operation --
+        # immediately when INIT_MODE_ENABLED is False (zero-length window).
+        self.controller.start_init_mode()
 
     # =====================================================
     # SESSION ENTRY POINTS (state machine owned by SessionController)
