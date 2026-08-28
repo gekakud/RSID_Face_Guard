@@ -2,15 +2,15 @@
 # General System Configuration
 # =====================================================
 
-# Database file (local cache / source of truth for face auth)
-USER_DB_FILE = "user_database.json"
-
 # "local"  -> only read/write the local JSON file, never contacts the server.
 # "remote" -> periodically syncs from the server into the local JSON cache
 #             (existing behavior); auth lookups still always read the local
 #             cache, the remote fetch just keeps it fresh in the background.
 DB_MODE = "remote"
 
+
+# Database file (local cache / source of truth for face auth)
+USER_DB_FILE = "user_database.json" if DB_MODE == "remote" else "user_database_local_dev.json"
 # =====================================================
 # Hardware Simulation / Mode Flags
 # =====================================================
