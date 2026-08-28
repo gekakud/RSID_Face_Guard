@@ -38,6 +38,39 @@ All optional; every value has a working default.
 | `EVENTS_LIMIT` | `500` | Event-log rows kept per device. |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | unset | Both set ⇒ HTTP Basic on the dashboard. Unset ⇒ open. |
 
+## Deploy to Railway
+
+Config lives at the **repo root** (`railway.json` + `nixpacks.toml`), one
+level above `server/`, since Railway builds from the git root:
+
+- `railway.json` sets the start command
+  (`uvicorn server.main:app --host 0.0.0.0 --port $PORT`) and the
+  `/healthz` health check.
+- `nixpacks.toml` pins the install step to `server/requirements.txt`. This is
+  required because the repo root also has its own `requirements.txt` (the
+  on-device app's PySide6/lgpio/evdev deps), which Nixpacks' Python
+  auto-detection would otherwise install instead — and those hardware
+  libraries don't build in Railway's container.
+
+Steps:
+
+1. Create a new Railway project from this repo (root directory = repo root,
+   not `server/`).
+2. **Attach a Volume** (Railway dashboard → service → Volumes) and mount it,
+   e.g. at `/data`. Railway's filesystem is otherwise ephemeral, so without a
+   volume the SQLite database — and every registered device — is wiped on
+   each deploy, same caveat as the Render setup above.
+3. Set service variables:
+   - `DB_PATH` → `/data/faceguard.db` (path inside the mounted volume)
+   - `PUBLIC_BASE_URL` → this service's public Railway URL (e.g.
+     `https://<your-app>.up.railway.app`). Signed into every QR as
+     `server_url`, so getting it wrong means devices scan fine and then call
+     nowhere.
+   - `ADMIN_USER` / `ADMIN_PASSWORD` → to lock the dashboard down.
+4. Deploy. Railway builds with Nixpacks per `nixpacks.toml` and runs the
+   `startCommand` from `railway.json`.
+
+
 ## Customer / site / door
 
 Devices are organised as **customer → site → door** (a door belongs to a site,
