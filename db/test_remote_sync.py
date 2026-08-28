@@ -28,10 +28,10 @@ SAMPLE_FACEPRINTS = {
 
 # Server response shape: dict keyed by badge_id, matching user_database.json.
 SAMPLE_PAYLOAD = {
-    "1001": {"name": "alice", "permission_level": "User", "faceprints": SAMPLE_FACEPRINTS},
-    "1002": {"name": "bob", "permission_level": "Admin", "faceprints": SAMPLE_FACEPRINTS},
+    "1001": {"user_id": 101, "name": "alice", "active": True, "permission_level": "User", "faceprints": SAMPLE_FACEPRINTS},
+    "1002": {"user_id": 102, "name": "bob", "active": True, "permission_level": "Admin", "faceprints": SAMPLE_FACEPRINTS},
     # Malformed entry -- should be skipped, not crash the sync.
-    "1003": {"name": "broken", "permission_level": "User", "faceprints": {"version": 9}},
+    "1003": {"user_id": 103, "name": "broken", "active": True, "permission_level": "User", "faceprints": {"version": 9}},
 }
 
 EXPECTED_TOKEN = "test-device-token"
@@ -73,6 +73,7 @@ def test_remote_provider_load_all():
         users = provider.load_all()
         assert set(users.keys()) == {"1001", "1002"}, f"unexpected keys: {users.keys()}"
         assert users["1001"]["name"] == "alice"
+        assert users["1001"]["user_id"] == 101  # B6: user_id carried through sync
         assert users["1002"]["permission_level"] == "Admin"
     finally:
         server.shutdown()

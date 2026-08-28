@@ -42,7 +42,7 @@ def test_events_ingested_and_returned(client, qr):
 
     sent = [
         _event("device_boot", app_version="face-guard-0.1.0"),
-        _event("access_granted", user="alice", method="card"),
+        _event("access_granted", user_id=47, method="card"),
         _event("relay_opened", seconds=3.0),
     ]
     assert _post_status(client, device_id, token, sent).status_code == 200
@@ -56,7 +56,7 @@ def test_events_ingested_and_returned(client, qr):
     assert got[-1]["type"] == "device_boot"
     # Extra fields land in data; reserved keys don't.
     granted = next(e for e in got if e["type"] == "access_granted")
-    assert granted["data"] == {"user": "alice", "method": "card"}
+    assert granted["data"] == {"user_id": 47, "method": "card"}
     assert "event_id" not in granted["data"]
     assert granted["received_at"]  # server stamped it
 
@@ -90,9 +90,9 @@ def test_duplicate_event_id_is_idempotent(client, qr):
 def test_events_filter_by_type(client, qr):
     device_id, token = _register(client, qr)
     _post_status(client, device_id, token, [
-        _event("access_granted", user="alice"),
+        _event("access_granted", user_id=47),
         _event("access_denied", reason="no_match"),
-        _event("access_granted", user="bob"),
+        _event("access_granted", user_id=48),
     ])
 
     granted = client.get(f"/devices/{device_id}/events?type=access_granted").json()
@@ -132,8 +132,8 @@ def test_no_events_key_is_harmless(client, qr):
 def test_clear_events_removes_the_log(client, qr):
     device_id, token = _register(client, qr)
     _post_status(client, device_id, token, [
-        _event("access_granted", user="alice"),
-        _event("access_denied", reason="card_unregistered", card_id="2587154354"),
+        _event("access_granted", user_id=47),
+        _event("access_denied", reason="card_unregistered"),
         _event("device_boot"),
     ])
     assert len(client.get(f"/devices/{device_id}/events").json()) == 3

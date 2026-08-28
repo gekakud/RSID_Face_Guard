@@ -51,6 +51,10 @@ class HostModeService:
         use_remote = identity is not None
         self._error_backoff_until = 0.0  # epoch time; auth is blocked until this passes
         self.on_reconnect = None  # optional callback fired after successful reconnect
+        # B6/Option-B: the neutral user_id of the most recent decision, so the
+        # controller can emit access_granted/access_output_failed by user_id
+        # (never name/card_id). None when the last attempt resolved no user.
+        self.last_user_id = None
 
         self._card_monitor_thread: Optional[threading.Thread] = None
         self._card_monitor_stop_event = threading.Event()
@@ -216,23 +220,31 @@ class HostModeService:
         Returns:
             (success, user_name, permission_level_or_error_message)
         """
+        self.last_user_id = None
         user_info = self.user_db.get_user(str(card_id))
         if not user_info:
-            events.emit("card_unknown", card_id=str(card_id))
+            events.emit("card_unregistered")
             return False, None, "Card not registered"
+
+        user_id = user_info.get("user_id")
+        if not user_info.get("active", True):
+            events.emit("access_denied", method="card", user_id=user_id,
+                        reason="user_inactive")
+            return False, None, "User inactive"
+        self.last_user_id = user_id
 
         result = [None]
 
         def on_fp_auth_result(status, new_prints):
             if status != rsid_py.AuthenticateStatus.Success or not new_prints:
-                events.emit("access_denied", method="card", card_id=str(card_id),
+                events.emit("access_denied", method="card", user_id=user_id,
                             reason="face_extraction_failed", status=str(status))
                 result[0] = (False, None, f"Face extraction failed: {status}")
                 return
 
             fp = user_info.get('faceprints')
             if not fp:
-                events.emit("access_denied", method="card", card_id=str(card_id),
+                events.emit("access_denied", method="card", user_id=user_id,
                             reason="no_faceprints_on_file")
                 result[0] = (False, None, "No faceprints on file")
                 return
@@ -257,11 +269,11 @@ class HostModeService:
                 # Decision only (T2): recognition emits a low-level breadcrumb;
                 # the controller actuates the door and emits access_granted
                 # only after a successful relay pulse.
-                events.emit("auth_matched", user=user_info['name'], method="card",
-                            card_id=str(card_id), score=match_result.score)
+                events.emit("auth_matched", user_id=user_id, method="card",
+                            score=match_result.score)
                 result[0] = (True, user_info['name'], user_info['permission_level'])
             else:
-                events.emit("access_denied", method="card", card_id=str(card_id), reason="face_mismatch")
+                events.emit("access_denied", method="card", user_id=user_id, reason="face_mismatch")
                 result[0] = (False, None, f"Face match failed (score: {match_result.score})")
 
         try:
@@ -271,7 +283,7 @@ class HostModeService:
             return result[0]
         except Exception as e:
             log.exception("authenticate_with_card error")
-            events.emit("hardware_error", where="authenticate_with_card", card_id=str(card_id), error=str(e))
+            events.emit("hardware_error", where="authenticate_with_card", error=str(e))
             # Block further auth attempts for 20s while reconnect runs in background
             self._error_backoff_until = time.monotonic() + 20.0
             threading.Thread(target=self._reconnect, daemon=True).start()
@@ -288,6 +300,7 @@ class HostModeService:
         Returns:
             (success, user_name, permission_level_or_error_message)
         """
+        self.last_user_id = None
         remaining = self._error_backoff_until - time.monotonic()
         if remaining > 0:
             log.debug("Serial backoff active -- skipping auth (%.0fs remaining)", remaining)
@@ -307,10 +320,12 @@ class HostModeService:
                 return
 
             max_score = -100
-            selected_user_id = None
+            selected_badge_id = None
             selected_user_info = None
 
-            for user_id, user_info in all_users.items():
+            for badge_id, user_info in all_users.items():
+                if not user_info.get('active', True):
+                    continue
                 fp = user_info.get('faceprints')
                 if not fp:
                     continue
@@ -322,7 +337,7 @@ class HostModeService:
                         new_prints, db_faceprints, updated_faceprints
                     )
                 except Exception as e:
-                    log.warning("Skipping user %s: bad faceprints (%s)", user_id, e)
+                    log.warning("Skipping user %s: bad faceprints (%s)", badge_id, e)
                     continue
 
                 is_match = match_result.success or (
@@ -330,16 +345,18 @@ class HostModeService:
                 )
                 if is_match and match_result.score > max_score:
                     max_score = match_result.score
-                    selected_user_id = user_id
+                    selected_badge_id = badge_id
                     selected_user_info = user_info
 
-            if selected_user_id:
+            if selected_badge_id:
+                selected_user_id = selected_user_info.get('user_id')
+                self.last_user_id = selected_user_id
                 # FR-FACE-03: log the winning score against the threshold.
                 log.info(
                     "1:N decision: user=%s best_score=%s threshold=%s -> GRANT",
                     selected_user_id, max_score, config.CUSTOM_THRESHOLD,
                 )
-                events.emit("auth_matched", user=selected_user_info['name'],
+                events.emit("auth_matched", user_id=selected_user_id,
                             method="face", score=max_score)
                 result[0] = (True, selected_user_info['name'], selected_user_info['permission_level'])
             else:
@@ -412,7 +429,6 @@ class HostModeService:
                             # the same badge held on the reader can't flood the
                             # bounded event buffer during an outage.
                             events.emit("access_denied", method="card",
-                                        card_id=str(card_id),
                                         reason="card_unregistered")
                             last_card_id = card_id
                             last_read_time = current_time

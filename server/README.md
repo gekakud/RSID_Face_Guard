@@ -215,9 +215,11 @@ local DB is unaffected throughout. A removed device that is offline stays
 ## Device events
 
 A lightweight event log for door telemetry — `device_boot`, `access_granted`,
-`access_denied`, `card_unknown`, `qr_accepted`, `qr_rejected`, `relay_opened`,
+`access_denied`, `auth_matched`, `qr_accepted`, `qr_rejected`, `relay_opened`,
 `hardware_error`, `db_sync_ok` / `db_sync_failed`, `init_mode_entered`,
 `device_shutdown`, etc. The device-side emitter lives in `observability/events.py`.
+Access events reference a person by the opaque `user_id` only — never a real name
+or raw card id (schema v2 / FR-DATA-06).
 
 **No new endpoint or connection.** Events piggyback on the existing heartbeat:
 the device buffers them and sends them in `metadata.events` on the next status
@@ -226,7 +228,7 @@ POST. Each event is:
 { "event_id": "uuid",        // device-generated; enables idempotent resend
   "ts": "2026-08-16T10:00:00Z",
   "type": "access_granted",
-  "user": "alice", "method": "card" }   // any extra fields become "data"
+  "user_id": "u-8f2c1a", "method": "card" }   // any extra fields become "data"
 ```
 
 **Guaranteed delivery.** The device only drops an event from its buffer after

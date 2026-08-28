@@ -1019,9 +1019,8 @@ adding a field cannot stop an already-bound terminal from starting.
 | `device_boot` / `device_shutdown` | Application start / orderly stop |
 | `init_mode_entered` | Provisioning scan window opened |
 | `qr_accepted` / `qr_rejected` | QR verification outcome |
-| `access_granted` | Door opened after a successful decision |
-| `access_denied` | Denial, with reason (`face_extraction_failed`, `no_faceprints_on_file`, `face_mismatch`) |
-| `card_unknown` | Card absent from the local DB |
+| `access_granted` | Door opened after a successful decision (references the user by `user_id`) |
+| `access_denied` | Denial, with reason (`face_extraction_failed`, `no_faceprints_on_file`, `face_mismatch`, `no_match`, `user_inactive` = record present but `active: false`, `card_unregistered` = card absent from the local DB) |
 | `relay_opened` | Relay actuated |
 | `access_output_failed` | Decision was approved but the output could not be actuated ([FR-OUT-06](#fr-out-06)) — distinct from a denial |
 | `db_sync_ok` / `db_sync_failed` | Door DB refresh outcome |

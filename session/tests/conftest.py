@@ -145,24 +145,34 @@ class FakeHost:
     which auth entry point was used.
     """
 
-    def __init__(self, result=(True, "Alice", "employee"), raises=False):
+    def __init__(self, result=(True, "Alice", "employee"), raises=False, user_id=42):
         self.result = result
         self.raises = raises
         self.card_calls = []
         self.face_only_calls = 0
         self.session_active_marks = 0
         self.session_done_marks = 0
+        # Mirrors AuthenticationService.last_user_id: the neutral user_id of the
+        # most recent decision, which the controller emits (never name/card_id).
+        self._user_id = user_id
+        self.last_user_id = None
 
     def authenticate_with_card(self, card_id):
         self.card_calls.append(card_id)
+        self.last_user_id = None
         if self.raises:
             raise RuntimeError("boom")
+        if self.result[0]:
+            self.last_user_id = self._user_id
         return self.result
 
     def authenticate_face_only(self):
         self.face_only_calls += 1
+        self.last_user_id = None
         if self.raises:
             raise RuntimeError("boom")
+        if self.result[0]:
+            self.last_user_id = self._user_id
         return self.result
 
     def mark_card_session_active(self):

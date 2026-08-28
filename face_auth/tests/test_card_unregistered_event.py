@@ -22,9 +22,13 @@ def setup_function(_):
 
 
 def _reject(card_id):
-    """Mirror the reject branch of AuthenticationService.start_card_monitoring."""
-    events.emit("access_denied", method="card", card_id=str(card_id),
-                reason="card_unregistered")
+    """Mirror the reject branch of AuthenticationService.start_card_monitoring.
+
+    B6/Option-B: an unregistered tap resolves no user, so the event carries
+    neither a name nor the raw badge number -- just the reason. The badge id is
+    still used locally for the same-card cooldown de-dupe, but never emitted.
+    """
+    events.emit("access_denied", method="card", reason="card_unregistered")
 
 
 def _cooldown_gate(taps, cooldown=2.0):
@@ -49,7 +53,8 @@ def test_unregistered_tap_emits_one_access_denied():
     assert e["type"] == "access_denied"
     assert e["method"] == "card"
     assert e["reason"] == "card_unregistered"
-    assert e["card_id"] == "2587154354"
+    # Privacy (B6): the raw badge number must never reach telemetry.
+    assert "card_id" not in e
 
 
 def test_same_card_within_cooldown_emits_once():
@@ -65,5 +70,8 @@ def test_same_card_after_cooldown_emits_again():
 
 def test_different_card_emits_new_event():
     _cooldown_gate([(2587154354, 0.0), (1111111111, 0.1)])
-    ids = [e["card_id"] for e in events.snapshot()]
-    assert ids == ["2587154354", "1111111111"]
+    # Two distinct taps pass the de-dupe gate -> two events, none carrying a
+    # raw badge number.
+    buf = events.snapshot()
+    assert len(buf) == 2
+    assert all("card_id" not in e for e in buf)

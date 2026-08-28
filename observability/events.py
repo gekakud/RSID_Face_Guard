@@ -55,8 +55,9 @@ def emit(event_type: str, **fields: Any) -> None:
         event_type: one of the known type strings (device_boot, access_granted,
             access_output_failed, auth_matched, qr_rejected, ...). Free-form;
             the server stores whatever it gets.
-        **fields: optional extra context (e.g. user="alice", score=471,
+        **fields: optional extra context (e.g. user_id="u-8f2c1a", score=471,
             reason="expired"). Kept small -- this is telemetry, not a data dump.
+            Access events reference a person by user_id only, never name/card id.
     """
     try:
         event = {

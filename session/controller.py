@@ -233,7 +233,7 @@ class SessionController:
         if success and pulsed:
             # Door opened: only now is it a grant (T2 -- access_granted never
             # precedes actuation).
-            events.emit("access_granted", user=str(name) if name else None,
+            events.emit("access_granted", user_id=self._host.last_user_id,
                         method=method)
             # Stop retrying immediately so no further attempt fires during the
             # welcome hold (FR-SESS-06).
@@ -246,7 +246,7 @@ class SessionController:
         elif success and not pulsed:
             # Matched but the door would not open: fail secure. Distinct from a
             # denial -- surfaced as access_output_failed, shown as a failure.
-            events.emit("access_output_failed", user=str(name) if name else None,
+            events.emit("access_output_failed", user_id=self._host.last_user_id,
                         method=method)
             self._cancel_session_timers()
             self._view.show_failure(hold_ms=config.FAIL_DURATION_MS)

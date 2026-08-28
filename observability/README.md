@@ -110,7 +110,7 @@ the dashboard's per-device **Event log** (see `server/README.md`).
 ```python
 from observability import events
 
-events.emit("access_granted", user="alice", method="card")
+events.emit("access_granted", user_id="u-8f2c1a", method="card")
 ```
 
 - `emit(type, **fields)` — thread-safe, never raises, never blocks. Safe to
@@ -118,9 +118,13 @@ events.emit("access_granted", user="alice", method="card")
   event with a uuid4 `event_id` and a UTC `ts` and appends it to a bounded
   in-memory ring buffer.
 - Event types in use: `device_boot`, `device_shutdown`, `access_granted`,
-  `access_denied`, `card_unknown`, `qr_accepted`, `qr_rejected`, `relay_opened`,
+  `access_denied`, `auth_matched`, `qr_accepted`, `qr_rejected`, `relay_opened`,
   `hardware_error`, `db_sync_ok` / `db_sync_failed`, `init_mode_entered`,
   `storage_low` / `storage_ok`, `heartbeat_post_failed`.
+- **Privacy (schema v2 / FR-DATA-06):** access events reference a person only by
+  the opaque `user_id`; a real name or raw card id is **never** emitted. An
+  unregistered tap resolves no user, so it carries neither (just
+  `reason="card_unregistered"`).
 
 
 ### Delivery — piggybacked on the heartbeat, guaranteed
@@ -149,8 +153,8 @@ delivered but whose response was lost (and therefore resent) never duplicates.
 |---|---|
 | `device_boot` | `main_qt.py` / `main_web.py` `main()` |
 | `device_shutdown` | `provisioning/binding.py` `shutdown()` |
-| `access_granted` / `access_denied` | `face_auth/auth_service.py` — `access_denied` carries a `reason`: `face_mismatch`, `no_match`, `face_extraction_failed`, or `no_faceprints_on_file` |
-| `card_unknown` | `face_auth/auth_service.py` |
+| `access_granted` / `access_denied` | `face_auth/auth_service.py` — both reference the matched user by `user_id` only (never name/card id). `access_denied` carries a `reason`: `face_mismatch`, `no_match`, `face_extraction_failed`, `no_faceprints_on_file`, `user_inactive` (record present but `active: false`), or `card_unregistered` (tapped card absent from the local DB; no user, so no `user_id`) |
+| `auth_matched` | `face_auth/auth_service.py` — low-level breadcrumb of a 1:1/1:N match by `user_id`; the door-open grant follows as `access_granted` from the controller |
 | `hardware_error` | `face_auth/auth_service.py` (`authenticator_connect`, `wiegand_tx_init`, `authenticate_face_only`, `authenticate_with_card`, `card_monitor`), `hardware/relay_api.py` (`relay_init`, `relay_open`), `hardware/camera_preview.py` (`preview_frame`, `preview_restart`, `preview_resume`), `card_backends_impl/gwiot_hid_card_reader.py` (`gwiot_reader`), `qr_scanner/qr_scanner.py` (`qr_scanner`), `observability/storage_monitor.py` (`storage_monitor`), `main_qt.py` / `main_web.py` `main()` (`boot_device_discovery`, `boot_device_config`, `boot_card_reader`, `boot_relay` — best-effort only: emitted before any heartbeat thread/BindingManager exists, so these never reach the server the boot cycle they fire in, but still land in the local log) — every occurrence carries a `where` field identifying the failure site plus an `error` string |
 | `relay_opened` | `hardware/relay_api.py` `open_door()` |
 | `qr_accepted` / `qr_rejected` | `qr_scanner/qr_scanner.py` `scan()` |

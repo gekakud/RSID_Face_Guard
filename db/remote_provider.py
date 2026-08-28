@@ -143,8 +143,16 @@ class RemoteUserDataProvider:
             events.emit("db_sync_invalid_record", badge_id=badge_id)
             skipped[0] += 1
             return
+        user_id = user_data.get("user_id")
+        if user_id is None:
+            log.warning("Skipping badge_id %s: missing user_id (v1 record?)", badge_id)
+            events.emit("db_sync_invalid_record", badge_id=badge_id)
+            skipped[0] += 1
+            return
         users[badge_id] = {
+            "user_id": user_id,
             "name": user_data.get("name", ""),
+            "active": bool(user_data.get("active", True)),
             "permission_level": user_data.get("permission_level", "User"),
             "faceprints": faceprints,
         }
