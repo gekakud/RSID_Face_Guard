@@ -130,7 +130,7 @@ All ✅. `hardware/card_reader_api.py:35-76` backend selection; `face_auth/auth_
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-DB-01](SOFTWARE_REQUIREMENTS.md#fr-db-01) | ⚠️ | Atomic write ✅ (`db/local_provider.py:35-42`), but schema is `{badge: {name, permission_level, faceprints}}` (`db/remote_provider.py:146-150`): no `user_id`, no `active`, faceprints is a **dict not a list**; no old-schema discard (`local_provider.py:24-33`) → **T3** |
+| [FR-DB-01](SOFTWARE_REQUIREMENTS.md#fr-db-01) | ⚠️ | Atomic write ✅ (`db/local_provider.py:35-42`); schema v2 ✅ — `user_id` required and `active` normalised (`db/remote_provider.py:_add_if_valid`). Remaining gap: `faceprints` is still a **dict, not a list** → **T3b** |
 | [FR-DB-02](SOFTWARE_REQUIREMENTS.md#fr-db-02) | ✅ | `auth_service.py:158,170,200`; `permission_level` never gates |
 | [FR-DB-03](SOFTWARE_REQUIREMENTS.md#fr-db-03) | ✅ | `db/user_database.py:93-134` |
 | [FR-DB-04](SOFTWARE_REQUIREMENTS.md#fr-db-04) | ✅ | `db/user_database.py:148-150` |
@@ -207,13 +207,13 @@ All ✅. `hardware/camera_preview.py:24,152-177`; `gui_web/frame_server.py:63-14
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-DATA-01](SOFTWARE_REQUIREMENTS.md#fr-data-01) | ⚠️ | Faceprint validity checked (`remote_provider.py:29-32`), but **no `active` field** exists → **T3** |
+| [FR-DATA-01](SOFTWARE_REQUIREMENTS.md#fr-data-01) | ⚠️ | Faceprint validity checked (`remote_provider.py:29-32`) and `active` now enforced on both auth paths (`face_auth/auth_service.py`) ✅; still a single faceprints **dict**, so "list with ≥1 entry" / empty-list-in-`card_only` is unrepresentable → **T3b** |
 | [FR-DATA-02](SOFTWARE_REQUIREMENTS.md#fr-data-02) | ✅ | Never logged ✅; **deleted on revocation** via `UserDatabase.clear()` (faceprints are in the one JSON cache) → **T6** |
 | [FR-DATA-03](SOFTWARE_REQUIREMENTS.md#fr-data-03) | ⚠️ | Atomic + deleted on revocation ✅; **no `0600`** → **T10** |
 | [FR-DATA-04](SOFTWARE_REQUIREMENTS.md#fr-data-04) | ✅ | `provisioning/identity.py:78-83` |
 | [FR-DATA-05](SOFTWARE_REQUIREMENTS.md#fr-data-05) | ✅ | `observability/events.py:60-67` |
-| [FR-DATA-06](SOFTWARE_REQUIREMENTS.md#fr-data-06) | ❌ | Events carry `user=<name>` and `card_id` (`auth_service.py:199,276`) → **T3** |
-| [FR-DATA-07](SOFTWARE_REQUIREMENTS.md#fr-data-07) | ❌ | No `active` field device- or server-side → **T3** |
+| [FR-DATA-06](SOFTWARE_REQUIREMENTS.md#fr-data-06) | ✅ | All access events carry `user_id` only — no name, no raw card id (`face_auth/auth_service.py`, `session/controller.py` via `last_user_id`); an unregistered tap emits `reason="card_unregistered"` with no user fields |
+| [FR-DATA-07](SOFTWARE_REQUIREMENTS.md#fr-data-07) | ✅ | `active` normalised at sync (`db/remote_provider.py:_add_if_valid`, defaults `True` when absent) and enforced on both paths: card tap → `user_inactive` denial, face match → record skipped |
 
 ### 1.17 Non-functional — NFR
 
@@ -254,7 +254,8 @@ dependencies are done**; following the order avoids reworking earlier tasks.
 |---|---|---|---|---|
 | [T1](#t1) | Extract shared `SessionController` | device | — | NFR-19, FR-SESS-* |
 | [T2](#t2) | Separate access decision from biometrics | device | T1 | FR-FACE-04, FR-OUT-06 |
-| [T3](#t3) | User-record schema v2 | device+server | — | FR-DB-01, FR-DATA-01/06/07 |
+| [T3](#t3) | User-record schema v2 | device+server | — | FR-DATA-06/07 |
+| [T3b](#t3b) | `faceprints` as a list | device+server | T3 | FR-DB-01, FR-DATA-01 |
 | [T4](#t4) | `device_mode` / `face_policy` plumbing | device+server | T1 | FR-MODE-01 |
 | [T5](#t5) | Event pipeline: ack-by-id + durable queue | device | — | FR-HB-05, FR-MODE-10 |
 | [T6](#t6) | Fail-secure revocation | device | T5 | FR-HB-10, FR-DATA-02, FR-PROV-03 |
@@ -340,18 +341,46 @@ breadcrumb only.
 #### <a id="t3"></a>T3. User-record schema v2
 
 **Do.** Device and server adopt `{user_id, name, active, permission_level,
-faceprints: []}`. Server emits the new shape; device validates it; a cache file
-in the old shape is **discarded at startup** and repopulated by the next sync
-(no migration code). Events switch from `name`/`card_id` to `user_id`.
+faceprints}`. Server emits the new shape; device validates it and skips any
+record without a `user_id`. Events switch from `name`/`card_id` to `user_id`.
 Honour `active: false` as "never authorises".
 
-**Files.** `server/user_store.py`, `server/main.py:335-339,352-364`;
-`db/remote_provider.py:29-32,134-150`, `db/local_provider.py:24-42`,
-`db/user_database.py`; `face_auth/auth_service.py:199,276`.
+No migration path: nothing v1 is deployed, so a stale dev cache is simply
+deleted by hand and refilled by the next sync (the startup auto-discard was
+implemented and then removed as dead weight for a dev-only setup).
 
-**Accept.** Round-trip server→device→match works on v2; a v1 file on disk is
-discarded without a crash; an `active: false` user is denied; no event carries
-a cardholder name or raw card id.
+**Files.** `server/user_store.py`, `server/main.py:335-339,352-364`;
+`db/remote_provider.py`, `db/user_database.py`; `face_auth/auth_service.py`;
+`session/controller.py`.
+
+**Accept.** Round-trip server→device→match works on v2; an `active: false` user
+is denied (`user_inactive`); no event carries a cardholder name or raw card id.
+
+**Done.** Schema v2 record shape, `active` enforced on both the card and face
+paths, every emit rewritten to `user_id` (`AuthenticationService.last_user_id`
+carries it to the controller without changing the `(success, name, permission)`
+return tuple), seed data upgraded. `faceprints`-as-a-list was **not** part of
+this and is carved out as [T3b](#t3b).
+
+---
+
+#### <a id="t3b"></a>T3b. `faceprints` as a list
+
+**Do.** [SRS §9.1](SOFTWARE_REQUIREMENTS.md#91-local-user-record) specifies
+`faceprints` as a list of zero or more SDK-shaped objects; the code still stores
+and validates a single dict. Accept a list at sync (validating each entry),
+allow an **empty** list, and iterate a user's faceprints when matching.
+
+**Why it is separate.** [T7](#t7) `card_only` needs "a user with no faceprints"
+to be representable — impossible while faceprints must be a dict — so this
+lands with B8 rather than blocking B6.
+
+**Files.** `db/remote_provider.py` (`_is_valid_faceprints`, `_add_if_valid`),
+`face_auth/auth_service.py` (match loop), `server/default_user_database.json`.
+
+**Accept.** A record with `faceprints: []` syncs and is valid in `card_only`; a
+record with two faceprints matches on either; a legacy single-dict record is
+rejected or coerced, not crashed on.
 
 ---
 
@@ -552,7 +581,7 @@ Remove the hardcoded `1234` from `demo_ui/app.js:103` and `gui_web/web_window.py
 Delivery model: each batch is a small, independently revertable change set.
 After every batch the owner validates on the real device using the checklist
 below; the next batch starts only after sign-off. The existing server test
-suite (`server/tests/`, 62 tests) must stay green after every batch — run
+suite (`server/tests/`, 66 tests) must stay green after every batch — run
 with `APPLY_NETWORK_PROFILE = False` on dev machines without `nmcli`
 ([D17](SOFTWARE_REQUIREMENTS.md#d17)).
 
@@ -564,9 +593,9 @@ with `APPLY_NETWORK_PROFILE = False` on dev machines without `nmcli`
 | B3 | [T2](#t2) decision separation | **Implemented — awaiting device validation** |
 | B4 | [T5](#t5)a ack-by-`event_id` | **Implemented — awaiting device validation** |
 | B5 | [T6](#t6) fail-secure revocation | **Implemented — awaiting device validation** |
-| B6 | [T3](#t3) schema v2 (server, then device) | pending |
+| B6 | [T3](#t3) schema v2 (server, then device) | **Implemented — awaiting device validation** |
 | B7 | [T4](#t4) `device_mode` / `face_policy` | pending |
-| B8 | [T7](#t7) `card_only` | pending |
+| B8 | [T7](#t7) `card_only` + [T3b](#t3b) `faceprints` as a list | pending |
 | B9 | [T9](#t9) pre-emption + backoff + unavailable screen | pending |
 | B10 | [T5](#t5)b durable attendance queue | pending |
 | B11 | [T8](#t8) server half (attendance intake + journal) | pending |
