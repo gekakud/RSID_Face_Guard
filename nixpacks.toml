@@ -10,10 +10,10 @@
 # for the "Deploy to Railway" section (env vars, volume mount for SQLite).
 
 [phases.setup]
-nixPkgs = ["python312"]
+nixPkgs = ["python312", "python312Packages.pip"]
 
 [phases.install]
-cmds = ["pip install --no-cache-dir -r server/requirements.txt"]
+cmds = ["python3.12 -m pip install --no-cache-dir -r server/requirements.txt"]
 
 [start]
 cmd = "uvicorn server.main:app --host 0.0.0.0 --port $PORT"
