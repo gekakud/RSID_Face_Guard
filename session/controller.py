@@ -74,6 +74,12 @@ class SessionController:
         self._auth_in_progress = False
         self._retry_handle = None
         self._timeout_handle = None
+        self._lead_in_handle = None
+        # Set when the welcome was painted early (at match time, before the
+        # relay pulse returned); the hold timers it armed live alongside it so
+        # a failed pulse can retract both.
+        self._match_shown = False
+        self._welcome_handles = []
 
         self._init_mode_active = False
         self._init_timer_handle = None
@@ -131,11 +137,31 @@ class SessionController:
         self._retry_handle = self._sched.call_interval(
             int(config.AUTH_RETRY_INTERVAL_SEC * 1000), self._session_auth_tick
         )
-        self._session_auth_tick()  # first attempt immediately (NFR-03)
+
+        # Every auth attempt pauses the preview (the SDK needs exclusive UVC
+        # access), so firing one immediately killed the camera within
+        # milliseconds of starting it -- the user never saw a live frame on a
+        # valid badge. Give the preview a short lead-in so real frames reach
+        # the screen first, then attempt. PREVIEW_LEAD_IN_MS = 0 restores the
+        # original fire-immediately behaviour (NFR-03).
+        lead_in_ms = int(getattr(config, "PREVIEW_LEAD_IN_MS", 0))
+        if lead_in_ms > 0:
+            self._lead_in_handle = self._sched.call_later(
+                lead_in_ms, self._lead_in_elapsed
+            )
+        else:
+            self._session_auth_tick()  # first attempt immediately (NFR-03)
 
         self._timeout_handle = self._sched.call_later(
             int(config.AUTH_SESSION_TIMEOUT_SEC * 1000), self._session_timeout
         )
+
+    def _lead_in_elapsed(self) -> None:
+        """Fire the first auth attempt once the preview has been visible."""
+        self._lead_in_handle = None
+        if not self._session_active:
+            return  # session torn down during the lead-in
+        self._session_auth_tick()
 
     def _session_auth_tick(self) -> None:
         if not self._auth_in_progress:
@@ -165,6 +191,9 @@ class SessionController:
         if self._timeout_handle is not None:
             self._sched.cancel(self._timeout_handle)
             self._timeout_handle = None
+        if self._lead_in_handle is not None:
+            self._sched.cancel(self._lead_in_handle)
+            self._lead_in_handle = None
 
     # --- authentication ------------------------------------------------ #
 
@@ -181,9 +210,23 @@ class SessionController:
         relay pulse blocks ~3 s). The controller -- not the auth service --
         owns actuation and emits access_granted only after a successful pulse
         (T2 / FR-ACCESS); a failed pulse yields access_output_failed.
+
+        The SDK releases the camera as soon as the match call returns, so the
+        preview is resumed and the verdict screen shown *at that moment* rather
+        than after the pulse -- otherwise the user stares at a frozen/black
+        pane for the whole 3 s strike. Only the visual feedback moves early:
+        access_granted / access_output_failed telemetry is still emitted from
+        _on_auth_complete once the pulse outcome is known (T2 unchanged).
         """
         self._preview.pause()
+        # The preview is now stopped for the duration of the SDK call. Tell the
+        # view (on the UI thread) so a front-end can show explicit feedback
+        # instead of a paused camera pane. Optional hook -- older/simpler views
+        # need not implement it.
+        if hasattr(self._view, "show_scanning"):
+            self._sched.post_to_ui(self._view.show_scanning)
         method = "card" if self._session_card_id is not None else "face"
+        resumed = False
         try:
             if self._session_card_id is not None:
                 success, name, permission = self._host.authenticate_with_card(
@@ -192,8 +235,17 @@ class SessionController:
             else:
                 success, name, permission = self._host.authenticate_face_only()
 
+            # The SDK is done with the camera here, so give the pane back
+            # immediately instead of holding it black across the relay pulse.
+            if self._session_active:
+                self._preview.resume()
+                resumed = True
+
             pulsed = False
             if success:
+                # Show the welcome now, together with the strike firing, rather
+                # than 3 s later when the blocking pulse returns.
+                self._sched.post_to_ui(lambda: self._on_match_shown(name))
                 pulsed = self._open_access_point()
                 if pulsed:
                     log.info("Access granted: %s (%s)", name, permission)
@@ -210,7 +262,7 @@ class SessionController:
                 lambda: self._on_auth_complete(False, False, None, method)
             )
         finally:
-            if self._session_active:
+            if not resumed and self._session_active:
                 self._preview.resume()
 
     def _open_access_point(self) -> bool:
@@ -228,6 +280,36 @@ class SessionController:
             log.error("Access output error: %s", exc)
             return False
 
+    def _on_match_shown(self, name) -> None:
+        """Runs on the UI thread the instant the face matched, before the relay
+        pulse returns, so the welcome appears together with the strike firing.
+
+        Only paints the screen and stops the retry loop; the grant telemetry
+        stays in _on_auth_complete, which knows the pulse outcome (T2). If the
+        pulse then fails, _on_auth_complete replaces this with the failure
+        screen, so the early welcome is never the final word.
+        """
+        if not self._session_active:
+            return
+        self._match_shown = True
+        # Stop retrying immediately so no further attempt fires during the
+        # welcome hold (FR-SESS-06).
+        self._cancel_session_timers()
+        self._view.show_success(str(name) if name else None)
+        # Web UI auto-dismiss defaults to the live-camera screen; drive back to
+        # idle explicitly (FR-UI-03) as the session is torn down.
+        self._welcome_handles = [
+            self._sched.call_later(config.WELCOME_DURATION_MS, self._end_session),
+            self._sched.call_later(config.WELCOME_DURATION_MS, self._view.show_idle),
+        ]
+
+    def _cancel_welcome_timers(self) -> None:
+        """Drop the early-welcome hold timers (used when the pulse failed)."""
+        for handle in self._welcome_handles:
+            if handle is not None:
+                self._sched.cancel(handle)
+        self._welcome_handles = []
+
     def _on_auth_complete(self, success: bool, pulsed: bool, name, method) -> None:
         self._auth_in_progress = False
         if success and pulsed:
@@ -235,15 +317,17 @@ class SessionController:
             # precedes actuation).
             events.emit("access_granted", user_id=self._host.last_user_id,
                         method=method)
-            # Stop retrying immediately so no further attempt fires during the
-            # welcome hold (FR-SESS-06).
-            self._cancel_session_timers()
-            self._view.show_success(str(name) if name else None)
-            # Web UI auto-dismiss defaults to the live-camera screen; drive
-            # back to idle explicitly (FR-UI-03) as the session is torn down.
-            self._sched.call_later(config.WELCOME_DURATION_MS, self._end_session)
-            self._sched.call_later(config.WELCOME_DURATION_MS, self._view.show_idle)
+            if not self._match_shown:
+                # No early welcome (e.g. session ended mid-pulse): show it here.
+                self._cancel_session_timers()
+                self._view.show_success(str(name) if name else None)
+                self._sched.call_later(config.WELCOME_DURATION_MS, self._end_session)
+                self._sched.call_later(config.WELCOME_DURATION_MS, self._view.show_idle)
+            self._match_shown = False
         elif success and not pulsed:
+            # The early welcome is now wrong -- retract it and its hold timers.
+            self._cancel_welcome_timers()
+            self._match_shown = False
             # Matched but the door would not open: fail secure. Distinct from a
             # denial -- surfaced as access_output_failed, shown as a failure.
             events.emit("access_output_failed", user_id=self._host.last_user_id,

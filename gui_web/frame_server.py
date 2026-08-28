@@ -35,6 +35,14 @@ class CameraStreamer:
     frames onto image_queue; this class drains that queue, JPEG-encodes the
     newest frame, and stores the bytes for HTTP handlers to serve."""
 
+    # A frame older than this is considered stale: the PreviewController has
+    # stopped the UVC stream (auth pauses it -- the RealSense firmware needs
+    # exclusive camera access), so the last encoded JPEG no longer reflects
+    # what the camera sees. Serving it would leave the kiosk showing a frozen
+    # picture that looks like a live view. Must comfortably exceed one frame
+    # interval at the lowest expected capture rate.
+    STALE_AFTER_SEC = 0.5
+
     def __init__(self, preview_controller, jpeg_quality: int = 55, mirror: bool = True,
                  max_width: int = 720):
         self.preview = preview_controller
@@ -45,6 +53,7 @@ class CameraStreamer:
         # UI's slowness vs the Qt UI's native QLabel path on Pi-class ARM.
         self.max_width = max_width
         self._latest = None
+        self._latest_ts = 0.0
         self._lock = threading.Lock()
         self._running = False
         self._thread = None
@@ -96,13 +105,44 @@ class CameraStreamer:
         img.save(buf, format="JPEG", quality=self.jpeg_quality)
         with self._lock:
             self._latest = buf.getvalue()
+            self._latest_ts = time.monotonic()
 
     def latest(self):
+        """Newest JPEG, or None if it is stale (camera paused/stopped).
+
+        Returning None rather than the last good frame is deliberate: a paused
+        preview must not be presented as a live view (the encode loop simply
+        starves when the stream stops, so ``_latest`` would otherwise be served
+        forever).
+        """
         with self._lock:
+            if self._latest is None:
+                return None
+            if time.monotonic() - self._latest_ts > self.STALE_AFTER_SEC:
+                return None
             return self._latest
+
+    @property
+    def live(self) -> bool:
+        """True when a fresh frame is available (camera actually streaming)."""
+        return self.latest() is not None
 
     def stop(self):
         self._running = False
+
+
+def _placeholder_jpeg(width: int = 320, height: int = 320) -> bytes:
+    """A plain dark frame served while the camera is paused.
+
+    The MJPEG connection stays open across a pause, and a browser keeps
+    painting the last part it received. Skipping frames would therefore leave
+    the previous (live-looking) image on screen forever, so we must actively
+    push something neutral instead.
+    """
+    img = Image.new("RGB", (width, height), (16, 16, 18))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=70)
+    return buf.getvalue()
 
 
 def make_handler(directory, streamer, stream_fps):
@@ -126,12 +166,14 @@ def make_handler(directory, streamer, stream_fps):
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=FRAME")
             self.end_headers()
             interval = 1.0 / stream_fps
+            placeholder = _placeholder_jpeg()
             try:
                 while True:
-                    frame = streamer.latest()
-                    if frame is None:
-                        time.sleep(0.05)
-                        continue
+                    # A paused preview yields None (stale). Push the neutral
+                    # placeholder rather than skipping, otherwise the browser
+                    # keeps showing the last live frame and the screen looks
+                    # frozen mid-authentication.
+                    frame = streamer.latest() or placeholder
                     self.wfile.write(b"--FRAME\r\n")
                     self.wfile.write(b"Content-Type: image/jpeg\r\n")
                     self.wfile.write(f"Content-Length: {len(frame)}\r\n\r\n".encode())

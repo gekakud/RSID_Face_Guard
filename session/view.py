@@ -33,6 +33,18 @@ class SessionView(Protocol):
         already distinguish the biometric-backoff outcome from a face mismatch.
         """
 
+    def show_scanning(self) -> None:
+        """Optional: the camera preview is paused while the SDK authenticates.
+
+        The RealSense firmware needs exclusive camera access, so the preview is
+        stopped for the duration of each attempt. The MJPEG stream already
+        pushes a neutral placeholder in that window (see
+        ``gui_web/frame_server.py``) so no stale frame is presented as live;
+        this hook lets a front-end additionally show explicit feedback.
+
+        Front-ends may omit it -- the controller only calls it when present.
+        """
+
     def show_idle(self) -> None:
         """Return to the idle screen (screensaver in card modes)."""
 

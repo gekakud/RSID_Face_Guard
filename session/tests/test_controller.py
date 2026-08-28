@@ -322,8 +322,14 @@ def test_relay_failure_after_match_is_access_output_failed_not_granted(make_cont
     assert "access_output_failed" in types
     assert "access_granted" not in types
     assert ("failure", 2000) in view.calls
-    assert ("success", "Alice") not in view.calls
+    # The welcome is painted optimistically at match time (so the pane isn't
+    # black across the blocking pulse), but a failed strike must retract it:
+    # the failure screen has to come *after* it and be the final verdict.
+    assert view.calls.index(("failure", 2000)) > view.calls.index(("success", "Alice"))
+    assert view.calls[-1] == ("failure", 2000)
 
+    # The early welcome's hold timers were cancelled, so the only thing left to
+    # fire is the failure hold -- one advance lands on idle, not a second time.
     sched.advance(2000)
     assert view.calls[-1] == ("idle",)
 
@@ -371,4 +377,60 @@ def test_denied_face_never_pulses_relay(make_controller, sched, view):
     assert "access_granted" not in types
     assert "access_output_failed" not in types
     assert ("failure", 2000) in view.calls
+
+
+
+# --------------------------------------------------------------------------- #
+# Preview lead-in: a valid badge must show a LIVE preview before the first
+# attempt takes the camera (each attempt pauses the preview for exclusive UVC
+# access, so firing instantly left the user staring at a paused frame).
+# --------------------------------------------------------------------------- #
+
+def test_lead_in_shows_camera_before_first_attempt(make_controller, sched, view, host):
+    c = make_controller(PREVIEW_LEAD_IN_MS=700)
+
+    c.on_card_detected("card-1")
+
+    # Camera is up, but no auth attempt yet -- the preview owns the sensor.
+    assert view.calls[0] == ("camera",)
+    assert host.card_calls == []
+
+    sched.advance(699)
+    assert host.card_calls == []  # still within the lead-in
+
+    sched.advance(1)  # lead-in elapses
+    assert host.card_calls == ["card-1"]
+    assert ("success", "Alice") in view.calls
+
+
+def test_lead_in_keeps_preview_running_during_the_window(make_controller, sched, preview):
+    """The preview must actually be streaming during the lead-in."""
+    c = make_controller(PREVIEW_LEAD_IN_MS=700)
+
+    c.on_card_detected("card-1")
+
+    assert preview.resumed == 1
+    assert preview.paused == 0  # nothing has taken the camera away yet
+
+
+def test_zero_lead_in_preserves_immediate_first_attempt(make_controller, host):
+    """PREVIEW_LEAD_IN_MS = 0 restores the original NFR-03 behaviour."""
+    c = make_controller(PREVIEW_LEAD_IN_MS=0)
+
+    c.on_card_detected("card-1")
+
+    assert host.card_calls == ["card-1"]
+
+
+def test_session_ending_during_lead_in_cancels_the_attempt(make_controller, sched, host):
+    """A session torn down mid-lead-in must not fire a late auth attempt."""
+    c = make_controller(PREVIEW_LEAD_IN_MS=700)
+
+    c.on_card_detected("card-1")
+    assert host.card_calls == []
+
+    c._end_session()      # e.g. timeout / teardown before the lead-in elapses
+    sched.advance(5000)
+
+    assert host.card_calls == []  # the pending attempt was cancelled
 

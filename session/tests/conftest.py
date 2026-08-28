@@ -113,6 +113,9 @@ class FakeView:
     def show_unavailable(self, hold_ms):
         self.calls.append(("unavailable", hold_ms))
 
+    def show_scanning(self):
+        self.calls.append(("scanning",))
+
     def show_idle(self):
         self.calls.append(("idle",))
 
@@ -242,6 +245,11 @@ def make_controller(sched, view, preview, host):
 
     def _make(host_service=None, page_ready=True, qr_payload=None,
               frame=object(), on_qr_payload=None, relay=None, **config_overrides):
+        # Most tests assert on the FIRST auth attempt synchronously, so they
+        # opt out of the preview lead-in by default (0 == the original
+        # fire-immediately behaviour, NFR-03). Tests covering the lead-in pass
+        # an explicit PREVIEW_LEAD_IN_MS.
+        config_overrides.setdefault("PREVIEW_LEAD_IN_MS", 0)
         saved = {k: getattr(config, k) for k in config_overrides}
         for k, v in config_overrides.items():
             setattr(config, k, v)

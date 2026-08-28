@@ -1083,8 +1083,16 @@ work; all such work runs on background threads.
 <a id="nfr-02"></a>**NFR-02** A card tap shall produce visible UI feedback promptly; camera-free
 rejection of unknown cards per [BR-02](#br-02).
 
-<a id="nfr-03"></a>**NFR-03** The first face-match attempt shall fire immediately when a session
-starts, not after the first retry interval.
+<a id="nfr-03"></a>**NFR-03** The first face-match attempt shall fire promptly when a session
+starts -- after a short preview lead-in (`PREVIEW_LEAD_IN_MS`, default 700 ms),
+never after the full retry interval.
+
+> **Amended.** Originally "immediately". Each attempt pauses the preview because
+> the SDK needs exclusive UVC access, so firing instantly killed the camera
+> within milliseconds of starting it: on a valid badge the user saw only a
+> paused frame for the whole session. The lead-in guarantees live frames reach
+> the screen first. Setting `PREVIEW_LEAD_IN_MS = 0` restores the original
+> fire-immediately behaviour.
 
 <a id="nfr-04"></a>**NFR-04** The camera shall be off while idle, to reduce heat, wear and power
 draw on a continuously powered kiosk.

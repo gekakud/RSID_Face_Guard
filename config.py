@@ -6,7 +6,7 @@
 # "remote" -> periodically syncs from the server into the local JSON cache
 #             (existing behavior); auth lookups still always read the local
 #             cache, the remote fetch just keeps it fresh in the background.
-DB_MODE = "remote"
+DB_MODE = "local"
 
 
 # Database file (local cache / source of truth for face auth)
@@ -40,6 +40,15 @@ AUTH_ONLY_ON_CARD = True
 # point the preview is paused and the UI returns silently to idle.
 AUTH_RETRY_INTERVAL_SEC = 3.0
 AUTH_SESSION_TIMEOUT_SEC = 30.0
+
+# Preview lead-in: how long the live preview is shown before the FIRST face
+# match attempt takes the camera. Each attempt needs exclusive UVC access, so
+# it pauses the preview; firing an attempt the instant the session starts meant
+# the camera was killed within milliseconds of being turned on and the user
+# only ever saw the paused/placeholder frame. This short window guarantees real
+# frames reach the screen first. Set to 0 to restore the old fire-immediately
+# behaviour (NFR-03).
+PREVIEW_LEAD_IN_MS = 700
 
 # Kiosk mode switch (governs BOTH the Qt-widgets and web front-ends):
 #   True  -> fullscreen, no title bar / border on the small display (kiosk).

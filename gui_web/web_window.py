@@ -309,6 +309,12 @@ class WebSessionView:
         # so behaviour is unchanged in B1.
         self._device_ui.failed(hold=hold_ms)
 
+    def show_scanning(self):
+        # Preview is paused for the SDK call; the stream serves a neutral
+        # placeholder meanwhile. Keep the camera screen (no dedicated
+        # "scanning" screen exists yet) so the session view doesn't flicker.
+        self._device_ui.camera()
+
     def show_idle(self):
         self._device_ui.screensaver()
 
