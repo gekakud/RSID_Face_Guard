@@ -149,6 +149,8 @@ def main():
             events.emit("hardware_error", where="boot_relay", error=str(e))
 
     app = QApplication(sys.argv)
+
+    # TODO: init port, camera_index, device_type inside GUIWeb - not this script responsibility
     window = GUIWeb(port, camera_index, device_type)
     window.show_appropriately()
 
