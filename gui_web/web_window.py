@@ -43,7 +43,7 @@ from provisioning.binding import BindingManager
 from qr_scanner import QRScanner
 from session import SessionController
 
-from gui_qt.display_utils_qt import find_small_display_geometry
+from gui_web.display_utils import find_small_display_geometry
 from .frame_server import CameraStreamer, WebServer
 
 from observability import storage_monitor
