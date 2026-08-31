@@ -5,19 +5,19 @@
 | Item | Detail |
 |---|---|
 | Document ID | PLAN-FG-001 |
-| Revision | 1.1 |
-| Date | 2026-08-26 |
-| Specification | [`SOFTWARE_REQUIREMENTS.md`](SOFTWARE_REQUIREMENTS.md) rev 1.3 |
-| Basis | Static audit of the working tree; every status below carries `file:line` evidence |
+| Revision | 1.2 |
+| Date | 2026-08-31 |
+| Specification | [`SOFTWARE_REQUIREMENTS.md`](SOFTWARE_REQUIREMENTS.md) rev 1.4 |
+| Basis | Static audit of the working tree. Evidence cites **file + symbol**, never line numbers — rev 1.1 used `file:line` and every reference rotted the moment [T1](#delivered) moved the session machine |
 | Scope | Device application **and** the reference server (`server/`) |
-| Delivery model | Small batches (B0..B13, [§3](#3-batches-and-device-validation)); each batch is device-validated by the owner before the next starts |
-| Decision | `gui_qt/` is **frozen**: it receives no new features and is not ported to the shared controller. Web UI is the only maintained front-end |
+| Delivery model | Small batches (B0..B14, [§3](#3-batches-and-device-validation)); each batch is device-validated by the owner before the next starts |
+| Front-end | Web UI only. `gui_qt/` and `main_qt.py` were **deleted** on 2026-08-31 (rev 1.1 called them "frozen"). PySide6/QtWebEngine remains the runtime host of the web UI — the *widgets* front-end is what went away |
 
-**How to read this.** [§1](#1-reconciliation-table) states, per requirement, what the
-code does *today*. [§2](#2-task-list) turns every gap into a task, ordered so that
-architectural changes land first and no later task forces a rewrite of an
-earlier one. [§3](#3-batches-and-device-validation) is the batch schedule and
-per-batch device-validation checklists.
+**How to read this.** [§1](#1-reconciliation-table) states, per requirement, what
+the code does *today*. [§2](#2-task-list) is the live queue of remaining work,
+plus a [Delivered](#delivered) roll-up of what has shipped.
+[§3](#3-batches-and-device-validation) is the batch schedule and per-batch
+device-validation checklists.
 
 Status legend: **✅ IMPLEMENTED** · **⚠️ PARTIAL** · **❌ MISSING** ·
 **➖ DEPRECATED** (withdrawn in SRS rev 1.2, no work required).
@@ -30,337 +30,362 @@ Status legend: **✅ IMPLEMENTED** · **⚠️ PARTIAL** · **❌ MISSING** ·
 
 | Area | ✅ | ⚠️ | ❌ | ➖ |
 |---|---|---|---|---|
-| FR-STATE (12) | 6 | 0 | 0 | 4 *(06/08/10/12)* |
+| FR-STATE (12) | 8 | 0 | 0 | 4 *(06/08/10/12)* |
 | FR-MODE (11) | 3 | 0 | 8 | 0 |
 | FR-SESS (8) | 7 | 1 | 0 | 0 |
-| FR-FACE (7) | 4 | 3 | 0 | 0 |
-| FR-CARD (6) | 6 | 0 | 0 | 0 |
-| FR-OUT (6) | 5 | 0 | 1 | 0 |
+| FR-FACE (7) | 6 | 1 | 0 | 0 |
+| FR-CARD (6) | 5 | 1 | 0 | 0 |
+| FR-OUT (6) | 6 | 0 | 0 | 0 |
 | FR-DB (8) | 7 | 1 | 0 | 0 |
-| FR-PROV (11) | 7 | 3 | 1 | 0 |
+| FR-PROV (11) | 10 | 1 | 0 | 0 |
 | FR-NET (5) | 4 | 1 | 0 | 0 |
-| FR-HB (10) | 8 | 1 | 1 | 0 |
+| FR-HB (10) | 10 | 0 | 0 | 0 |
 | FR-LOG (5) | 4 | 1 | 0 | 0 |
 | FR-CAM (4) | 4 | 0 | 0 | 0 |
 | FR-UI (12) | 7 | 2 | 1 | 2 *(02/10)* |
-| FR-API (15) | 9 | 3 | 1 | 1 *(12)* |
-| FR-DATA (7) | 2 | 3 | 2 | 0 |
+| FR-API (15) | 9 | 4 | 1 | 1 *(12)* |
+| FR-DATA (7) | 6 | 1 | 0 | 0 |
 | BR (7) | 6 | 1 | 0 | 0 |
-| NFR (22) | 19 | 3 | 0 | 0 |
-| **Total (156)** | **108** | **23** | **15** | **7** |
+| NFR (22) | 21 | 1 | 0 | 0 |
+| **Total (156)** | **123** | **16** | **10** | **7** |
 
-Active requirements: 149. **Compliance today: 108/149 = 72 %.**
+Active requirements: 149. **Compliance today: 123/149 = 83 %** (rev 1.1 stated
+72 %, against a summary table whose FR-STATE row summed to 10 of 12 and whose
+FR-DATA row contradicted its own detail section; both are corrected here).
 
 ### 1.2 Operating states — FR-STATE
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-STATE-01](SOFTWARE_REQUIREMENTS.md#fr-state-01) | ✅ | `provisioning/binding.py:44-61` `start_if_bound()` resumes from persisted identity |
-| [FR-STATE-02](SOFTWARE_REQUIREMENTS.md#fr-state-02) | ✅ | Revocation resets to init mode in-process (no identity + init active = deny-all) — see [FR-HB-10](#fr-hb-10-row) → **T6** |
-| [FR-STATE-03](SOFTWARE_REQUIREMENTS.md#fr-state-03) | ✅ | Session guarded by `_session_active` / `auth_in_progress` (`gui_web/web_window.py:579,600-602`) |
-| [FR-STATE-04](SOFTWARE_REQUIREMENTS.md#fr-state-04) | ✅ | Full flow runs from local cache; no server call on the door path |
-| [FR-STATE-05](SOFTWARE_REQUIREMENTS.md#fr-state-05) | ✅ | `db/user_database.py:148-150` in-memory cache lookup |
+| [FR-STATE-01](SOFTWARE_REQUIREMENTS.md#fr-state-01) | ✅ | `provisioning/binding.py` `start_if_bound()` resumes from the persisted identity |
+| [FR-STATE-02](SOFTWARE_REQUIREMENTS.md#fr-state-02) | ✅ | Revocation resets to init mode in-process — no identity + init active = deny-all (`binding.py` `_handle_revoked()`); see [FR-HB-10](#fr-hb-10-row) |
+| [FR-STATE-03](SOFTWARE_REQUIREMENTS.md#fr-state-03) | ✅ | `session/controller.py` guards on `session_active` / `auth_in_progress` |
+| [FR-STATE-04](SOFTWARE_REQUIREMENTS.md#fr-state-04) | ✅ | Full flow runs from the local cache; no server call on the door path |
+| [FR-STATE-05](SOFTWARE_REQUIREMENTS.md#fr-state-05) | ✅ | `db/user_database.py` `get_user()` reads the in-memory cache |
 | FR-STATE-06 | ➖ | Deprecated rev 1.2 |
-| [FR-STATE-07](SOFTWARE_REQUIREMENTS.md#fr-state-07) | ✅ | Buffered in ring, drained on ack (`provisioning/heartbeat.py:92-119`) |
+| [FR-STATE-07](SOFTWARE_REQUIREMENTS.md#fr-state-07) | ✅ | Buffered in the ring, drained on ack (`provisioning/heartbeat.py` `_run()`) |
 | FR-STATE-08 | ➖ | Deprecated rev 1.2 |
-| [FR-STATE-09](SOFTWARE_REQUIREMENTS.md#fr-state-09) | ✅ | `db/user_database.py:93-134` periodic background sync |
+| [FR-STATE-09](SOFTWARE_REQUIREMENTS.md#fr-state-09) | ✅ | `db/user_database.py` `start_auto_sync()` background loop |
 | FR-STATE-10 | ➖ | Deprecated rev 1.2 |
-| [FR-STATE-11](SOFTWARE_REQUIREMENTS.md#fr-state-11) | ✅ | Only 410 raises `DeviceRevokedError` (`provisioning/client.py:134-137`) |
+| [FR-STATE-11](SOFTWARE_REQUIREMENTS.md#fr-state-11) | ✅ | Only 410 raises `DeviceRevokedError` (`provisioning/client.py` `post_status()`) |
 | FR-STATE-12 | ➖ | Deprecated rev 1.2 |
 
 ### 1.3 Operating modes — FR-MODE
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-MODE-01](SOFTWARE_REQUIREMENTS.md#fr-mode-01) | ❌ | `device_mode` has **zero hits** repo-wide; absent from `server/models.py:104-111` `RegisterResponse` and `provisioning/identity.py:40-53`. Mode is the local boolean `config.py:33` → **T4** |
-| [FR-MODE-02](SOFTWARE_REQUIREMENTS.md#fr-mode-02) | ✅ | `face_auth/auth_service.py:154-158,335-341` DB-only check, no camera |
-| [FR-MODE-03](SOFTWARE_REQUIREMENTS.md#fr-mode-03) | ❌ | No `card_only`; every card path calls `authenticate_with_card` (`web_window.py:639-642`) → **T7** |
-| [FR-MODE-04](SOFTWARE_REQUIREMENTS.md#fr-mode-04) | ✅ | `face_auth/auth_service.py:160-216` 1:1 against cardholder |
-| [FR-MODE-05](SOFTWARE_REQUIREMENTS.md#fr-mode-05) | ✅ | `face_auth/auth_service.py:219-293`, gated by `AUTH_ONLY_ON_CARD` |
-| [FR-MODE-06](SOFTWARE_REQUIREMENTS.md#fr-mode-06) | ❌ | No IN/OUT screen or latch. `demo_ui/app.js:249-275` toggle is cosmetic — never read by Python → **T8** |
-| [FR-MODE-07](SOFTWARE_REQUIREMENTS.md#fr-mode-07) | ❌ | No `attendance_event` emission anywhere → **T8** |
-| [FR-MODE-08](SOFTWARE_REQUIREMENTS.md#fr-mode-08) | ❌ | No relay-suppressed mode → **T8** |
-| [FR-MODE-09](SOFTWARE_REQUIREMENTS.md#fr-mode-09) | ❌ | Depends on T8 → **T8** |
-| [FR-MODE-10](SOFTWARE_REQUIREMENTS.md#fr-mode-10) | ❌ | No durable disk queue; only the in-memory deque `observability/events.py:41-44` → **T5** |
-| [FR-MODE-11](SOFTWARE_REQUIREMENTS.md#fr-mode-11) | ❌ | Pointer to [FR-API-15](#fr-api-15-row) → **T8** |
+| [FR-MODE-01](SOFTWARE_REQUIREMENTS.md#fr-mode-01) | ❌ | `device_mode` / `face_policy` have **zero hits** across `config.py`, `provisioning/`, `session/` and `server/`; absent from `server/models.py` `RegisterResponse` and from `provisioning/identity.py` `DeviceIdentity`. Mode is still the local boolean `config.AUTH_ONLY_ON_CARD` → **[T4](#t4)** |
+| [FR-MODE-02](SOFTWARE_REQUIREMENTS.md#fr-mode-02) | ✅ | `face_auth/auth_service.py` `card_is_registered()` — DB-only check, no camera |
+| [FR-MODE-03](SOFTWARE_REQUIREMENTS.md#fr-mode-03) | ❌ | No `card_only`; `controller.py` `on_card_detected()` always starts a session → **[T7](#t7)** |
+| [FR-MODE-04](SOFTWARE_REQUIREMENTS.md#fr-mode-04) | ✅ | `auth_service.py` `authenticate_with_card()` — 1:1 against the cardholder |
+| [FR-MODE-05](SOFTWARE_REQUIREMENTS.md#fr-mode-05) | ✅ | `auth_service.py` `authenticate_face_only()`, gated by `AUTH_ONLY_ON_CARD` via `controller.py` `on_user_tapped()` |
+| [FR-MODE-06](SOFTWARE_REQUIREMENTS.md#fr-mode-06) | ❌ | No IN/OUT screen or latch. The `demo_ui/app.js` `setAttendanceMode()` toggle is cosmetic — never read by Python → **[T8](#t8)** |
+| [FR-MODE-07](SOFTWARE_REQUIREMENTS.md#fr-mode-07) | ❌ | No `attendance_event` emission anywhere → **[T8](#t8)** |
+| [FR-MODE-08](SOFTWARE_REQUIREMENTS.md#fr-mode-08) | ❌ | No relay-suppressed mode → **[T8](#t8)** |
+| [FR-MODE-09](SOFTWARE_REQUIREMENTS.md#fr-mode-09) | ❌ | Depends on T8 → **[T8](#t8)** |
+| [FR-MODE-10](SOFTWARE_REQUIREMENTS.md#fr-mode-10) | ❌ | No durable disk queue — `observability/durable_queue.py` does not exist; only the bounded `deque` in `observability/events.py` → **[T5b](#t5b)** |
+| [FR-MODE-11](SOFTWARE_REQUIREMENTS.md#fr-mode-11) | ❌ | Pointer to [FR-API-15](#fr-api-15-row) → **[T8](#t8)** |
 
 ### 1.4 Session orchestration — FR-SESS
 
+All session logic now lives in `session/controller.py`; `gui_web/web_window.py`
+holds only the `WebSessionView` adapter, `QtScheduler` and platform glue.
+
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-SESS-01](SOFTWARE_REQUIREMENTS.md#fr-sess-01) | ✅ | `gui_web/web_window.py:488-528`, `gui_web/frame_server.py:150-175` same-origin loopback |
-| [FR-SESS-02](SOFTWARE_REQUIREMENTS.md#fr-sess-02) | ✅ | Preview paused at startup `web_window.py:334-335`, resumed per session `:588` |
-| [FR-SESS-03](SOFTWARE_REQUIREMENTS.md#fr-sess-03) | ⚠️ | Two gaps: (a) no different-card pre-emption — flag cleared only after the hold (`auth_service.py:332-333`, `web_window.py:677,691`); (b) card path omits the init-mode guard (`web_window.py:579`) → **T9** |
-| [FR-SESS-04](SOFTWARE_REQUIREMENTS.md#fr-sess-04) | ✅ | `web_window.py:590-598` retry/timeout; card session ends on first failure `:679-692` |
-| [FR-SESS-05](SOFTWARE_REQUIREMENTS.md#fr-sess-05) | ✅ | `web_window.py:600-602,630-633` |
-| [FR-SESS-06](SOFTWARE_REQUIREMENTS.md#fr-sess-06) | ✅ | `web_window.py:658-672` timers stopped before result |
-| [FR-SESS-07](SOFTWARE_REQUIREMENTS.md#fr-sess-07) | ✅ | Worker thread `:634` → `_SignalBridge.auth_result` `:244-247` |
-| [FR-SESS-08](SOFTWARE_REQUIREMENTS.md#fr-sess-08) | ✅ | `web_window.py:611-624` |
+| [FR-SESS-01](SOFTWARE_REQUIREMENTS.md#fr-sess-01) | ✅ | `gui_web/frame_server.py` `WebServer` + `CameraStreamer` serve page and MJPEG from one loopback origin |
+| [FR-SESS-02](SOFTWARE_REQUIREMENTS.md#fr-sess-02) | ✅ | Preview paused at construction (`GUIWeb.__init__`), resumed per session in `controller.start_session()` |
+| [FR-SESS-03](SOFTWARE_REQUIREMENTS.md#fr-sess-03) | ⚠️ | Two gaps. (a) No different-card pre-emption: the card flag clears in `controller._end_session()`, which the result hold schedules, so reads stay suppressed through the hold. (b) `on_card_detected()` → `start_session()` guards only on `_session_active` / `_is_page_ready()` — the **init-mode guard present on `on_user_tapped()` and `on_card_rejected()` is missing on the registered-card path**, so a card tap during init mode starts a session → **[T9](#t9)** |
+| [FR-SESS-04](SOFTWARE_REQUIREMENTS.md#fr-sess-04) | ✅ | `controller.py` retry/timeout handles; card session ends on first mismatch in `_on_auth_complete()` (BR-05) |
+| [FR-SESS-05](SOFTWARE_REQUIREMENTS.md#fr-sess-05) | ✅ | `controller._authenticate()` skips a tick while `_auth_in_progress` |
+| [FR-SESS-06](SOFTWARE_REQUIREMENTS.md#fr-sess-06) | ✅ | `_cancel_session_timers()` runs before every result render in `_on_auth_complete()` |
+| [FR-SESS-07](SOFTWARE_REQUIREMENTS.md#fr-sess-07) | ✅ | `_run_authentication()` on a worker thread → `QtScheduler.post_to_ui()` → `_SignalBridge` |
+| [FR-SESS-08](SOFTWARE_REQUIREMENTS.md#fr-sess-08) | ✅ | `controller._end_session()` pauses preview, clears the card flag, returns to idle |
 
 ### 1.5 Face authentication — FR-FACE
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-FACE-01](SOFTWARE_REQUIREMENTS.md#fr-face-01) | ✅ | `face_auth/auth_service.py:71-77` connect; 1:1 `:160`, 1:N `:219` |
-| [FR-FACE-02](SOFTWARE_REQUIREMENTS.md#fr-face-02) | ✅ | `face_auth/auth_service.py:170,184-195` |
-| [FR-FACE-03](SOFTWARE_REQUIREMENTS.md#fr-face-03) | ⚠️ | Rule correct (`:197,266-268`) but threshold/score **never logged** → **T12** |
-| [FR-FACE-04](SOFTWARE_REQUIREMENTS.md#fr-face-04) | ✅ | **T2 done.** Decision/actuation split: `auth_service.py` emits `auth_matched` only (`:198-202,282-284`) and has no relay import (`:22`); the controller actuates (`session/controller.py:209-222`) |
-| [FR-FACE-05](SOFTWARE_REQUIREMENTS.md#fr-face-05) | ✅ | `:179-181`, `:186-188`, `:202`, `:279` distinct reasons |
-| [FR-FACE-06](SOFTWARE_REQUIREMENTS.md#fr-face-06) | ⚠️ | Backoff + reconnect + event exist (`:212-215,289-292`) but the gate is only on the face-only path (`:229-232`), **not** the card path; no UI feedback → **T9** |
-| [FR-FACE-07](SOFTWARE_REQUIREMENTS.md#fr-face-07) | ✅ | All exception paths return deny (`:210-216,287-293`) |
+| [FR-FACE-01](SOFTWARE_REQUIREMENTS.md#fr-face-01) | ✅ | `auth_service.HostModeService.__init__` connects; 1:1 `authenticate_with_card()`, 1:N `authenticate_face_only()` |
+| [FR-FACE-02](SOFTWARE_REQUIREMENTS.md#fr-face-02) | ✅ | `authenticate_with_card()` matches only the cardholder's stored faceprints |
+| [FR-FACE-03](SOFTWARE_REQUIREMENTS.md#fr-face-03) | ✅ | **T12 done.** One decision line per path: `1:1 decision: card=… sdk_success=… score=… threshold=… -> GRANT/DENY`, and the 1:N equivalent |
+| [FR-FACE-04](SOFTWARE_REQUIREMENTS.md#fr-face-04) | ✅ | **T2 done.** `auth_service.py` emits `auth_matched` only and imports just `disconnect_relay`; `controller._open_access_point()` actuates |
+| [FR-FACE-05](SOFTWARE_REQUIREMENTS.md#fr-face-05) | ✅ | Distinct denial reasons: `face_extraction_failed`, `no_faceprints_on_file`, `face_mismatch`, `no_match`, `user_inactive` |
+| [FR-FACE-06](SOFTWARE_REQUIREMENTS.md#fr-face-06) | ⚠️ | Backoff + background reconnect + `hardware_error` all exist (`_reconnect()`, `_error_backoff_until`), but the **gate sits inside `authenticate_face_only()` only** — `authenticate_with_card()` has none, and nothing surfaces the condition to the UI → **[T9](#t9)** |
+| [FR-FACE-07](SOFTWARE_REQUIREMENTS.md#fr-face-07) | ✅ | Every exception path returns a deny tuple |
 
 ### 1.6 Card reader — FR-CARD
 
-All ✅. `hardware/card_reader_api.py:35-76` backend selection; `face_auth/auth_service.py:314-357` monitor thread, 2 s cooldown `:317,329-330`, DB check `:154-158,335`, separate callbacks `:339-346`, exception recovery `:348-351`.
-
-> Note: [FR-CARD-04](SOFTWARE_REQUIREMENTS.md#fr-card-04) is ✅ *as coded* but the SRS requires reads to resume **during** the result hold; the flag clears only after it (`web_window.py:677,691`). Corrected under **T9** together with [FR-SESS-03](SOFTWARE_REQUIREMENTS.md#fr-sess-03).
+| ID | Status | Evidence / gap |
+|---|---|---|
+| [FR-CARD-01](SOFTWARE_REQUIREMENTS.md#fr-card-01) | ✅ | `hardware/card_reader_api.py` selects the backend from `config.CARD_READER_BACKEND` |
+| [FR-CARD-02](SOFTWARE_REQUIREMENTS.md#fr-card-02) | ✅ | `auth_service.start_card_monitoring()` daemon loop; never touches the UI thread |
+| [FR-CARD-03](SOFTWARE_REQUIREMENTS.md#fr-card-03) | ✅ | 2 s per-card cooldown inside the monitor loop |
+| [FR-CARD-04](SOFTWARE_REQUIREMENTS.md#fr-card-04) | ⚠️ | ✅ *as coded*, but the SRS requires reads to resume **during** the result hold so a different card can pre-empt it. `mark_card_session_done()` is only called from `controller._end_session()`, which the hold schedules → **[T9](#t9)**, with [FR-SESS-03](SOFTWARE_REQUIREMENTS.md#fr-sess-03). *(Rev 1.1 marked this ✅ while documenting the same gap two lines later.)* |
+| [FR-CARD-05](SOFTWARE_REQUIREMENTS.md#fr-card-05) | ✅ | `card_is_registered()` gate; separate `on_card_detected` / `on_card_rejected` callbacks |
+| [FR-CARD-06](SOFTWARE_REQUIREMENTS.md#fr-card-06) | ✅ | Monitor loop logs, emits `hardware_error` (`where="card_monitor"`), sleeps and continues |
 
 ### 1.7 Access output — FR-OUT
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-OUT-01](SOFTWARE_REQUIREMENTS.md#fr-out-01) | ✅ | `config.py:164-168`, `hardware/relay_api.py:110-113` |
-| [FR-OUT-02](SOFTWARE_REQUIREMENTS.md#fr-out-02) | ✅ | Daemon thread, 3 s default (`auth_service.py:37`, `relay_api.py:71-82`) |
-| [FR-OUT-03](SOFTWARE_REQUIREMENTS.md#fr-out-03) | ✅ | `relay_api.py:119` |
-| [FR-OUT-04](SOFTWARE_REQUIREMENTS.md#fr-out-04) | ✅ | `auth_service.py:79-84` non-fatal |
-| [FR-OUT-05](SOFTWARE_REQUIREMENTS.md#fr-out-05) | ✅ | `relay_api.py:49-59` degrades gracefully |
-| [FR-OUT-06](SOFTWARE_REQUIREMENTS.md#fr-out-06) | ✅ | **T2 done.** `access_granted` is emitted only after a successful pulse (`session/controller.py:226-230`); a failed/raising pulse yields the new `access_output_failed` (`:239-243`), distinct from `access_denied` |
+| [FR-OUT-01](SOFTWARE_REQUIREMENTS.md#fr-out-01) | ✅ | `config.RELAY_*`; `hardware/relay_api.RelayController.initialize()` |
+| [FR-OUT-02](SOFTWARE_REQUIREMENTS.md#fr-out-02) | ✅ | `controller._open_access_point()` pulses off the UI thread; `open_door(seconds=3.0)` default |
+| [FR-OUT-03](SOFTWARE_REQUIREMENTS.md#fr-out-03) | ✅ | `relay_api.RelayController.open_door()` emits `relay_opened` |
+| [FR-OUT-04](SOFTWARE_REQUIREMENTS.md#fr-out-04) | ✅ | Wiegand-tx init failure non-fatal in `HostModeService.__init__` |
+| [FR-OUT-05](SOFTWARE_REQUIREMENTS.md#fr-out-05) | ✅ | `RelayController.initialize()` degrades gracefully when lgpio/pin is unavailable |
+| [FR-OUT-06](SOFTWARE_REQUIREMENTS.md#fr-out-06) | ✅ | **T2 done.** `access_granted` only after a successful pulse; a failed/raising pulse yields `access_output_failed` (`controller._on_auth_complete()`) |
 
 ### 1.8 User DB & sync — FR-DB
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-DB-01](SOFTWARE_REQUIREMENTS.md#fr-db-01) | ⚠️ | Atomic write ✅ (`db/local_provider.py:35-42`); schema v2 ✅ — `user_id` required and `active` normalised (`db/remote_provider.py:_add_if_valid`). Remaining gap: `faceprints` is still a **dict, not a list** → **T3b** |
-| [FR-DB-02](SOFTWARE_REQUIREMENTS.md#fr-db-02) | ✅ | `auth_service.py:158,170,200`; `permission_level` never gates |
-| [FR-DB-03](SOFTWARE_REQUIREMENTS.md#fr-db-03) | ✅ | `db/user_database.py:93-134` |
-| [FR-DB-04](SOFTWARE_REQUIREMENTS.md#fr-db-04) | ✅ | `db/user_database.py:148-150` |
-| [FR-DB-05](SOFTWARE_REQUIREMENTS.md#fr-db-05) | ✅ | `db/remote_provider.py:134-145`; failed fetch is a no-op `db/user_database.py:74-76` |
-| [FR-DB-06](SOFTWARE_REQUIREMENTS.md#fr-db-06) | ✅ | All four events present (`remote_provider.py:86,67,143,88`) |
-| [FR-DB-07](SOFTWARE_REQUIREMENTS.md#fr-db-07) | ✅ | `db/remote_provider.py:55-57` |
-| [FR-DB-08](SOFTWARE_REQUIREMENTS.md#fr-db-08) | ✅ | `db/user_database.py:78-90` full replace + `db_users_revoked` |
+| [FR-DB-01](SOFTWARE_REQUIREMENTS.md#fr-db-01) | ⚠️ | Atomic write ✅ (`db/local_provider.py` `save_all()`); schema v2 ✅ (`remote_provider._add_if_valid()` requires `user_id`, normalises `active`). Remaining gap: `faceprints` is still a **dict, not a list** → **[T3b](#t3b)** |
+| [FR-DB-02](SOFTWARE_REQUIREMENTS.md#fr-db-02) | ✅ | Local membership authorises; `permission_level` never gates |
+| [FR-DB-03](SOFTWARE_REQUIREMENTS.md#fr-db-03) | ✅ | `user_database.start_auto_sync()` on `DB_SYNC_INTERVAL_SEC` |
+| [FR-DB-04](SOFTWARE_REQUIREMENTS.md#fr-db-04) | ✅ | `get_user()` / `get_all_users()` read the cache only |
+| [FR-DB-05](SOFTWARE_REQUIREMENTS.md#fr-db-05) | ✅ | `remote_provider.load_all()` + `_parse_users()`; a failed fetch is a no-op in `sync_from_remote()` |
+| [FR-DB-06](SOFTWARE_REQUIREMENTS.md#fr-db-06) | ✅ | All four events emitted from `db/remote_provider.py` |
+| [FR-DB-07](SOFTWARE_REQUIREMENTS.md#fr-db-07) | ✅ | Skipped while unbound, and **re-armed on bind** via `attach_remote()` / `HostModeService.enable_remote_sync()` — see [Delivered #12](#delivered) |
+| [FR-DB-08](SOFTWARE_REQUIREMENTS.md#fr-db-08) | ✅ | `sync_from_remote()` full replace + `db_users_revoked` |
 
 ### 1.9 Provisioning & QR trust — FR-PROV
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-PROV-01](SOFTWARE_REQUIREMENTS.md#fr-prov-01) | ✅ | Init mode is the entry state on **every** start (T16): `session/controller.py:215-243` always enters + emits `init_mode_entered`, then either runs the scan window or ends at delay 0; `gui_web/web_window.py:568-571` calls it unconditionally. `INIT_MODE_ENABLED` now sizes the window only (`config.py:49-61`) |
-| [FR-PROV-02](SOFTWARE_REQUIREMENTS.md#fr-prov-02) | ✅ | `qr_scanner/qr_scanner.py:13-34,129,134,162,173` |
-| [FR-PROV-03](SOFTWARE_REQUIREMENTS.md#fr-prov-03) | ⚠️ | All four offline checks present (`:129,140-144,152-157,162-171`) but an in-process **nonce set** remains (`:116,173-178`); rev 1.2 moved replay protection server-side → **T6** |
-| [FR-PROV-04](SOFTWARE_REQUIREMENTS.md#fr-prov-04) | ✅ | `qr_scanner.py:74-97`; empty store rejects all |
-| [FR-PROV-05](SOFTWARE_REQUIREMENTS.md#fr-prov-05) | ✅ | Warning vs `SECURITY:` error `:130,136,143,149,155`; events `:229,233` |
-| [FR-PROV-06](SOFTWARE_REQUIREMENTS.md#fr-prov-06) | ❌ | `command` is documented (`qr_scanner.py:16`) but **never checked** → **T11** |
-| [FR-PROV-07](SOFTWARE_REQUIREMENTS.md#fr-prov-07) | ✅ | `provisioning/client.py:52-58`, async `binding.py:65-75` |
-| [FR-PROV-08](SOFTWARE_REQUIREMENTS.md#fr-prov-08) | ✅ | `web_window.py:384-389` 3 s / 6 s; reason from `client.py:83-92` |
-| [FR-PROV-09](SOFTWARE_REQUIREMENTS.md#fr-prov-09) | ⚠️ | Atomic ✅ `identity.py:89-96`, gitignored ✅; **no `chmod 0600`** anywhere → **T10** |
-| [FR-PROV-10](SOFTWARE_REQUIREMENTS.md#fr-prov-10) | ✅ | `provisioning/binding.py:77-100` (device side) |
-| [FR-PROV-11](SOFTWARE_REQUIREMENTS.md#fr-prov-11) | ✅ | Token not persisted (`identity.py:40-53`) |
+| [FR-PROV-01](SOFTWARE_REQUIREMENTS.md#fr-prov-01) | ✅ | **T16 done.** `controller.start_init_mode()` always enters and emits `init_mode_entered`, then either runs the scan window or ends at delay 0; called unconditionally from `GUIWeb._on_load_finished()`. `INIT_MODE_ENABLED` sizes the window only |
+| [FR-PROV-02](SOFTWARE_REQUIREMENTS.md#fr-prov-02) | ✅ | Envelope schema documented and parsed in `qr_scanner/qr_scanner.py` |
+| [FR-PROV-03](SOFTWARE_REQUIREMENTS.md#fr-prov-03) | ⚠️ | All four offline checks present in `QRScanner._verify()`, but the in-process **nonce set** (`_seen_nonces`) remains; SRS rev 1.2 moved replay protection server-side → **[T19](#t19)** *(re-targeted: T6 shipped deliberately keeping it)* |
+| [FR-PROV-04](SOFTWARE_REQUIREMENTS.md#fr-prov-04) | ✅ | `_load_public_keys()`; an empty trust store rejects all |
+| [FR-PROV-05](SOFTWARE_REQUIREMENTS.md#fr-prov-05) | ✅ | Warning vs `SECURITY:` error inside `_verify()`; `qr_accepted` / `qr_rejected` from `scan()` |
+| [FR-PROV-06](SOFTWARE_REQUIREMENTS.md#fr-prov-06) | ✅ | **T11 done.** `EXPECTED_COMMAND` check in `_verify()`, benign classification |
+| [FR-PROV-07](SOFTWARE_REQUIREMENTS.md#fr-prov-07) | ✅ | `provisioning/network.apply()` then `client.register()`, off the UI thread via `binding.bind_async()` |
+| [FR-PROV-08](SOFTWARE_REQUIREMENTS.md#fr-prov-08) | ✅ | `GUIWeb._on_binding_result()` holds 3 s ok / 6 s fail; reason surfaced from `client.register()` |
+| [FR-PROV-09](SOFTWARE_REQUIREMENTS.md#fr-prov-09) | ✅ | **T10 done.** `identity.save()` creates the temp file `0o600` via `os.open` and re-asserts the mode after `os.replace`; gitignored |
+| [FR-PROV-10](SOFTWARE_REQUIREMENTS.md#fr-prov-10) | ✅ | `binding._bind()` replaces the prior identity (device side) |
+| [FR-PROV-11](SOFTWARE_REQUIREMENTS.md#fr-prov-11) | ✅ | Token not persisted by `DeviceIdentity` |
 
 ### 1.10 Network profile — FR-NET
 
-[FR-NET-01](SOFTWARE_REQUIREMENTS.md#fr-net-01)/[02](SOFTWARE_REQUIREMENTS.md#fr-net-02)/[04](SOFTWARE_REQUIREMENTS.md#fr-net-04)/[05](SOFTWARE_REQUIREMENTS.md#fr-net-05) ✅ — `provisioning/network.py:65-69,84-118`, timeout `:106,113`.
-[FR-NET-03](SOFTWARE_REQUIREMENTS.md#fr-net-03) ⚠️ — `config.py:148` ships `APPLY_NETWORK_PROFILE = True`; SRS requires default-disabled → **T15**.
+[FR-NET-01](SOFTWARE_REQUIREMENTS.md#fr-net-01)/[02](SOFTWARE_REQUIREMENTS.md#fr-net-02)/[04](SOFTWARE_REQUIREMENTS.md#fr-net-04)/[05](SOFTWARE_REQUIREMENTS.md#fr-net-05)
+✅ — `provisioning/network.py` `apply()`, `_have_nmcli()`, `_is_connected()`, bounded timeouts throughout.
+
+[FR-NET-03](SOFTWARE_REQUIREMENTS.md#fr-net-03) ⚠️ — `config.APPLY_NETWORK_PROFILE = True`
+is checked in; the SRS requires default-disabled → **[T15](#t15)**.
 
 ### 1.11 Heartbeat & telemetry — FR-HB
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-HB-01](SOFTWARE_REQUIREMENTS.md#fr-hb-01)..[04](SOFTWARE_REQUIREMENTS.md#fr-hb-04) | ✅ | `provisioning/heartbeat.py:53-59,77-97`; `observability/events.py:43-73` |
-| [FR-HB-05](SOFTWARE_REQUIREMENTS.md#fr-hb-05) | ✅ | Ack **by `event_id`**, never by position (`events.ack(event_ids)` `events.py:87-103`; `heartbeat.py:119`, `binding.py:181`) — **B4/T5a** |
-| [FR-HB-06](SOFTWARE_REQUIREMENTS.md#fr-hb-06)..[09](SOFTWARE_REQUIREMENTS.md#fr-hb-09) | ✅ | uuid4 `:62`; cap 200 `:41-44`; backoff `heartbeat.py:134`; shutdown flush `binding.py:148-183` |
-| [FR-HB-10](SOFTWARE_REQUIREMENTS.md#fr-hb-10) <a id="fr-hb-10-row"></a> | ✅ | On 410: emit `device_revoked` + flush while bound → stop heartbeat/sync → delete identity → purge user DB incl. faceprints → in-process return to init mode (deny-all). `binding.py` `_handle_revoked`, `web_window.py` `_on_device_revoked`. Server-side revoke-ack out of scope → **T6** |
+| [FR-HB-01](SOFTWARE_REQUIREMENTS.md#fr-hb-01)..[04](SOFTWARE_REQUIREMENTS.md#fr-hb-04) | ✅ | `heartbeat.HeartbeatWorker.start()` / `_run()` / `_collect()`; `events.emit()` |
+| [FR-HB-05](SOFTWARE_REQUIREMENTS.md#fr-hb-05) | ✅ | **T5a done (B4).** Ack **by `event_id`**, never by position — `events.ack(event_ids)`, called from `heartbeat._run()` and `binding._flush_events()` |
+| [FR-HB-06](SOFTWARE_REQUIREMENTS.md#fr-hb-06)..[09](SOFTWARE_REQUIREMENTS.md#fr-hb-09) | ✅ | uuid4 `event_id` in `emit()`; `_MAX_EVENTS = 200` drop-oldest; backoff in `_run()`; shutdown flush in `binding.shutdown()` |
+| [FR-HB-10](SOFTWARE_REQUIREMENTS.md#fr-hb-10) <a id="fr-hb-10-row"></a> | ✅ | **T6 done (B5).** `binding._handle_revoked()`: emit + flush `device_revoked` while bound → stop heartbeat/sync → delete identity → purge user DB incl. faceprints → in-process return to init mode. **Step 6 (systemd self-restart) is not implemented** — the reset is in-process; recorded as SRS [D21](SOFTWARE_REQUIREMENTS.md#d21) → **[T20](#t20)** |
 
 ### 1.12 Logging & storage — FR-LOG
 
-[FR-LOG-01](SOFTWARE_REQUIREMENTS.md#fr-log-01)/[02](SOFTWARE_REQUIREMENTS.md#fr-log-02)/[03](SOFTWARE_REQUIREMENTS.md#fr-log-03)/[05](SOFTWARE_REQUIREMENTS.md#fr-log-05) ✅ — `observability/logging_setup.py:74-151`, `storage_monitor.py:44-98`.
-[FR-LOG-04](SOFTWARE_REQUIREMENTS.md#fr-log-04) ⚠️ — no secret is *logged*, but the Wi-Fi password is passed on the `nmcli` command line (`provisioning/network.py:101`), exposing it in the process list → **T15**.
+[FR-LOG-01](SOFTWARE_REQUIREMENTS.md#fr-log-01)/[02](SOFTWARE_REQUIREMENTS.md#fr-log-02)/[03](SOFTWARE_REQUIREMENTS.md#fr-log-03)/[05](SOFTWARE_REQUIREMENTS.md#fr-log-05)
+✅ — `observability/logging_setup.py` `setup_logging()` + `install_native_log_bridge()`;
+`storage_monitor.check_storage()` / `get_storage_metadata()`.
+
+[FR-LOG-04](SOFTWARE_REQUIREMENTS.md#fr-log-04) ⚠️ — no secret is *logged*, but
+`network.apply()` passes the Wi-Fi password on the `nmcli` argv, exposing it in
+the process list → **[T15](#t15)**.
 
 ### 1.13 Camera — FR-CAM
 
-All ✅. `hardware/camera_preview.py:24,152-177`; `gui_web/frame_server.py:63-142`; JS stall watchdog `web_window.py:94-112`; extraction pause/resume `:637,651-653`.
+| ID | Status | Evidence / gap |
+|---|---|---|
+| [FR-CAM-01](SOFTWARE_REQUIREMENTS.md#fr-cam-01) | ✅ | `hardware/camera_preview.PreviewController` background thread with `pause()` / `resume()` / `restart()`, feeding both the UI and the QR scanner |
+| [FR-CAM-02](SOFTWARE_REQUIREMENTS.md#fr-cam-02) | ✅ | `frame_server.CameraStreamer` + `WebServer._stream_mjpeg()` re-serve frames as MJPEG on the loopback origin |
+| [FR-CAM-03](SOFTWARE_REQUIREMENTS.md#fr-cam-03) | ✅ | JS stall watchdog in the `gui_web/web_window.py` bridge JS reconnects a stalled `<img>` |
+| [FR-CAM-04](SOFTWARE_REQUIREMENTS.md#fr-cam-04) | ✅ | Extraction pause/resume around each attempt in `controller._run_authentication()` |
 
 ### 1.14 User interface — FR-UI
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-UI-01](SOFTWARE_REQUIREMENTS.md#fr-ui-01) | ⚠️ | All screens exist except the **IN/OUT selection screen**; `demo_ui/index.html:75-79` has only a cosmetic toggle → **T8** |
+| [FR-UI-01](SOFTWARE_REQUIREMENTS.md#fr-ui-01) | ⚠️ | All screens exist except the **IN/OUT selection screen**; `demo_ui/index.html` `#attendance` is a cosmetic toggle → **[T8](#t8)** |
 | FR-UI-02 | ➖ | Deprecated rev 1.2 |
-| [FR-UI-03](SOFTWARE_REQUIREMENTS.md#fr-ui-03) | ✅ | `web_window.py:673-678` host overrides the JS default |
-| [FR-UI-04](SOFTWARE_REQUIREMENTS.md#fr-ui-04)..[08](SOFTWARE_REQUIREMENTS.md#fr-ui-08) | ✅ | `web_window.py:567-573,679-692,604-609`; generic failure text `demo_ui/app.js:120-125` |
-| [FR-UI-09](SOFTWARE_REQUIREMENTS.md#fr-ui-09) | ⚠️ | Keypad exists (`demo_ui/index.html:91-108`, hardcoded `1234` at `app.js:103` **and** `web_window.py:232-238`); no auth effect and the entry button is commented out, but no production flag → **T18** |
+| [FR-UI-03](SOFTWARE_REQUIREMENTS.md#fr-ui-03) | ✅ | `WebSessionView.show_idle()` returns to the screensaver, overriding the JS default |
+| [FR-UI-04](SOFTWARE_REQUIREMENTS.md#fr-ui-04)..[08](SOFTWARE_REQUIREMENTS.md#fr-ui-08) | ✅ | `controller.on_card_rejected()` (no camera), `_on_auth_complete()` denial branches, `on_user_tapped()` demo-only wake; generic failure text in `demo_ui/app.js` |
+| [FR-UI-09](SOFTWARE_REQUIREMENTS.md#fr-ui-09) | ⚠️ | Keypad exists with the code hardcoded in **two** places — `demo_ui/app.js` (`expectedCode`) and `web_window.py` `Bridge.codeSubmitted()`. No auth effect today, but no production flag either → **[T18](#t18)** |
 | FR-UI-10 | ➖ | Deprecated rev 1.2 |
-| [FR-UI-11](SOFTWARE_REQUIREMENTS.md#fr-ui-11) | ✅ | `config.py:47,174-175`; `web_window.py:482-530` |
-| [FR-UI-12](SOFTWARE_REQUIREMENTS.md#fr-ui-12) | ❌ | No "temporarily unavailable" state; backoff reuses the generic failure → **T9** |
+| [FR-UI-11](SOFTWARE_REQUIREMENTS.md#fr-ui-11) | ✅ | `config.KIOSK_BORDERLESS` / `RUN_ON_REAL_SCREEN`; `GUIWeb._place_on_small_display()` |
+| [FR-UI-12](SOFTWARE_REQUIREMENTS.md#fr-ui-12) | ❌ | **Seam built, deliberately stubbed.** `session/view.py` `show_unavailable()` documents "front-ends may alias this to `show_failure` until T9", and `WebSessionView.show_unavailable()` does exactly that. `controller.py` never calls it, and there is no dedicated screen → **[T9](#t9)** (smaller than it looks) |
 
 ### 1.15 Server contract — FR-API
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-API-01](SOFTWARE_REQUIREMENTS.md#fr-api-01)/[02](SOFTWARE_REQUIREMENTS.md#fr-api-02)/[03](SOFTWARE_REQUIREMENTS.md#fr-api-03)/[05](SOFTWARE_REQUIREMENTS.md#fr-api-05)/[06](SOFTWARE_REQUIREMENTS.md#fr-api-06) | ✅ | `provisioning/client.py:44-50,75,124-128`; `server/main.py:279,352,385`; `server/signing.py:58-83`; no `verify=False` in repo code |
-| [FR-API-04](SOFTWARE_REQUIREMENTS.md#fr-api-04) | ⚠️ | Timeouts ✅ but only network-vs-410-vs-other branching; 4xx and 5xx treated alike (`client.py:139-142`) → **T13** |
-| [FR-API-07](SOFTWARE_REQUIREMENTS.md#fr-api-07) | ⚠️ | Single-use + actionable reasons ✅ (`server/main.py:291-299,329-333`), but re-registration **creates a new device row** (`:301-326`); the old binding lingers → **T14** |
-| [FR-API-09](SOFTWARE_REQUIREMENTS.md#fr-api-09)/[10](SOFTWARE_REQUIREMENTS.md#fr-api-10)/[11](SOFTWARE_REQUIREMENTS.md#fr-api-11)/[14](SOFTWARE_REQUIREMENTS.md#fr-api-14) | ✅ | `heartbeat.py:92-119`; `server/main.py:84-118,399-412`; `db/remote_provider.py:134-145` |
+| [FR-API-01](SOFTWARE_REQUIREMENTS.md#fr-api-01)/[02](SOFTWARE_REQUIREMENTS.md#fr-api-02)/[03](SOFTWARE_REQUIREMENTS.md#fr-api-03)/[05](SOFTWARE_REQUIREMENTS.md#fr-api-05)/[06](SOFTWARE_REQUIREMENTS.md#fr-api-06) | ✅ | `client.register()` / `post_status()`; `server/main.py` `register_device()`, `get_device_users()`, `post_status()`; `server/signing.py`; no `verify=False` in repo code |
+| [FR-API-04](SOFTWARE_REQUIREMENTS.md#fr-api-04) | ⚠️ | Timeouts ✅, but `client.post_status()` branches only network / 410 / not-ok — 4xx and 5xx are treated alike → **[T13](#t13)** |
+| [FR-API-07](SOFTWARE_REQUIREMENTS.md#fr-api-07) | ⚠️ | Single-use tokens + actionable reasons ✅, but `register_device()` mints `str(uuid.uuid4())` on every call, so re-registration **creates a new device row** and the old binding lingers → **[T14](#t14)** |
+| [FR-API-08](SOFTWARE_REQUIREMENTS.md#fr-api-08) | ⚠️ | *New row — untracked in rev 1.1.* Re-registration must **replace** the prior binding; the server does not (same root cause as FR-API-07) → **[T14](#t14)** |
+| [FR-API-09](SOFTWARE_REQUIREMENTS.md#fr-api-09)/[10](SOFTWARE_REQUIREMENTS.md#fr-api-10)/[11](SOFTWARE_REQUIREMENTS.md#fr-api-11)/[14](SOFTWARE_REQUIREMENTS.md#fr-api-14) | ✅ | `heartbeat._run()` acks on 2xx only; `server/main.py` `_ingest_events()` insert-or-ignore, `post_status()` 410 tombstone; `remote_provider._add_if_valid()` skips-and-counts |
 | FR-API-12 | ➖ | Deprecated rev 1.2 |
-| [FR-API-13](SOFTWARE_REQUIREMENTS.md#fr-api-13) | ⚠️ | Per-device scoping exists (`server/main.py:352-364`, `server/user_store.py:44-48`) but every new device is seeded from the **same default template** (`main.py:335-339`) — not real door scoping → **T14** |
-| [FR-API-15](SOFTWARE_REQUIREMENTS.md#fr-api-15) <a id="fr-api-15-row"></a> | ❌ | No attendance concept server-side; the generic events table would accept it but nothing emits or journals it → **T8** |
+| [FR-API-13](SOFTWARE_REQUIREMENTS.md#fr-api-13) | ⚠️ | Per-device scoping exists (`get_device_users()`, `user_store.get_for_device()`), but every new device is seeded from the **same default template** (`user_store.load_default_template()`) — not real door scoping → **[T14](#t14)** |
+| [FR-API-15](SOFTWARE_REQUIREMENTS.md#fr-api-15) <a id="fr-api-15-row"></a> | ❌ | No attendance concept server-side — `attendance` has zero hits under `server/`. The generic events table would accept it, but nothing emits or journals it → **[T8](#t8)** |
 
 ### 1.16 Data model — FR-DATA
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-DATA-01](SOFTWARE_REQUIREMENTS.md#fr-data-01) | ⚠️ | Faceprint validity checked (`remote_provider.py:29-32`) and `active` now enforced on both auth paths (`face_auth/auth_service.py`) ✅; still a single faceprints **dict**, so "list with ≥1 entry" / empty-list-in-`card_only` is unrepresentable → **T3b** |
-| [FR-DATA-02](SOFTWARE_REQUIREMENTS.md#fr-data-02) | ✅ | Never logged ✅; **deleted on revocation** via `UserDatabase.clear()` (faceprints are in the one JSON cache) → **T6** |
-| [FR-DATA-03](SOFTWARE_REQUIREMENTS.md#fr-data-03) | ⚠️ | Atomic + deleted on revocation ✅; **no `0600`** → **T10** |
-| [FR-DATA-04](SOFTWARE_REQUIREMENTS.md#fr-data-04) | ✅ | `provisioning/identity.py:78-83` |
-| [FR-DATA-05](SOFTWARE_REQUIREMENTS.md#fr-data-05) | ✅ | `observability/events.py:60-67` |
-| [FR-DATA-06](SOFTWARE_REQUIREMENTS.md#fr-data-06) | ✅ | All access events carry `user_id` only — no name, no raw card id (`face_auth/auth_service.py`, `session/controller.py` via `last_user_id`); an unregistered tap emits `reason="card_unregistered"` with no user fields |
-| [FR-DATA-07](SOFTWARE_REQUIREMENTS.md#fr-data-07) | ✅ | `active` normalised at sync (`db/remote_provider.py:_add_if_valid`, defaults `True` when absent) and enforced on both paths: card tap → `user_inactive` denial, face match → record skipped |
+| [FR-DATA-01](SOFTWARE_REQUIREMENTS.md#fr-data-01) | ⚠️ | Faceprint validity checked (`remote_provider._is_valid_faceprints()`) and `active` enforced on both auth paths ✅; still a single faceprints **dict**, so "list with ≥1 entry" and empty-list-in-`card_only` are unrepresentable → **[T3b](#t3b)** |
+| [FR-DATA-02](SOFTWARE_REQUIREMENTS.md#fr-data-02) | ✅ | Never logged; deleted on revocation via `UserDatabase.clear()` (faceprints live in the one JSON cache) |
+| [FR-DATA-03](SOFTWARE_REQUIREMENTS.md#fr-data-03) | ✅ | **T10 done.** Atomic + `0600` + deleted on revocation (`identity.save()` / `clear()`) |
+| [FR-DATA-04](SOFTWARE_REQUIREMENTS.md#fr-data-04) | ✅ | `identity.load()` tolerates unknown keys |
+| [FR-DATA-05](SOFTWARE_REQUIREMENTS.md#fr-data-05) | ✅ | `events.emit()` stamps `event_id`, `type`, UTC `ts` |
+| [FR-DATA-06](SOFTWARE_REQUIREMENTS.md#fr-data-06) | ✅ | All access events carry `user_id` only — no name, no raw card id (`HostModeService.last_user_id` → `controller`); an unregistered tap emits `reason="card_unregistered"` with no user fields |
+| [FR-DATA-07](SOFTWARE_REQUIREMENTS.md#fr-data-07) | ✅ | `active` normalised at sync (defaults `True` when absent) and enforced both paths: card tap → `user_inactive`, face match → record skipped |
 
-### 1.17 Non-functional — NFR
+### 1.17 Business rules — BR
 
-Mostly ✅ (threading `NFR-01`, offline `NFR-05..08`, atomic writes `NFR-09/10`, shutdown watchdog `NFR-11` at `main_web.py:160-186`, security `NFR-12/13/15/16`, maintainability `NFR-20/22`).
+*New section: rev 1.1 tallied `BR (7)` in its summary but had no detail table,
+so BR-04's gap was visible only inside the FR-SESS row.*
+
+| ID | Status | Evidence / gap |
+|---|---|---|
+| [BR-01](SOFTWARE_REQUIREMENTS.md#br-01) | ✅ | Local membership = authorisation; sound because the server door-scopes ([FR-API-13](SOFTWARE_REQUIREMENTS.md#fr-api-13)) |
+| [BR-02](SOFTWARE_REQUIREMENTS.md#br-02) | ✅ | `card_is_registered()` gate before any preview |
+| [BR-03](SOFTWARE_REQUIREMENTS.md#br-03) | ✅ | SDK success **or** score ≥ `CUSTOM_THRESHOLD`, logged per decision (T12) |
+| [BR-04](SOFTWARE_REQUIREMENTS.md#br-04) | ⚠️ | Same-card cooldown ✅, but a **different** card during a result hold is swallowed rather than pre-empting → **[T9](#t9)** |
+| [BR-05](SOFTWARE_REQUIREMENTS.md#br-05) | ✅ | Card session shows the denial once and returns to idle (`_on_auth_complete()`) |
+| [BR-06](SOFTWARE_REQUIREMENTS.md#br-06) | ✅ | All error paths deny; a failed pulse yields `access_output_failed`, not a grant |
+| [BR-07](SOFTWARE_REQUIREMENTS.md#br-07) | ✅ | Revocation purges user data and denies all (T6) |
+
+### 1.18 Non-functional — NFR
+
+Mostly ✅ — threading `NFR-01`, responsiveness `NFR-02..04` (incl. the
+`PREVIEW_LEAD_IN_MS` lead-in), offline `NFR-05..08`, atomic writes `NFR-09/10`,
+shutdown watchdog `NFR-11` in `main_web.py` `main()`, security
+`NFR-12/13/15..18`, maintainability `NFR-20/22`.
 
 | ID | Status | Gap |
 |---|---|---|
-| [NFR-14](SOFTWARE_REQUIREMENTS.md#nfr-14) | ⚠️ | Device still keeps a nonce set; rev 1.2 puts replay protection server-side → **T6** |
-| [NFR-19](SOFTWARE_REQUIREMENTS.md#nfr-19) | ⚠️ | Hardware/business layers are shared, but the **session state machine is duplicated** between `gui_web/web_window.py` (736 lines) and `gui_qt/main_window_qt.py` (642 lines) → **T1** |
-| [NFR-21](SOFTWARE_REQUIREMENTS.md#nfr-21) | ⚠️ | `docs/rsid-host-mode.service` points at a nonexistent `host_mode_cli.py`; `face-guard.service` launches `main_qt.py`, not `main_web.py` → **T17** |
+| [NFR-14](SOFTWARE_REQUIREMENTS.md#nfr-14) | ⚠️ | Device still keeps a nonce set; rev 1.2 puts replay protection server-side → **[T19](#t19)** |
+| [NFR-19](SOFTWARE_REQUIREMENTS.md#nfr-19) | ✅ | **T1 + Qt removal.** One state machine in `session/controller.py`, dependent only on the `SessionView`/`Scheduler` protocols; `session/tests/` (27 cases) exercises it with no Qt, browser or `rsid_py` |
+| [NFR-21](SOFTWARE_REQUIREMENTS.md#nfr-21) | ✅ | **T17 done.** `face-guard.service` runs `main_web.py` with `Restart=always` and the `rpi_py_build_lib` `LD_LIBRARY_PATH`; the dead `docs/rsid-host-mode.service` was deleted. *(The revocation self-restart clause depends on [T20](#t20).)* |
 
-### 1.18 Architecture finding (drives the ordering)
+### 1.19 Architecture baseline as delivered
 
-The single most consequential result of the audit:
+Rev 1.1 opened with two findings that drove the task ordering. **Both are now
+resolved**, and the ordering they justified has happened — recorded here as the
+baseline every remaining task builds on:
 
-> **The session/UI state machine exists twice.** `gui_web/web_window.py:558-692` and
-> `gui_qt/main_window_qt.py:449-484` independently implement `start_session`,
-> `_end_session`, `_on_card_detected`, `_on_auth_complete`, init-mode and metadata
-> logic. Only the layers *below* the GUI (`HostModeService`, `PreviewController`,
-> `BindingManager`, `QRScanner`, `config`) are shared.
+- **One session state machine.** `session/controller.py` owns session lifecycle,
+  timers, triggers, result holds, auth dispatch and init mode, behind
+  `session/view.py` (`SessionView`) and `session/scheduler.py`.
+  `gui_web/web_window.py` is a view adapter. *(Was: duplicated across
+  `gui_web` and the now-deleted `gui_qt`.)*
+- **Decision separated from actuation.** `face_auth/auth_service.py` recognises
+  and emits `auth_matched`; the controller decides, pulses the relay, and only
+  then emits `access_granted`. *(Was: the biometric layer opened the relay.)*
 
-Consequence: implementing `card_only`, `time_registry` or the session fixes
-directly would mean writing each behaviour **twice** and testing it twice.
-[T1](#t1) removes that duplication before any behavioural work starts.
-
-Secondary finding: `face_auth/auth_service.py` opens the relay itself
-(`:29-37,198,275`), so the biometric layer currently *is* the access-decision
-layer. [T2](#t2) separates them, which [T7](#t7) and [T8](#t8) then depend on.
+> **Downstream contract — read before T8/T5b.** `access_granted` is emitted
+> **post-pulse by the controller**, not by `auth_service`. Any new consumer —
+> attendance ([T8](#t8)), grant-driven telemetry ([T5b](#t5b)) — must key off
+> the controller's `access_granted` / `access_output_failed` and treat
+> `auth_matched` as a decision breadcrumb only.
 
 ---
 
 ## 2. Task list
 
-Ordered so architectural change lands first. **Each task assumes its
-dependencies are done**; following the order avoids reworking earlier tasks.
+Live queue: **12 open tasks**. Delivered work is rolled up in
+[Delivered](#delivered). The `Depends on` column lists only *open*
+dependencies — everything else has shipped.
 
 | # | Task | Scope | Depends on | Requirements |
 |---|---|---|---|---|
-| [T1](#t1) | Extract shared `SessionController` | device | — | NFR-19, FR-SESS-* |
-| [T2](#t2) | Separate access decision from biometrics | device | T1 | FR-FACE-04, FR-OUT-06 |
-| [T3](#t3) | User-record schema v2 | device+server | — | FR-DATA-06/07 |
-| [T3b](#t3b) | `faceprints` as a list | device+server | T3 | FR-DB-01, FR-DATA-01 |
-| [T4](#t4) | `device_mode` / `face_policy` plumbing | device+server | T1 | FR-MODE-01 |
-| [T5](#t5) | Event pipeline: ack-by-id + durable queue | device | — | FR-HB-05, FR-MODE-10 |
-| [T6](#t6) | Fail-secure revocation | device | T5 | FR-HB-10, FR-DATA-02, FR-PROV-03 |
-| [T7](#t7) | `card_only` mode | device | T1,T2,T4 | FR-MODE-03 |
-| [T8](#t8) | `time_registry` mode | device+server | T1,T2,T3,T4,T5 | FR-MODE-06..11, FR-API-15 |
-| [T9](#t9) | Session edge cases + unavailable screen | device | T1 | FR-SESS-03, FR-CARD-04, FR-FACE-06, FR-UI-12 |
-| [T10](#t10) | Identity file `0600` | device | — | FR-PROV-09, FR-DATA-03 |
-| [T11](#t11) | Validate `command` field | device | — | FR-PROV-06 |
-| [T12](#t12) | Log score/threshold | device | — | FR-FACE-03 |
+| [T19](#t19) | Remove the device-side nonce set | device | — | FR-PROV-03, NFR-14 |
+| [T20](#t20) | Resolve D21 (revocation restart semantics) | spec/ops | — | FR-HB-10, NFR-21 |
+| [T4](#t4) | `device_mode` / `face_policy` plumbing | device+server | — | FR-MODE-01 |
+| [T3b](#t3b) | `faceprints` as a list | device+server | — | FR-DB-01, FR-DATA-01 |
+| [T7](#t7) | `card_only` mode | device | T4 | FR-MODE-03 |
+| [T9](#t9) | Session edge cases + unavailable screen | device | — | FR-SESS-03, FR-CARD-04, FR-FACE-06, FR-UI-12, BR-04 |
+| [T5b](#t5b) | Durable event queue | device | — | FR-MODE-10 |
+| [T8](#t8) | `time_registry` mode | device+server | T4, T5b | FR-MODE-06..11, FR-API-15 |
 | [T13](#t13) | HTTP error classification | device | — | FR-API-04 |
-| [T14](#t14) | Server rebinding + door scoping | server | T3 | FR-API-07, FR-API-13 |
+| [T14](#t14) | Server rebinding + door scoping | server | — | FR-API-07/08/13 |
 | [T15](#t15) | Network profile defaults + password handling | device | — | FR-NET-03, FR-LOG-04 |
-| [T16](#t16) | Init mode unconditional | device | T1 | FR-PROV-01 |
-| [T17](#t17) | systemd unit | ops | T6 | NFR-21 |
 | [T18](#t18) | Retire keypad demo path | device | — | FR-UI-09 |
 
-### Phase A — Architecture
+### Phase A — Hygiene and open decisions
 
-#### <a id="t1"></a>T1. Extract a shared `SessionController` *(scope reduced: web UI only, `gui_qt` frozen)*
+#### <a id="t19"></a>T19. Remove the device-side nonce set
 
-**Why first.** Every behavioural task below touches session logic. While it
-lives twice, each of those tasks costs double and can drift.
+**Why now.** SRS rev 1.2 moved replay protection server-side: the provisioning
+token is one-time ([FR-API-07](SOFTWARE_REQUIREMENTS.md#fr-api-07)), so a
+replayed QR passes local checks and is refused at registration. The surviving
+`_seen_nonces` set is dead weight *and* misleading — it is process-local, so it
+gives no protection across a restart while looking like it does.
 
-**Do.** Create a UI-agnostic session controller (suggested
-`session/controller.py`) owning: session lifecycle, retry/timeout timers,
-card and tap triggers, result holds, auth dispatch to a worker thread, and the
-idle-screen return. Define a narrow view interface
-(`show_camera / show_success / show_failure / show_idle / show_overlay`) that
-`gui_web` implements. Reduce `web_window.py` to a view adapter + platform
-glue. **`gui_qt` is frozen by decision** (2026-08-26): it keeps its current
-duplicated logic, receives no new features, and is not ported.
+**Do.** Delete `_seen_nonces` and its rejection branch from
+`qr_scanner.QRScanner` (`__init__` and `_verify()`). Keep the `nonce` field
+parsed and forwarded to registration. Update the module docstring, which still
+lists "replayed nonce" among the SECURITY-level rejections.
 
-**Files.** New `session/`; `gui_web/web_window.py:558-692`.
+**Files.** `qr_scanner/qr_scanner.py`.
 
-**Accept.** No session/timer logic remains in `gui_web/web_window.py`; the web
-GUI drives the controller; existing behaviour unchanged (FR-SESS-01..08 still
-pass); `web_window.py` materially smaller. `gui_qt` untouched.
-
-**T1b (freeze notice) — done (2026-08-26).** A `FROZEN (2026-08-26)` banner was
-added to `gui_qt/main_window_qt.py:1-17` and `main_qt.py:1-15` directing all new
-work to `gui_web/` + `session/`. This is a comment-only change — `gui_qt`
-behaviour is deliberately unchanged and does **not** track T16 semantics.
+**Accept.** No nonce state on the device; the same QR presented twice passes
+local verification both times and is refused by the server the second time with
+an actionable reason. SRS [D12](SOFTWARE_REQUIREMENTS.md#d12) closes.
 
 ---
 
-#### <a id="t2"></a>T2. Separate the access decision from biometrics
+#### <a id="t20"></a>T20. Resolve D21 — revocation restart semantics
 
-**Do.** Remove `_open_access_point()` from `face_auth/auth_service.py`; the
-service returns a match result only. The controller (T1) makes the access
-decision, calls the Access Output Service, and emits `access_granted` **only
-after** a successful pulse; on failure emit the new `access_output_failed`.
+**The conflict.** [FR-HB-10](SOFTWARE_REQUIREMENTS.md#fr-hb-10) step 6 requires
+an orderly **self-restart under systemd**. The build performs an **in-process**
+return to init mode (`controller.start_init_mode()`, the same entry point used at
+boot) — which was the design approved for T6, and which is deny-all and needs no
+reboot, but is not what the spec says.
 
-**Files.** `face_auth/auth_service.py:29-37,198-199,275`; `hardware/relay_api.py`;
-`session/controller.py`.
+**Do.** Pick one and make the document and the code agree:
 
-**Accept.** `auth_service` contains no relay import or call; `access_granted`
-never precedes actuation; relay failure after approval yields
-`access_output_failed`, distinct from `access_denied`.
+- **(a) Spec follows code** — reword FR-HB-10 step 6, the §3 state diagram
+  (`Revoked --> InitMode: self-restart`), the §3 `revoked` state row, and NFR-21's
+  "including the self-restart after revocation" clause to describe the in-process
+  reset. No code change.
+- **(b) Code follows spec** — exit after teardown and let `Restart=always` in
+  `face-guard.service` bring the process back. Costs a camera/SDK
+  re-initialisation on every revocation and needs the watchdog path checked.
 
-**Done (B3).** `auth_service.py:22` imports only `disconnect_relay` (no
-`open_door`); the match branches emit `auth_matched` (`:198-202` card, `:282-284`
-face) and return the result tuple — no actuation. The controller injects an
-Access Output Service callable (`session/controller.py:37,66`), pulses it off
-the UI thread (`_open_access_point`, `:209-222`), and in `_on_auth_complete`
-(`:224-247`) emits `access_granted` only on a successful pulse or
-`access_output_failed` (fail-secure failure screen) otherwise. `relay_api.open_door`
-now returns `bool` (`hardware/relay_api.py:71-89,120-126`); SIM/unavailable → `True`.
-`web_window.py:387,490-496` injects `_pulse_door` gated by `RUN_WITH_RELAY`
-(→ `None` off, so demo grants still succeed). Granted timeline:
-`auth_matched` → `relay_opened` → `access_granted`. Covered off-device by 5 new
-`session/tests/test_controller.py` cases (pulse-success order, pulse-failure,
-relay-exception, no-relay grant, denial-no-pulse); session suite **23 passed**,
-server green-gate **62 passed**.
+**Recommendation: (a).** The in-process reset already satisfies the *intent*
+(fail-secure, technician can re-provision without a power cycle) and avoids a
+restart loop if a revoked device is left powered on.
 
-**Downstream note.** `access_granted` is now emitted *post-pulse* by the
-controller (not by `auth_service`). Consumers added later — T8 attendance
-(B11/B12) and any grant-driven telemetry (B10) — must key off the controller's
-`access_granted`/`access_output_failed`, and treat `auth_matched` as a decision
-breadcrumb only.
+**Files.** (a) `docs/SOFTWARE_REQUIREMENTS.md` only.
+(b) `provisioning/binding.py` `_handle_revoked()`, `gui_web/web_window.py`
+`_on_device_revoked()`, `face-guard.service`.
+
+**Accept.** SRS [D21](SOFTWARE_REQUIREMENTS.md#d21) closes with no residual
+mismatch between FR-HB-10 and the code.
 
 ---
 
-#### <a id="t3"></a>T3. User-record schema v2
+### Phase B — Mode plumbing and data shape
 
-**Do.** Device and server adopt `{user_id, name, active, permission_level,
-faceprints}`. Server emits the new shape; device validates it and skips any
-record without a `user_id`. Events switch from `name`/`card_id` to `user_id`.
-Honour `active: false` as "never authorises".
+#### <a id="t4"></a>T4. `device_mode` / `face_policy` plumbing
 
-No migration path: nothing v1 is deployed, so a stale dev cache is simply
-deleted by hand and refilled by the next sync (the startup auto-discard was
-implemented and then removed as dead weight for a dev-only setup).
+**Do.** Add both to the register response, the QR envelope and the identity
+file; resolve at runtime as *server value → `config.py` fallback*. Introduce
+`DEVICE_MODE`, `FACE_POLICY`, `DIRECTION_SELECT_TIMEOUT_SEC` in `config.py`
+(all three are already specified in
+[SRS §9.4](SOFTWARE_REQUIREMENTS.md#94-configuration-parameters) but absent from
+the module). Mark `AUTH_ONLY_ON_CARD` deprecated and route its remaining callers
+— `controller.on_user_tapped()` and `main_web.main()` — through the new mode.
 
-**Files.** `server/user_store.py`, `server/main.py:335-339,352-364`;
-`db/remote_provider.py`, `db/user_database.py`; `face_auth/auth_service.py`;
+**Files.** `server/models.py` (`RegisterResponse`), `server/main.py`
+(`generate_qr()`, `register_device()`); `provisioning/identity.py`
+(`DeviceIdentity`), `provisioning/client.py`; `config.py`;
 `session/controller.py`.
 
-**Accept.** Round-trip server→device→match works on v2; an `active: false` user
-is denied (`user_inactive`); no event carries a cardholder name or raw card id.
-
-**Done.** Schema v2 record shape, `active` enforced on both the card and face
-paths, every emit rewritten to `user_id` (`AuthenticationService.last_user_id`
-carries it to the controller without changing the `(success, name, permission)`
-return tuple), seed data upgraded. `faceprints`-as-a-list was **not** part of
-this and is carved out as [T3b](#t3b).
+**Accept.** A device provisioned `card_and_face` runs it regardless of local
+config; with no server value the config fallback applies; the identity file
+round-trips both fields and an older file without them still loads
+([FR-DATA-04](SOFTWARE_REQUIREMENTS.md#fr-data-04)).
 
 ---
 
@@ -368,367 +393,324 @@ this and is carved out as [T3b](#t3b).
 
 **Do.** [SRS §9.1](SOFTWARE_REQUIREMENTS.md#91-local-user-record) specifies
 `faceprints` as a list of zero or more SDK-shaped objects; the code still stores
-and validates a single dict. Accept a list at sync (validating each entry),
-allow an **empty** list, and iterate a user's faceprints when matching.
+and validates a single dict. Accept a list at sync (validating each entry), allow
+an **empty** list, and iterate a user's faceprints when matching.
 
-**Why it is separate.** [T7](#t7) `card_only` needs "a user with no faceprints"
-to be representable — impossible while faceprints must be a dict — so this
-lands with B8 rather than blocking B6.
+**Why it is separate from T3.** [T7](#t7) `card_only` needs "a user with no
+faceprints" to be representable, which a mandatory dict forbids — so this lands
+with `card_only` rather than having blocked schema v2.
 
-**Files.** `db/remote_provider.py` (`_is_valid_faceprints`, `_add_if_valid`),
-`face_auth/auth_service.py` (match loop), `server/default_user_database.json`.
+**Files.** `db/remote_provider.py` (`_is_valid_faceprints()`, `_add_if_valid()`);
+`face_auth/auth_service.py` (`_to_rsid_faceprints()` and both match loops);
+`server/default_user_database.json`.
 
 **Accept.** A record with `faceprints: []` syncs and is valid in `card_only`; a
 record with two faceprints matches on either; a legacy single-dict record is
-rejected or coerced, not crashed on.
-
----
-
-#### <a id="t4"></a>T4. `device_mode` / `face_policy` plumbing
-
-**Do.** Add both to the register response, the QR envelope and the identity
-file; resolve at runtime as *server value → `config.py` fallback*. Introduce
-`DEVICE_MODE`, `FACE_POLICY`, `DIRECTION_SELECT_TIMEOUT_SEC` in `config.py`.
-Mark `AUTH_ONLY_ON_CARD` deprecated and route its remaining callers through the
-new mode.
-
-**Files.** `server/models.py:104-111`, `server/main.py:227-276,301-326`;
-`provisioning/identity.py:40-53`, `provisioning/client.py`; `config.py:33`;
-`session/controller.py`.
-
-**Accept.** A device provisioned `card_and_face` runs it regardless of local
-config; with no server value the config fallback applies; identity file
-round-trips both fields.
-
----
-
-#### <a id="t5"></a>T5. Event pipeline — ack by id, durable attendance queue
-
-**Do.** (a) Change `ack(count)` to `ack(event_ids)` so eviction during an
-in-flight beat cannot drop undelivered events. (b) Add an on-disk queue for
-durable events; attendance uses it, telemetry keeps the bounded ring.
-
-**Files.** `observability/events.py:41-97`; `provisioning/heartbeat.py:92-119`;
-new `observability/durable_queue.py`.
-
-**Accept.** Events emitted *during* an in-flight heartbeat are never acked;
-attendance events survive a process kill and are delivered after restart;
-telemetry still capped at 200 drop-oldest.
-
----
-
-### Phase B — Behaviours
-
-#### <a id="t6"></a>T6. Fail-secure revocation
-
-**Done.** On HTTP 410, in order: emit `device_revoked` + best-effort flush
-(while the credential is still valid) → stop the heartbeat/bounded-device
-services → delete the identity → **purge the user DB incl. faceprints** →
-return to init mode. Per the approved design this is an **in-process reset**
-(`SessionController.start_init_mode()` — the same entry point used at boot),
-not a `sys.exit`: with no identity and init mode active, all auth is denied
-(deny-all) until a fresh QR re-enrolls the device. Faceprints live entirely in
-the one local JSON cache, so `UserDatabase.clear()` erases them — no separate
-blob files. Remote DB sync is torn down via `HostModeService.disable_remote_sync()`
-(`stop_auto_sync` + `detach_remote`).
-
-**Server-side lifecycle (why best-effort device cleanup is safe).** Revocation
-is server-authoritative via a tombstone handshake, so the device's local cleanup
-never needs to be guaranteed:
-
-1. Operator removes the device → its row flips `active` → `suspended`
-   (`server/main.py` `delete_device`, soft delete — the row is kept as a
-   tombstone, not hard-deleted). From this instant the device is untrusted:
-   `post_status` refuses every heartbeat from a `suspended`/`revoked_ack` row and
-   always answers `410` (`main.py:403-412`).
-2. The device's next heartbeat is answered `410` and the row flips to
-   `revoked_ack`; the device then runs its local teardown (this task).
-3. The `revoked_ack` tombstone is purged on the next device-list load
-   (`_purge_acknowledged`).
-
-Because the server is the sole authority, a comms failure or a failed local DB
-wipe can't leave the device trusted: if it never sees the `410` it simply stays
-locked out server-side, and our `_handle_revoked` destroys the identity even if
-the DB wipe throws. Re-enrollment is collision-free by construction — every bind
-mints a fresh `device_id` (`str(uuid.uuid4())`, `main.py:301`) and token, so the
-old id is never reused. **No separate revoke-ack endpoint is needed**; the
-"suspended → 410 → revoked_ack → purge" flow is the complete mechanism. The
-in-process nonce set is recreated empty on the next init-mode entry.
-
-**Files.** `provisioning/binding.py` (`_handle_revoked`);
-`db/user_database.py` (`detach_remote`); `face_auth/auth_service.py`
-(`disable_remote_sync`); `gui_web/web_window.py` (`_on_device_revoked`,
-`_return_to_init_mode`, `return_to_init` signal).
-
-**Tests.** `provisioning/tests/test_revocation.py` (flush-before-clear ordering,
-heartbeat dropped, UI callback fired, teardown survives flush/UI failures);
-`db/tests/test_revocation_wipe.py` (faceprints gone on disk, remote sync
-detached).
-
-**Accept.** After a simulated 410: `device_revoked` is flushed while bound, the
-user DB file is emptied, remote sync stops, and the app re-enters init mode
-in-process (card taps denied there) — no reboot needed.
+rejected or coerced, never crashed on.
 
 ---
 
 #### <a id="t7"></a>T7. `card_only` mode
 
-**Do.** In `card_only`, a card in the local DB opens the relay immediately —
-no session, no preview, no biometric call. Path: `CardReader → SessionController
-→ AccessOutput`.
+**Do.** In `card_only`, a card present in the local DB opens the relay
+immediately — no session, no preview, no biometric call. Path:
+`CardReader → SessionController → AccessOutput`.
 
 **Files.** `session/controller.py`; `config.py`.
 
-**Accept.** With `card_only`, a valid card opens the door with the camera
-never powered; an unknown card is still rejected pre-camera; `card_and_face`
-is unaffected.
-
----
-
-#### <a id="t8"></a>T8. `time_registry` mode
-
-**Do.** Device: IN/OUT selection screen replacing the screensaver; direction
-latched until the card tap or `DIRECTION_SELECT_TIMEOUT_SEC`; face policy
-`none` | `verify`; emit `attendance_event {user_id, direction, ts}` through the
-durable queue (T5); **relay never actuated**. Server: accept and persist
-attendance events, expose a per-user journal.
-
-**Files.** `demo_ui/index.html:75-79`, `demo_ui/app.js:249-275`;
-`session/controller.py`; `observability/durable_queue.py`; `server/main.py`,
-`server/db.py`, `server/models.py`.
-
-**Accept.** Selecting IN then tapping a registered card records exactly one
-attendance event with the right direction and **no relay pulse**; timeout
-returns to idle recording nothing; a mismatch under `verify` records nothing;
-events survive a restart and appear in the server journal.
+**Accept.** With `card_only`, a valid card opens the door with the camera never
+powered; an unknown card is still rejected pre-camera
+([BR-02](SOFTWARE_REQUIREMENTS.md#br-02)); `card_and_face` is unaffected.
 
 ---
 
 #### <a id="t9"></a>T9. Session edge cases and the unavailable screen
 
-**Do.** (a) A *different* card during a result hold pre-empts it and starts a
-new session; the cooldown stays a per-card debounce. (b) Card path respects the
-init-mode guard. (c) Apply the 20 s biometric backoff on the **card** path too
-and surface it as a distinct "temporarily unavailable" screen.
+**Do.** Four related corrections, all in the controller except the new screen:
 
-**Files.** `session/controller.py`; `face_auth/auth_service.py:229-232,332-333`;
-`demo_ui/` (new screen); `gui_web/web_window.py:579`.
+1. A *different* valid card during a result hold pre-empts it and starts a new
+   session; the cooldown stays a per-card debounce, not a global input lock
+   ([BR-04](SOFTWARE_REQUIREMENTS.md#br-04)). Requires releasing the card flag
+   when the *session* ends rather than when the *hold* ends.
+2. `on_card_detected()` must respect the init-mode guard that
+   `on_user_tapped()` and `on_card_rejected()` already apply.
+3. Apply the 20 s biometric backoff on the **card** path
+   (`authenticate_with_card()`), not just the face-only path.
+4. Surface that condition as a distinct "temporarily unavailable" screen. **The
+   seam already exists**: `SessionView.show_unavailable()` is declared and
+   aliased to `show_failure` in `WebSessionView` pending this task — so the work
+   is a real `demo_ui` screen plus a controller call, not new plumbing.
 
-**Accept.** Card B during card A's failure hold starts a session for B; the
-same card within 2 s is still ignored; a card tap during backoff shows the
-unavailable screen (visually distinct from a mismatch) and never opens the door;
-no session can start during init mode.
+**Files.** `session/controller.py`; `face_auth/auth_service.py` (backoff gate on
+the card path); `demo_ui/` (new screen); `gui_web/web_window.py`
+(`WebSessionView.show_unavailable()` — drop the alias).
+
+**Accept.** Card B during card A's failure hold starts a session for B; the same
+card within 2 s is still ignored; a card tap during backoff shows the unavailable
+screen — visually distinct from a mismatch — and never opens the door; no session
+can start during init mode.
 
 ---
 
-### Phase C — Isolated fixes (no refactoring)
+### Phase C — Attendance
 
-#### <a id="t10"></a>T10. Identity file permissions ✅ *(implemented 2026-08-26, batch B0 — pending device validation)*
-`os.chmod(path, 0o600)` inside the atomic write in `provisioning/identity.py:89-96`.
-**Accept.** File mode is `0600` after registration and after rewrite.
-**Done.** Temp file now created `0o600` via `os.open` before content is written; mode re-asserted on the final path after `os.replace`. Verified off-Pi: fresh save → `0600`; rewrite of a pre-existing `0644` file → `0600`.
+#### <a id="t5b"></a>T5b. Durable event queue
 
-#### <a id="t11"></a>T11. Validate the QR `command` ✅ *(implemented 2026-08-26, batch B0 — pending device validation)*
-Reject envelopes whose `command != "provision_device"`, classified benign, emitting `qr_rejected` (`qr_scanner/qr_scanner.py`).
-**Accept.** A signed envelope with any other command is rejected and logged.
-**Done.** `EXPECTED_COMMAND` check added in `_verify` after the schema check, warning-level (benign per FR-PROV-05). Verified off-Pi with re-signed envelopes: good command accepted; `factory_reset` and missing command rejected; all 62 server tests (incl. QR device-compat round-trips) pass.
+**Do.** Add an on-disk queue for durable events; attendance uses it, telemetry
+keeps the bounded ring ([FR-MODE-10](SOFTWARE_REQUIREMENTS.md#fr-mode-10): losing
+a check-in is a payroll error, not a lost telemetry line). Ack-by-`event_id` is
+already in place from T5a, so the queue plugs into an interface that cannot drop
+undelivered entries.
 
-#### <a id="t12"></a>T12. Log score and threshold ✅ *(implemented 2026-08-26, batch B0 — pending device validation)*
-Record the score and `CUSTOM_THRESHOLD` on every decision (`face_auth/auth_service.py:197,266-268`).
-**Accept.** Grant and denial log lines both show score vs threshold.
-**Done.** One decision log line per path: `1:1 decision: card=… sdk_success=… score=… threshold=… -> GRANT/DENY` and `1:N decision: …`. Compile-checked only (rsid_py unavailable off-Pi) — device validation confirms.
+**Files.** new `observability/durable_queue.py`; `observability/events.py`;
+`provisioning/heartbeat.py`.
+
+**Accept.** Attendance events survive a process kill and are delivered after
+restart; telemetry stays capped at 200 drop-oldest; events emitted *during* an
+in-flight heartbeat are still never acked.
+
+---
+
+#### <a id="t8"></a>T8. `time_registry` mode
+
+**Do.** *Device:* IN/OUT selection screen replacing the screensaver; direction
+latched until the card tap completes or `DIRECTION_SELECT_TIMEOUT_SEC` elapses;
+face policy `none` | `verify`; emit `attendance_event {user_id, direction, ts}`
+through the durable queue ([T5b](#t5b)); **relay never actuated**.
+*Server:* accept and persist attendance events, expose a per-user journal.
+
+**Files.** `demo_ui/index.html` + `demo_ui/app.js` (the existing `#attendance`
+toggle becomes functional); `session/controller.py`;
+`observability/durable_queue.py`; `server/main.py`, `server/db.py`,
+`server/models.py`.
+
+**Accept.** Selecting IN then tapping a registered card records exactly one
+attendance event with the right direction and **no relay pulse**; a selection
+timeout returns to idle recording nothing; a mismatch under `verify` records
+nothing; events survive a restart and appear in the server journal.
+
+---
+
+### Phase D — Isolated fixes (no refactoring)
 
 #### <a id="t13"></a>T13. HTTP error classification
-Distinguish connect error / timeout / permanent 4xx / transient 5xx in `provisioning/client.py:80-92,130-142` and `db/remote_provider.py:65-73`; only transient classes back off.
-**Accept.** A 400 and a 503 are logged and retried differently; 410 keeps its dedicated path.
+Distinguish connect error / timeout / permanent 4xx / transient 5xx in
+`provisioning/client.py` (`register()`, `post_status()`) and
+`db/remote_provider.py` (`load_all()`); only transient classes back off.
+**Accept.** A 400 and a 503 are logged and retried differently; 410 keeps its
+dedicated `DeviceRevokedError` path.
 
 #### <a id="t14"></a>T14. Server rebinding and real door scoping
-Re-registration **replaces** the prior device row rather than creating a second (`server/main.py:301-326`); stop seeding every device from `default_user_database.json` (`:335-339`) — scope users to the door.
-**Accept.** Rebinding the same physical terminal leaves exactly one active row; a new device starts with the users of *its* door, not a template.
+`register_device()` must **replace** the prior device row rather than minting a
+second `uuid4`; stop seeding every device from `load_default_template()` — scope
+users to the door.
+**Accept.** Rebinding the same physical terminal leaves exactly one active row;
+a new device starts with the users of *its* door, not a template.
 
 #### <a id="t15"></a>T15. Network profile defaults and password handling
-Ship `APPLY_NETWORK_PROFILE = False` (`config.py:148`); pass the Wi-Fi password to `nmcli` via stdin/file instead of argv (`provisioning/network.py:101`).
-**Accept.** A dev machine is never reconfigured by default; the password is absent from the process list.
-
-#### <a id="t16"></a>T16. Init mode on every start — **done**
-Enter init mode unconditionally; `INIT_MODE_ENABLED` becomes window-length only
-(0-length = enter-then-immediately-end). Single code path: `start_init_mode()`
-always enters and emits `init_mode_entered`, then schedules `end_init_mode` at
-`INIT_MODE_DURATION_SEC*1000` when enabled with a positive duration, else at
-delay `0` (`end_init_mode` is idempotent).
-**Done (2026-08-26):** `session/controller.py:215-243`,
-`gui_web/web_window.py:568-571`, `config.py:49-61`. Tests:
-`session/tests/test_controller.py` (disabled ⇒ enters + emits + immediately
-ends, no scan/overlay/preview; zero-duration collapses to the same path;
-already-active re-entry re-emits). Session suite 18 passed; server green-gate 62
-passed (`APPLY_NETWORK_PROFILE=False` on dev, D17). `gui_qt` intentionally does
-**not** track this (frozen harness — T1b) and is left as-is
-(`gui_qt/main_window_qt.py:280-281`).
-**Accept.** An already-bound terminal still scans at startup, so a technician can re-provision without a reset.
-
-#### <a id="t17"></a>T17. systemd unit
-One maintained unit running `main_web.py` with `Restart=always`; delete or fix `docs/rsid-host-mode.service`.
-**Accept.** `systemctl start` launches the web UI; a T6 revocation exit is restarted automatically.
+Ship `APPLY_NETWORK_PROFILE = False`; pass the Wi-Fi password to `nmcli` via
+stdin/file instead of argv (`network.apply()`).
+**Accept.** A dev machine is never reconfigured by default; the password is
+absent from the process list.
 
 #### <a id="t18"></a>T18. Retire the keypad demo path
-Remove the hardcoded `1234` from `demo_ui/app.js:103` and `gui_web/web_window.py:232-238`, or gate the whole path behind an explicitly non-production flag.
-**Accept.** No credential constant ships in production assets; no code path grants on PIN entry.
+Remove the hardcoded code from `demo_ui/app.js` **and**
+`web_window.py` `Bridge.codeSubmitted()`, or gate the whole path behind an
+explicitly non-production flag. `demo_ui/README.md` documents the constant too.
+**Accept.** No credential constant ships in production assets; no code path
+grants on PIN entry.
+
+---
+
+### <a id="delivered"></a>2.1 Delivered
+
+Full write-ups are in git history; these are the load-bearing summaries. Every
+item is **implemented and awaiting (or covered by) device validation** —
+see [§3](#3-batches-and-device-validation).
+
+| # | Task | Outcome |
+|---|---|---|
+| 1 | **T1** Extract `SessionController` | Session machine moved to `session/controller.py` behind `SessionView` / `Scheduler`; `web_window.py` reduced to a view adapter. Satisfies NFR-19; covered by `session/tests/` with a manual-clock scheduler. *(B1)* |
+| 2 | **T1b** `gui_qt` freeze notice | Delivered 2026-08-26 as a comment-only banner, then **superseded**: `gui_qt/` and `main_qt.py` were deleted outright on 2026-08-31, so the artefact no longer exists. Nothing to maintain. |
+| 3 | **T2** Decision ↔ actuation split | See the [downstream contract](#119-architecture-baseline-as-delivered) — `access_granted` is post-pulse; `relay_api.open_door()` returns `bool`; `access_output_failed` is the fail-secure outcome. *(B3)* |
+| 4 | **T3** User-record schema v2 | `{user_id, name, active, permission_level, faceprints}`; `active` enforced on both auth paths; every emit rewritten to `user_id` via `HostModeService.last_user_id`. `faceprints`-as-a-list carved out as [T3b](#t3b). *(B6)* |
+| 5 | **T5a** Ack by `event_id` | `events.ack(event_ids)` removes by id, never by position, so a ring eviction during an in-flight beat cannot drop undelivered events. *(B4)* |
+| 6 | **T6** Fail-secure revocation | On 410: emit + flush `device_revoked` **while still bound** → stop heartbeat/sync → delete identity → purge user DB incl. faceprints → in-process init-mode reset. Server-authoritative lifecycle below. **Step 6 diverges from the SRS** → [T20](#t20). *(B5)* |
+| 7 | **T10** Identity file `0600` | Temp file created `0o600` via `os.open`; mode re-asserted after `os.replace`. *(B0)* |
+| 8 | **T11** Validate QR `command` | `EXPECTED_COMMAND` check in `_verify()`, warning-level per FR-PROV-05. *(B0)* |
+| 9 | **T12** Log score and threshold | One decision line per path carrying `sdk_success`, `score`, `threshold` and the verdict. *(B0)* |
+| 10 | **T16** Init mode on every start | `start_init_mode()` always enters and emits `init_mode_entered`; `INIT_MODE_ENABLED` sizes the window only (0-length = enter-then-end, `end_init_mode()` idempotent). *(B2)* |
+| 11 | **T17** systemd unit | `face-guard.service` runs `main_web.py`, `Restart=always`, with the `rpi_py_build_lib` `LD_LIBRARY_PATH` that the old unit lacked; dead `docs/rsid-host-mode.service` deleted. *(2026-08-31)* |
+| 12 | **Fix** Remote DB sync re-armed on bind (FR-DB-07) | Detail below. |
+
+**T6 — server-authoritative revocation lifecycle** *(kept in full: T14 and T20
+both depend on it).* Revocation is a server-side tombstone handshake, so the
+device's local cleanup never needs to be guaranteed:
+
+1. Operator removes the device → its row flips `active` → `suspended`
+   (`server/main.py` `delete_device()`, soft delete — the row is kept as a
+   tombstone). From that instant the device is untrusted: `post_status()` refuses
+   every heartbeat from a `suspended` / `revoked_ack` row and always answers 410.
+2. The device's next heartbeat is answered 410; the row flips to `revoked_ack`
+   and the device runs its local teardown.
+3. The tombstone is purged on the next device-list load (`_purge_acknowledged()`).
+
+Because the server is the sole authority, a comms failure or a failed local DB
+wipe cannot leave the device trusted: if it never sees the 410 it stays locked out
+server-side, and `_handle_revoked()` destroys the identity even if the DB wipe
+throws. Re-enrollment is collision-free by construction — every bind mints a fresh
+`device_id` and token. **No separate revoke-ack endpoint is needed.**
+
+**Fix — remote DB sync not re-armed after runtime binding (FR-DB-07).** A device
+that booted **unbound** and then bound via QR never fetched its remote user DB,
+leaving a bound `remote`-mode device with no source of truth for door access:
+`HostModeService.__init__` decided remote-vs-local once at boot, and QR binding
+saved the identity without re-arming the provider. Fixed by
+`UserDatabase.attach_remote()` / `is_remote_enabled()` (wire a provider *after*
+construction) plus `HostModeService.enable_remote_sync()` (load the fresh
+identity, attach, do one **immediate blocking** `sync_from_remote()` so users
+appear right after pairing, then start auto-sync), called off the UI thread from
+`GUIWeb._on_binding_result()`. Covered by `db/test_remote_sync.py`.
 
 ---
 
 ## 3. Batches and device validation
 
-Delivery model: each batch is a small, independently revertable change set.
-After every batch the owner validates on the real device using the checklist
-below; the next batch starts only after sign-off. The existing server test
-suite (`server/tests/`, 66 tests) must stay green after every batch — run
-with `APPLY_NETWORK_PROFILE = False` on dev machines without `nmcli`
-([D17](SOFTWARE_REQUIREMENTS.md#d17)).
+Delivery model: each batch is a small, independently revertable change set. After
+every batch the owner validates on the real device using the checklist below; the
+next batch starts only after sign-off.
+
+**Green gate.** The server suite (`server/tests/`, **66 tests**) must stay green
+after every batch, alongside `session/tests/` (**27**),
+`db/test_remote_sync.py` (**7**), `provisioning/tests/test_revocation.py` (**4**)
+and `db/tests/test_revocation_wipe.py` (**2**). Run with
+`APPLY_NETWORK_PROFILE = False` on dev machines without `nmcli`
+([D17](SOFTWARE_REQUIREMENTS.md#d17)). Note `pytest` is not installed on every
+dev box — the Pi or the project venv is the reference environment.
 
 | Batch | Content | Status |
 |---|---|---|
-| **B0** | [T10](#t10) + [T11](#t11) + [T12](#t12) | **Implemented — awaiting device validation** |
-| B1 | [T1](#t1)a: `session/controller.py`, web UI ported | **Implemented — awaiting device validation** |
-| B2 | [T1](#t1)b: freeze notice in `gui_qt` + [T16](#t16) | **Implemented — awaiting device validation** |
-| B3 | [T2](#t2) decision separation | **Implemented — awaiting device validation** |
-| B4 | [T5](#t5)a ack-by-`event_id` | **Implemented — awaiting device validation** |
-| B5 | [T6](#t6) fail-secure revocation | **Implemented — awaiting device validation** |
-| B6 | [T3](#t3) schema v2 (server, then device) | **Implemented — awaiting device validation** |
-| B7 | [T4](#t4) `device_mode` / `face_policy` | pending |
-| B8 | [T7](#t7) `card_only` + [T3b](#t3b) `faceprints` as a list | pending |
-| B9 | [T9](#t9) pre-emption + backoff + unavailable screen | pending |
-| B10 | [T5](#t5)b durable attendance queue | pending |
-| B11 | [T8](#t8) server half (attendance intake + journal) | pending |
-| B12 | [T8](#t8) device half (IN/OUT flow) | pending |
-| B13 | [T13](#t13) + [T14](#t14) + [T15](#t15) + [T17](#t17) + [T18](#t18) | pending |
+| **B0** | [T10](#delivered) + [T11](#delivered) + [T12](#delivered) | Implemented — awaiting device validation |
+| **B1** | [T1](#delivered)a: `session/controller.py`, web UI ported | Implemented — awaiting device validation |
+| **B2** | [T1b](#delivered) freeze notice *(since superseded by the `gui_qt/` deletion)* + [T16](#delivered) | Implemented — awaiting device validation |
+| **B3** | [T2](#delivered) decision separation | Implemented — awaiting device validation |
+| **B4** | [T5a](#delivered) ack-by-`event_id` | Implemented — awaiting device validation |
+| **B5** | [T6](#delivered) fail-secure revocation | Implemented — awaiting device validation |
+| **B6** | [T3](#delivered) schema v2 (server, then device) | Implemented — awaiting device validation |
+| **B7** | [T19](#t19) nonce removal + [T20](#t20) D21 ruling | pending |
+| B8 | [T4](#t4) `device_mode` / `face_policy` | pending |
+| B9 | [T7](#t7) `card_only` + [T3b](#t3b) `faceprints` as a list | pending |
+| B10 | [T9](#t9) pre-emption + card-path backoff + unavailable screen | pending |
+| B11 | [T5b](#t5b) durable event queue | pending |
+| B12 | [T8](#t8) server half (attendance intake + journal) | pending |
+| B13 | [T8](#t8) device half (IN/OUT flow) | pending |
+| B14 | [T13](#t13) + [T14](#t14) + [T15](#t15) + [T18](#t18) | pending |
 
 ### B0 device checklist
 
-1. **T10** — provision (or re-provision) the terminal, then:
+1. **T10** — provision (or re-provision) the terminal, then
    `ls -l device_identity.json` → must show `-rw-------`.
 2. **T11** — scan a QR with a non-`provision_device` command → rejected with
-   log line `QR rejected (unsupported command …)` at WARNING; a normal QR
-   still binds. To mint a wrong-command QR, use `other/qr_code_poc/gen_qr_code.py`
-   with the command edited, or skip this step (covered by automated tests
-   off-device).
-3. **T12** — perform one grant and one deny → the log shows
+   `QR rejected (unsupported command …)` at WARNING; a normal QR still binds. To
+   mint a wrong-command QR use `other/qr_code_poc/gen_qr_code.py` with the command
+   edited, or skip (covered off-device by automated tests).
+3. **T12** — one grant and one deny → the log shows
    `1:1 decision: card=… sdk_success=… score=… threshold=400 -> GRANT` and
-   `… -> DENY` respectively.
+   `… -> DENY`.
 
 ### B1 device checklist
 
-The session state machine was extracted into `session/controller.py` (pure
-Python — no Qt/`rsid_py`) with `gui_web/web_window.py` reduced to view/scheduler
-adapters. `session/tests/test_controller.py` (14 tests) covers the machine
-off-device with a manual-clock scheduler. On the terminal, confirm the ported
-web UI is behaviourally unchanged:
+The session machine moved to `session/controller.py` (pure Python — no Qt or
+`rsid_py`) with `web_window.py` reduced to view/scheduler adapters. Confirm the
+ported web UI is behaviourally unchanged:
 
-1. **Grant** — tap a registered card with the matching face present → camera
-   view, then "Welcome, `<name>`", then automatic return to idle after the
-   welcome hold. Log shows the `1:1 decision: … -> GRANT` line (unchanged).
-2. **Card mismatch** — registered card, wrong/absent face → a single brief
-   failure screen, then idle; no retry loop, no relay pulse.
-3. **Unregistered card** — tap an unknown card → brief failure only, with **no**
-   camera preview or auth attempt.
-4. **Session timeout / demo mode** — with `AUTH_ONLY_ON_CARD=False`, a tap
-   starts a face-only session that retries on cadence and falls back to idle
-   after `AUTH_SESSION_TIMEOUT_SEC` with no match.
-5. **Init mode + provisioning** — enter init mode → "Init Mode" overlay +
-   camera; present a valid provisioning QR → binding runs once and scanning
-   stops; overlay times out back to idle after `INIT_MODE_DURATION_SEC`.
+1. **Grant** — tap a registered card with the matching face → camera view, then
+   "Welcome, `<name>`", then automatic return to idle. Log shows the unchanged
+   `1:1 decision: … -> GRANT` line.
+2. **Card mismatch** — registered card, wrong/absent face → one brief failure
+   screen, then idle; no retry loop, no relay pulse.
+3. **Unregistered card** — unknown card → brief failure only, with **no** camera
+   preview or auth attempt.
+4. **Session timeout / demo mode** — with `AUTH_ONLY_ON_CARD=False`, a tap starts
+   a face-only session that retries on cadence and falls back to idle after
+   `AUTH_SESSION_TIMEOUT_SEC`.
+5. **Init mode + provisioning** — "Init Mode" overlay + camera; a valid QR binds
+   once and scanning stops; the overlay times out back to idle.
 
 ### B2 device checklist
 
-Init mode is now the entry state on **every** start (T16): `start_init_mode()`
-always enters via a single code path, and `INIT_MODE_ENABLED` only sizes the
-scan window (0-length window when `False`/zero duration). `gui_qt` + `main_qt.py`
-gained a `FROZEN (2026-08-26)` banner (comment-only; T1b). `session/tests/`
-now 18 tests; server green-gate 62 passed. On the terminal confirm:
+Init mode is the entry state on **every** start (T16); `INIT_MODE_ENABLED` only
+sizes the scan window.
 
 1. **Already-bound terminal still scans** — boot a bound device with
-   `INIT_MODE_ENABLED=True` → "Init Mode" overlay + camera appears at startup;
-   presenting a valid provisioning QR re-provisions without a factory reset.
-2. **Window timeout** — with nothing presented, the overlay times out after
-   `INIT_MODE_DURATION_SEC` and the UI returns to idle / normal operation.
-3. **Disabled = zero-length window** — set `INIT_MODE_ENABLED=False` and boot →
-   no lingering "Init Mode" overlay or camera preview; the app proceeds straight
-   to idle, and an `init_mode_entered` event is still emitted (single path).
-4. **`gui_qt` unchanged** — `main_qt.py` still launches the frozen Qt harness
-   with its prior behaviour; only the freeze banner is new.
+   `INIT_MODE_ENABLED=True` → overlay + camera at startup; a valid QR
+   re-provisions without a factory reset.
+2. **Window timeout** — nothing presented → overlay times out after
+   `INIT_MODE_DURATION_SEC`, UI returns to idle.
+3. **Disabled = zero-length window** — `INIT_MODE_ENABLED=False` → no lingering
+   overlay or preview, straight to idle, and `init_mode_entered` still emitted
+   (single path).
+
+*(The rev 1.1 item "`gui_qt` unchanged" is dropped — the directory no longer
+exists.)*
 
 ### B3 device checklist
 
-Access **decision** (recognition) is now separated from door **actuation** (T2):
-`face_auth/auth_service.py` decides and emits `auth_matched` only; the
-`SessionController` pulses the relay and emits `access_granted` **only after** a
-successful pulse, or `access_output_failed` (fail-secure) if the strike will not
-open. `session/tests/` is now 23 tests; server green-gate 62 passed. On the
-terminal (with `RUN_WITH_RELAY=True` and a strike wired) confirm:
+Decision (recognition) is separated from actuation (T2). With `RUN_WITH_RELAY=True`
+and a strike wired:
 
-1. **Grant opens the door before "Welcome"** — tap a registered card with the
-   matching face → the strike pulses, *then* the welcome screen shows. The event
-   log order is `auth_matched` → `relay_opened` → `access_granted` (never
-   `access_granted` before the pulse).
-2. **Relay failure fails secure** — with the strike disconnected / forced to
-   fault, repeat a matching grant → a **failure** screen (not welcome), an
-   `access_output_failed` event, and **no** `access_granted`.
-3. **Denial never pulses** — registered card, wrong/absent face → failure
-   screen, `access_denied`, and the relay does **not** pulse (no `relay_opened`).
-4. **Relay-off demo still grants** — set `RUN_WITH_RELAY=False` → a match shows
-   "Welcome" and emits `access_granted` with no physical pulse.
+1. **Grant opens the door before "Welcome"** — the strike pulses, *then* the
+   welcome screen. Event order `auth_matched` → `relay_opened` → `access_granted`,
+   never `access_granted` first.
+2. **Relay failure fails secure** — strike disconnected/faulted → a **failure**
+   screen, an `access_output_failed` event, and **no** `access_granted`.
+3. **Denial never pulses** — wrong/absent face → failure screen, `access_denied`,
+   no `relay_opened`.
+4. **Relay-off demo still grants** — `RUN_WITH_RELAY=False` → "Welcome" and
+   `access_granted` with no physical pulse.
 
 ### B4 device checklist
 
-Event acknowledgement is now **by `event_id`**, not by position (FR-HB-05):
-`events.ack(event_ids)` removes only the confirmed events from the buffer, so an
-event emitted (or a ring eviction) *during* an in-flight heartbeat can no longer
-be dropped. Server-side dedup is unchanged (`INSERT OR IGNORE` on `event_id`).
-On the terminal, with the device bound to a reachable server, confirm:
+Acknowledgement is by `event_id`, not position (FR-HB-05). Bound to a reachable
+server:
 
-1. **Events still deliver end-to-end** — trigger a few events (a grant, a
-   denial, a QR rejection) and confirm each appears exactly once in the server's
-   event log after the next heartbeat, with no duplicates.
-2. **Nothing lost under load** — generate a burst of events (rapid taps) so
-   several ride one beat; confirm every one lands server-side and the device's
-   pending buffer drains to 0 after a successful beat.
-3. **Failed beat keeps events** — briefly block the server / pull the network
-   during a beat; the events stay buffered and are delivered on the next
-   successful beat (none dropped).
+1. **Events deliver end-to-end** — a grant, a denial and a QR rejection each
+   appear exactly once server-side after the next beat.
+2. **Nothing lost under load** — a burst of rapid taps so several ride one beat;
+   every one lands and the pending buffer drains to 0.
+3. **Failed beat keeps events** — block the server mid-beat; events stay buffered
+   and go out on the next successful beat.
 4. **Shutdown flush** — stop the app with pending events; the final flush
-   (`binding.py`) delivers them and acks by id.
+   delivers them and acks by id.
 
-*(Per-batch checklists for B4+ are added when each batch is implemented.)*
+### B5 device checklist
 
-## Fix: remote DB sync not re-armed after runtime binding (FR-DB-07)
+Fail-secure revocation (T6). With the device bound and online:
 
-**Regression.** A device that booted **unbound** and then bound via QR never
-fetched its remote user DB — leaving a bound `remote`-mode device with no source
-of truth for door access. `HostModeService.__init__` decided remote-vs-local
-**once at boot** (`face_auth/auth_service.py`): first boot has no identity →
-`UserDatabase(identity=None)` → `self._remote = None`
-(`db/user_database.py:37`) → `start_auto_sync` skipped. QR binding saved the
-identity but nothing re-armed the DB provider, so remote sync only engaged on the
-next reboot — violating **FR-DB-07** ("remote sync skipped **until binding
-completes**", i.e. resume *on* bind).
+1. **Revoke from the dashboard** → on the next heartbeat the device logs the 410,
+   and the server shows `device_revoked` **received** (flushed while the
+   credential was still valid).
+2. **Local wipe** — `device_identity.json` is gone and the user DB file is empty
+   on disk.
+3. **Deny-all** — a previously working card tap is refused; no relay pulse.
+4. **Re-provision without a power cycle** — present a fresh QR → the device binds,
+   syncs its users immediately (FR-DB-07 fix) and grants again.
+5. **Note for [T20](#t20)** — confirm whether the process stayed up (in-process
+   reset, current behaviour) or restarted; this is the observation that settles
+   D21.
 
-**Fix.**
-- `db/user_database.py` — new `attach_remote(identity, timeout)` /
-  `is_remote_enabled()` wire a `RemoteUserDataProvider` **after** construction.
-- `face_auth/auth_service.py` — extracted `_start_remote_sync()`; new
-  `enable_remote_sync()` loads the freshly-saved identity, attaches the provider,
-  does an **immediate blocking** `sync_from_remote()` (users appear right after
-  pairing, not one interval later), then starts periodic auto-sync. No-op in
-  `local` mode or when already remote-enabled.
-- `gui_web/web_window.py` — `_on_binding_result` calls
-  `host_service.enable_remote_sync()` on a daemon thread (off the UI thread; the
-  first fetch is blocking HTTP) on binding success. `gui_qt` left frozen.
+### B6 device checklist
 
-**Telemetry.** FR-DB-06 events (`db_sync_ok` / `db_sync_failed` /
-`db_sync_invalid_record` / `db_sync_skipped_entries`) already fire from
-`db/remote_provider.py` on every fetch, so the post-bind fetch is now fully
-observable; added log breadcrumbs on the unbound→bound transition and the
-post-pairing user count.
+User-record schema v2 (T3).
 
-**Tests.** `db/test_remote_sync.py` +2 (unbound-boot → `attach_remote` → sync
-fetches; `attach_remote(None)` no-op). DB + session suites: **30 passed**.
+1. **Round trip** — a server-side user with `user_id` syncs and grants normally.
+2. **`active: false` denies** — suspend a user server-side, re-sync → the card tap
+   is refused with `access_denied` / `reason="user_inactive"`, no relay pulse.
+3. **Malformed record skipped** — a record without `user_id` is skipped and
+   counted (`db_sync_invalid_record` / `db_sync_skipped_entries`), and the rest of
+   the payload still applies.
+4. **No PII in telemetry** — server event log shows `user_id` only: no cardholder
+   name, no raw card id, including for an unregistered tap
+   (`reason="card_unregistered"`).
 
+*(Per-batch checklists for B7+ are added when each batch is implemented.)*
