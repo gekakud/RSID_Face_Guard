@@ -1,5 +1,5 @@
 [Unit]
-Description=Face Guard - RealSense ID Host Mode GUI (Qt)
+Description=Face Guard - RealSense ID Host Mode GUI (Web UI)
 After=network-online.target graphical.target
 Wants=network-online.target
 
@@ -9,12 +9,15 @@ User=geka
 Group=geka
 WorkingDirectory=/home/geka/RSID_Face_Guard
 
-# Display access for the Qt GUI (XWayland/X11)
+# Display access for the QtWebEngine kiosk window (XWayland/X11)
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/geka/.Xauthority
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 
-ExecStart=/home/geka/RSID_Face_Guard/.venv/bin/python /home/geka/RSID_Face_Guard/main_qt.py
+# rsid_py's native libraries live in rpi_py_build_lib/ (mirrors run_main_web.sh)
+Environment=LD_LIBRARY_PATH=/home/geka/RSID_Face_Guard/rpi_py_build_lib
+
+ExecStart=/home/geka/RSID_Face_Guard/.venv/bin/python /home/geka/RSID_Face_Guard/main_web.py
 
 Restart=always
 RestartSec=5

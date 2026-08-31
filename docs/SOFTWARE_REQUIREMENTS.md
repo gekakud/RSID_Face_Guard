@@ -5,11 +5,11 @@
 | Item | Detail |
 |---|---|
 | Document ID | SRS-FG-001 |
-| Revision | 1.3 |
+| Revision | 1.4 |
 | Product | RSID Face Guard kiosk application |
 | Target platform | Raspberry Pi 5, 720×720 round touch display |
 | Biometric device | Intel RealSense ID F45x (`rsid_py` SDK) |
-| Front-end in scope | **Web UI** (`main_web.py` → `gui_web` + `demo_ui`) |
+| Front-end | **Web UI — the only one** (`main_web.py` → `session/` + `gui_web/` + `demo_ui/`) |
 | Server | External dashboard server; only the device-facing REST contract is in scope |
 | Status | Baselined |
 
@@ -33,7 +33,8 @@ requirement onto the delivered modules.
 **In scope**
 
 - The kiosk application and all of its device-side services.
-- The **web UI** front-end (QtWebEngine kiosk hosting `demo_ui/`).
+- The **web UI** front-end — the sole front-end: a QtWebEngine kiosk hosting
+  `demo_ui/`, driven by the UI-agnostic session controller in `session/`.
 - Provisioning by signed QR code, and the device↔server REST contract.
 - Local user/faceprint storage, offline operation, telemetry and logging.
 
@@ -42,9 +43,10 @@ requirement onto the delivered modules.
 - Server implementation, dashboard pages, database and operator workflows.
   The server is specified here **only** by the endpoints the device calls
   ([§8](#8-external-interfaces)), to be implemented by the server team on request.
-- The Qt-widgets front-end (`main_qt.py`, `gui_qt/`). It is a **test and
-  development harness only**, not a delivered product configuration. It shares
-  the same business layer and validates it without a browser engine.
+- Alternate front-ends. The Qt-widgets harness (`main_qt.py`, `gui_qt/`) was
+  **removed from the repository on 2026-08-31**; `main_web.py` is the only entry
+  point. Note that PySide6/QtWebEngine remains a *runtime dependency* of the web
+  UI — it is the browser engine host, not a second front-end.
 - Technician mobile application internals.
 
 ### 1.3 Conventions
@@ -340,6 +342,12 @@ DB does not.
 
 Owns the kiosk window, the UI state machine and the lifecycle of every
 authentication session.
+
+The state machine itself is **UI-agnostic**: it lives in `session/controller.py`
+and drives the front-end through the `SessionView` protocol (`session/view.py`)
+and a scheduler abstraction (`session/scheduler.py`), so it holds no Qt, browser
+or `rsid_py` dependency. `gui_web/web_window.py` is the view adapter and platform
+glue that implements those protocols.
 
 <a id="fr-sess-01"></a>**FR-SESS-01** The service shall host the web UI full-screen in kiosk mode and
 serve its assets and the camera stream over a loopback HTTP origin so the page
@@ -683,6 +691,9 @@ treat the device as removed and shall, in this order:
    re-provision it by presenting a new QR without a power cycle.
 
 Revocation is equivalent to a reset. **[NEW]** — see [§12](#12-assumptions-known-deviations-and-future-work).
+
+> Steps 1–5 are implemented as specified. **Step 6 is not**: the build returns to
+> `init_mode` in-process instead of restarting. Recorded as [D21](#d21).
 
 ### 5.9 Logging & Storage Monitor
 
@@ -1053,8 +1064,10 @@ suspend a user without deleting their enrolment.
 | `DB_MODE` | `local` (file only) or `remote` (periodic server sync) |
 | `USER_DB_FILE` | Local user/faceprint cache path |
 | `CARD_READER_BACKEND` | `gwiot_hid` / `wiegand_gpio` / `simulated` |
+| `SIMULATE_CARD_READER` | Derived from `CARD_READER_BACKEND`; selects the dev simulator |
 | `AUTH_ONLY_ON_CARD` | Card- vs. tap-triggered session — **deprecated once `DEVICE_MODE` lands ([D4](#d4))** |
 | `AUTH_RETRY_INTERVAL_SEC`, `AUTH_SESSION_TIMEOUT_SEC` | Session cadence and bound |
+| `PREVIEW_LEAD_IN_MS` | Live-preview lead-in before the first match attempt ([NFR-03](#nfr-03)) |
 | `CUSTOM_THRESHOLD` | Score fallback acceptance threshold |
 | `RUN_WITH_RELAY`, `RELAY_PIN`, `RELAY_ACTIVE_LOW`, `RELAY_DEFAULT_OFF` | Access output |
 | `INIT_MODE_ENABLED`, `INIT_MODE_DURATION_SEC` | Provisioning scan window |
@@ -1064,10 +1077,12 @@ suspend a user without deleting their enrolment.
 | `DB_SYNC_INTERVAL_SEC`, `REMOTE_TIMEOUT_SEC` | Sync cadence and network bound |
 | `APPLY_NETWORK_PROFILE`, `NETWORK_APPLY_TIMEOUT_SEC` | Wi-Fi joining from QR |
 | `KIOSK_BORDERLESS`, `WINDOW_WIDTH`, `WINDOW_HEIGHT` | Kiosk presentation |
+| `RUN_ON_REAL_SCREEN` | Target the attached round display vs. a dev desktop window |
 | `WEB_UI_DIR`, `WEB_FRAME_PORT` | UI assets and loopback port |
 | `WELCOME_DURATION_MS`, `FAIL_DURATION_MS` | Result hold durations |
 | `LOG_LEVEL`, `LOG_LEVELS` | Global and per-module log levels |
-| `STORAGE_MIN_FREE_MB`, `STORAGE_CHECK_INTERVAL_SEC` | Storage monitoring |
+| `LOG_FILE`, `LOG_MAX_BYTES`, `LOG_BACKUP_COUNT` | Rotating log file path and size limits ([FR-LOG-01](#fr-log-01)) |
+| `STORAGE_MIN_FREE_MB`, `STORAGE_CHECK_INTERVAL_SEC`, `STORAGE_MONITOR_PATH` | Storage monitoring (path `None` = application filesystem) |
 | `APP_VERSION` | Reported to the dashboard |
 
 
@@ -1148,8 +1163,12 @@ be fail-secure ([FR-HB-10](#fr-hb-10)).
 
 ### 10.5 Maintainability and deployment
 
-<a id="nfr-19"></a>**NFR-19** Business logic shall remain free of UI and transport concerns, so
-the same logic serves the web UI and the Qt test harness unchanged.
+<a id="nfr-19"></a>**NFR-19** Business logic — including the session state machine — shall remain
+free of UI and transport concerns, so it can be exercised without a browser
+engine, a Qt event loop or attached hardware. The session controller
+(`session/controller.py`) depends only on the `SessionView` and scheduler
+protocols ([§5.1](#51-session-orchestration-service)) and is covered off-device
+by `session/tests/`.
 
 <a id="nfr-20"></a>**NFR-20** Hardware variants shall be swappable by configuration (card reader
 backends, simulated hardware) so the application runs off-Pi for development.
@@ -1171,15 +1190,15 @@ Verification methods: **T** = Test, **D** = Demonstration, **I** = Inspection,
 
 | Area | Requirements | Source | Implementing modules | Verif. |
 |---|---|---|---|---|
-| Entry point / init mode | [FR-STATE-01](#fr-state-01)..[FR-STATE-03](#fr-state-03) | Ops need: unattended restart | `main_web.py`, `gui_web/web_window.py`, `provisioning/identity.py` | T |
+| Entry point / init mode | [FR-STATE-01](#fr-state-01)..[FR-STATE-03](#fr-state-03) | Ops need: unattended restart | `main_web.py`, `session/controller.py`, `gui_web/web_window.py`, `provisioning/identity.py` | T |
 | Offline operation | [FR-STATE-04](#fr-state-04)..[FR-STATE-11](#fr-state-11) (06/08/10/12 deprecated) | Availability requirement | `db/` (cache), `provisioning/heartbeat.py`, `observability/events.py` | T |
-| Operating modes | [FR-MODE-01](#fr-mode-01)..[FR-MODE-05](#fr-mode-05) | Product decision ([A1](#a1)) | `config.py`, `gui_web/web_window.py`, `provisioning/binding.py` | T |
+| Operating modes | [FR-MODE-01](#fr-mode-01)..[FR-MODE-05](#fr-mode-05) | Product decision ([A1](#a1)) | `config.py`, `session/controller.py`, `provisioning/binding.py` | T |
 | Time registry | [FR-MODE-06](#fr-mode-06)..[FR-MODE-11](#fr-mode-11) | Customer requirement ([A2](#a2), [A3](#a3), [A6](#a6)) | *not yet implemented* ([D3](#d3)) | T |
-| Session orchestration | [FR-SESS-01](#fr-sess-01)..[FR-SESS-08](#fr-sess-08) | Kiosk UX | `gui_web/web_window.py`, `demo_ui/` | T |
-| User interface | [FR-UI-01](#fr-ui-01)..[FR-UI-12](#fr-ui-12) | Kiosk UX / designer assets | `demo_ui/`, `gui_web/web_window.py` | D |
+| Session orchestration | [FR-SESS-01](#fr-sess-01)..[FR-SESS-08](#fr-sess-08) | Kiosk UX | `session/controller.py`, `session/view.py`, `session/scheduler.py`, `gui_web/web_window.py`, `demo_ui/` | T |
+| User interface | [FR-UI-01](#fr-ui-01)..[FR-UI-12](#fr-ui-12) | Kiosk UX / designer assets | `demo_ui/`, `gui_web/web_window.py`, `session/view.py` | D |
 | Face authentication | [FR-FACE-01](#fr-face-01)..[FR-FACE-07](#fr-face-07), [BR-03](#br-03) | Biometric vendor SDK | `face_auth/auth_service.py` | T |
 | Card reader | [FR-CARD-01](#fr-card-01)..[FR-CARD-06](#fr-card-06), [BR-02](#br-02), [BR-04](#br-04) | Hardware integration | `hardware/card_reader_api.py`, `card_backends_impl/` | T |
-| Access output | [FR-OUT-01](#fr-out-01)..[FR-OUT-06](#fr-out-06) | Door hardware | `hardware/relay_api.py` | D |
+| Access output | [FR-OUT-01](#fr-out-01)..[FR-OUT-06](#fr-out-06) | Door hardware | `hardware/relay_api.py`, `session/controller.py` (decision → actuation) | D |
 | User DB & sync | [FR-DB-01](#fr-db-01)..[FR-DB-08](#fr-db-08), [BR-01](#br-01) | Data-minimisation decision ([A5](#a5)) | `db/` | T |
 | Data model | [FR-DATA-01](#fr-data-01)..[FR-DATA-07](#fr-data-07) | Server contract | `db/user_database.py`, `provisioning/identity.py` | I |
 | Provisioning & QR trust | [FR-PROV-01](#fr-prov-01)..[FR-PROV-11](#fr-prov-11) | Security requirement | `qr_scanner/`, `provisioning/binding.py`, `provisioning/identity.py` | T |
@@ -1193,8 +1212,7 @@ Verification methods: **T** = Test, **D** = Demonstration, **I** = Inspection,
 | Availability | [NFR-05](#nfr-05)..[NFR-08](#nfr-08) | Availability requirement | `db/`, `provisioning/`, `observability/` | T |
 | Reliability | [NFR-09](#nfr-09)..[NFR-11](#nfr-11) | Field robustness | `provisioning/identity.py`, `db/`, `main_web.py` | T |
 | Security | [NFR-12](#nfr-12)..[NFR-18](#nfr-18) | Security policy | `provisioning/`, `qr_scanner/`, `observability/` | A |
-| Maintainability | [NFR-19](#nfr-19)..[NFR-22](#nfr-22) | Engineering standard | repository structure, `config.py`, systemd unit | I |
-| Test harness (out of scope) | — | — | `main_qt.py`, `gui_qt/` | — |
+| Maintainability | [NFR-19](#nfr-19)..[NFR-22](#nfr-22) | Engineering standard | repository structure, `session/`, `config.py`, `face-guard.service` | I |
 
 ---
 
@@ -1217,32 +1235,37 @@ Verification methods: **T** = Test, **D** = Demonstration, **I** = Inspection,
 
 ### 12.2 Known deviations (specification vs. current build)
 
-Confirmed by static code audit, 2026-08-26. Per-requirement evidence and the
-ordered remediation tasks are in
+Established by static code audit 2026-08-26; **re-verified against the working
+tree 2026-08-31**, after the Qt-widgets front-end was removed and batches B0–B6
+landed. Per-requirement evidence and the ordered remediation tasks are in
 [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+
+Resolved rows are retained as an audit trail; **open** rows are the live gap
+list.
 
 | # | Requirement | Current behaviour | Action |
 |---|---|---|---|
-| <a id="d1"></a>D1 | [FR-HB-10](#fr-hb-10) revocation is fail-secure | `binding.py` clears the identity only; the local DB is retained and the door keeps opening. No `device_revoked` event, no self-restart | **Change required** (T6) |
+| <a id="d1"></a>D1 | [FR-HB-10](#fr-hb-10) revocation is fail-secure | *Was:* `binding.py` cleared the identity only; the local DB was retained and the door kept opening; no `device_revoked` event | ✅ **Resolved** (T6/B5) — `provisioning/binding.py` `_handle_revoked` emits + flushes `device_revoked` while still bound, stops the heartbeat, deletes the identity, purges the user DB incl. faceprints (`db/user_database.py` `detach_remote`) and re-enters init mode. Step 6 (self-restart) diverges → [D21](#d21) |
 | <a id="d2"></a>D2 | [FR-MODE-03](#fr-mode-03) `card_only` | Face always runs when a reader is present | **Implement** (T7) |
 | <a id="d3"></a>D3 | [FR-MODE-06](#fr-mode-06)..[FR-MODE-11](#fr-mode-11) time registry | Not implemented | **Implement** (T8) |
-| <a id="d4"></a>D4 | [FR-MODE-01](#fr-mode-01) server-provisioned mode | Only the boolean `AUTH_ONLY_ON_CARD` exists; no `DEVICE_MODE` constant | **Implement** (T4) |
+| <a id="d4"></a>D4 | [FR-MODE-01](#fr-mode-01) server-provisioned mode | Only the boolean `AUTH_ONLY_ON_CARD` (`config.py:33`) exists. `device_mode` / `face_policy` have **zero hits** across `config.py`, `provisioning/`, `session/` and `server/` | **Implement** (T4) |
 | <a id="d5"></a>D5 | [FR-MODE-10](#fr-mode-10) durable attendance queue | Events are in-memory only, capped at 200 | **Implement** (T5) |
-| <a id="d6"></a>D6 | [FR-UI-09](#fr-ui-09) PIN path disabled | Demo keypad path present in UI assets | Disable for production (T18) |
+| <a id="d6"></a>D6 | [FR-UI-09](#fr-ui-09) PIN path disabled | Demo keypad path present in UI assets, with the code hardcoded in **two** places: `demo_ui/app.js:103` and `gui_web/web_window.py:235` (also documented in `demo_ui/README.md`). No authorisation effect today, but no production flag either | Disable for production (T18) |
 | <a id="d7"></a>D7 | [FR-API-12](#fr-api-12) mode/interval refresh | Heartbeat response is not consumed for config | Deferred — moved to future work ([§12.3](#123-out-of-scope-for-this-release)), rev 1.2 |
 | <a id="d8"></a>D8 | [FR-HB-05](#fr-hb-05) acknowledge by `event_id` | `events.ack(count)` pops by position, which can discard undelivered events if the ring evicts during an in-flight beat | ✅ **Resolved (B4/T5a)** — `ack(event_ids)` removes by id |
-| <a id="d9"></a>D9 | [FR-DB-01](#fr-db-01), [FR-DATA-01](#fr-data-01) record schema | `faceprints` is a single object, not a list, so a user with zero or several faceprints is unrepresentable. (`user_id` and `active` — the rest of this deviation — are now implemented device- and server-side) | **Implement (device + server)** (T3b) |
-| <a id="d10"></a>D10 | [BR-04](#br-04) / [FR-SESS-03](#fr-sess-03) pre-emption, [FR-UI-12](#fr-ui-12) | A different card during a result hold is swallowed; no "temporarily unavailable" screen for the [FR-FACE-06](#fr-face-06) backoff | **Implement** (T9) |
-| <a id="d11"></a>D11 | [FR-FACE-04](#fr-face-04), [FR-OUT-06](#fr-out-06) | `auth_service.py:29-37,198` opens the relay directly from the match callback and emits `access_granted` **before** the relay outcome is known; no `access_output_failed` event | **Change required** (T2) |
-| <a id="d12"></a>D12 | [FR-PROV-03](#fr-prov-03), [NFR-14](#nfr-14) | An in-process nonce set remains (`qr_scanner.py:114-116,173-178`); rev 1.2 moved replay protection server-side | Remove (T6) |
-| <a id="d13"></a>D13 | [FR-PROV-06](#fr-prov-06) | The `command` field is documented but never checked — any signed envelope is honoured | **Implement** (T11) |
-| <a id="d14"></a>D14 | [FR-PROV-09](#fr-prov-09), [FR-DATA-03](#fr-data-03) | Identity file written atomically and gitignored, but no `chmod 0600` anywhere | **Implement** (T10) |
+| <a id="d9"></a>D9 | [FR-DB-01](#fr-db-01), [FR-DATA-01](#fr-data-01) record schema | `faceprints` is a single object, not a list — `db/remote_provider.py:29-32` `_is_valid_faceprints` requires a `dict` — so a user with zero or several faceprints is unrepresentable. (`user_id` and `active` — the rest of this deviation — are now implemented device- and server-side) | **Implement (device + server)** (T3b) |
+| <a id="d10"></a>D10 | [BR-04](#br-04) / [FR-SESS-03](#fr-sess-03) pre-emption, [FR-UI-12](#fr-ui-12) | A different card during a result hold is swallowed. The unavailable screen is **plumbed but unwired**: `session/view.py` declares `show_unavailable` and `gui_web/web_window.py:307` implements it, but `session/controller.py` never calls it, so the [FR-FACE-06](#fr-face-06) backoff still surfaces as a generic failure | **Implement** (T9) |
+| <a id="d11"></a>D11 | [FR-FACE-04](#fr-face-04), [FR-OUT-06](#fr-out-06) | *Was:* `auth_service.py` opened the relay from the match callback and emitted `access_granted` before the relay outcome was known | ✅ **Resolved** (T2/B3) — `face_auth/auth_service.py:22` imports only `disconnect_relay` and emits `auth_matched`; the controller actuates (`session/controller.py` `_open_access_point`) and emits `access_granted` **post-pulse**, else `access_output_failed` |
+| <a id="d12"></a>D12 | [FR-PROV-03](#fr-prov-03), [NFR-14](#nfr-14) | **Still open.** The in-process nonce set survives at `qr_scanner/qr_scanner.py:118-120,184-189`; rev 1.2 moved replay protection server-side | **Remove — not delivered by T6.** T6/B5 shipped without this sub-item (it explicitly keeps the set, recreated empty per init-mode entry); needs its own task |
+| <a id="d13"></a>D13 | [FR-PROV-06](#fr-prov-06) | *Was:* the `command` field was documented but never checked — any signed envelope was honoured | ✅ **Resolved** (T11/B0) — `EXPECTED_COMMAND` check in `qr_scanner/qr_scanner.py` `_verify`, rejected at warning level (benign per [FR-PROV-05](#fr-prov-05)) |
+| <a id="d14"></a>D14 | [FR-PROV-09](#fr-prov-09), [FR-DATA-03](#fr-data-03) | *Was:* identity file written atomically and gitignored, but no `chmod 0600` anywhere | ✅ **Resolved** (T10/B0) — `provisioning/identity.py:100,104`: temp file created `0o600` via `os.open`, mode re-asserted on the final path after `os.replace` |
 | <a id="d15"></a>D15 | [FR-PROV-01](#fr-prov-01) | Init mode runs only when `INIT_MODE_ENABLED` (`web_window.py:549`); spec requires entry on every start, config controlling duration only | **Done** (T16, 2026-08-26): unconditional entry via `session/controller.py:215-243`; `INIT_MODE_ENABLED` now sizes the window only |
 | <a id="d16"></a>D16 | [FR-API-07](#fr-api-07), [FR-API-13](#fr-api-13) | Server re-registration creates a **new** device row (`server/main.py:301-326`); every device is seeded from one default user template (`:335-339`) | **Change required** (T14) |
-| <a id="d17"></a>D17 | [FR-NET-03](#fr-net-03), [FR-LOG-04](#fr-log-04) | `APPLY_NETWORK_PROFILE = True` is checked in; Wi-Fi password passed on the `nmcli` argv (`network.py:101`) | **Change required** (T15) |
-| <a id="d18"></a>D18 | [NFR-21](#nfr-21) | `docs/rsid-host-mode.service` targets a nonexistent script; `face-guard.service` launches `main_qt.py`, not the web UI | **Change required** (T17) |
+| <a id="d17"></a>D17 | [FR-NET-03](#fr-net-03), [FR-LOG-04](#fr-log-04) | `APPLY_NETWORK_PROFILE = True` is still checked in (`config.py:162`); Wi-Fi password passed on the `nmcli` argv (`provisioning/network.py:101`), exposing it in the process list | **Change required** (T15) |
+| <a id="d18"></a>D18 | [NFR-21](#nfr-21) | *Was:* `docs/rsid-host-mode.service` targeted a nonexistent script; `face-guard.service` launched `main_qt.py` — which the Qt removal then **deleted**, leaving an unbootable unit | ✅ **Resolved** (T17, 2026-08-31) — `face-guard.service` runs `main_web.py` with `Restart=always` and the `rpi_py_build_lib` `LD_LIBRARY_PATH`; `docs/rsid-host-mode.service` deleted |
 | <a id="d19"></a>D19 | [FR-FACE-06](#fr-face-06) | The 20 s backoff gate is applied only on the face-only path (`auth_service.py:229-232`), not the card path | **Implement** (T9) |
-| <a id="d20"></a>D20 | [NFR-19](#nfr-19) | The session state machine is duplicated between `gui_web/web_window.py` and `gui_qt/main_window_qt.py`; only sub-GUI layers are shared | **Refactor** (T1) |
+| <a id="d20"></a>D20 | [NFR-19](#nfr-19) | *Was:* the session state machine was duplicated between `gui_web/web_window.py` and `gui_qt/main_window_qt.py` | ✅ **Resolved** (T1/B1 + Qt removal 2026-08-31) — one machine in `session/controller.py`; `gui_web/web_window.py` is a view adapter; `gui_qt/` and `main_qt.py` deleted from the repository |
+| <a id="d21"></a>D21 | [FR-HB-10](#fr-hb-10) step 6, [NFR-21](#nfr-21) | Revocation performs an **in-process** return to `init_mode` (`SessionController.start_init_mode()`, the same entry point used at boot) rather than the specified orderly self-restart under systemd. With no identity and init mode active the terminal is deny-all, so the fail-secure intent is met | **Decision needed**: either reword [FR-HB-10](#fr-hb-10) step 6 (and the [§3](#3-operating-states) diagram/state table) to specify the in-process reset — the design approved in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) T6 — or implement the restart |
 
 ### 12.3 Out of scope for this release
 
@@ -1266,4 +1289,5 @@ ordered remediation tasks are in
 | 1.1 | 2026-08-26 | requirements review | Diagram corrections; logic-defect fixes (ack-by-id, fail-secure revocation, offline/local-mode scoping, denial paths); init-mode-as-entry-state; `idle` naming; jump links; full traceability |
 | 1.2 | 2026-08-26 | requirements review | Stakeholder rulings U1–U10 (face policy confirmed, durable attendance mandatory, token-replacement semantics, schema-discard migration, vendor threshold note, relay default, server-side replay protection, `unbound` = dev-only); simplification pass: FR-STATE-06/08/10/12, FR-UI-02, FR-UI-10, FR-API-12 deprecated; rationale prose trimmed |
 | 1.3 | 2026-08-26 | code reconciliation | Static audit of the working tree. Added §5.5 and §5.6 service diagrams; D1–D10 confirmed with evidence and mapped to tasks; new deviations D11–D20 recorded. Companion [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) holds the per-requirement reconciliation table and the ordered task list T1–T18 |
+| 1.4 | 2026-08-31 | code reconciliation | **Qt-widgets front-end removed from the repository**: the harness dropped from §1.2 scope and the §11 traceability table, NFR-19 rejustified on the UI-agnostic `session/controller.py`, D20 closed. §5.1 and §11 now name `session/`; §9.4 gained seven shipped-but-undocumented parameters. Post-B0–B6 re-verification: D1, D11, D13, D14, D18 marked ✅ Resolved with evidence; D12 re-targeted (not delivered by T6); D4, D6, D9, D10, D17 evidence refreshed; new D21 records the in-process revocation reset vs. FR-HB-10's self-restart |
 

@@ -1,9 +1,8 @@
-"""The binding flow, shared by both GUIs.
+"""The binding flow, kept out of the front-end.
 
-gui_qt and gui_web have separate (near-identical) window classes, so this holds
-the logic they both need: register when a QR is scanned, persist the result, and
-keep a heartbeat running. The GUIs supply a metadata callback and a completion
-callback; nothing Qt-specific lives here.
+Holds everything a UI needs but should not own: register when a QR is scanned,
+persist the result, and keep a heartbeat running. The caller supplies a metadata
+callback and a completion callback; nothing Qt-specific lives here.
 """
 
 import threading

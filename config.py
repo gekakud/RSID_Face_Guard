@@ -50,7 +50,7 @@ AUTH_SESSION_TIMEOUT_SEC = 30.0
 # behaviour (NFR-03).
 PREVIEW_LEAD_IN_MS = 700
 
-# Kiosk mode switch (governs BOTH the Qt-widgets and web front-ends):
+# Kiosk mode switch:
 #   True  -> fullscreen, no title bar / border on the small display (kiosk).
 #   False -> normal draggable, bordered window (handy for editor-side debugging).
 KIOSK_BORDERLESS = False
@@ -84,7 +84,8 @@ LOG_LEVEL = "INFO"
 
 # Per-module overrides, keyed by the short module tag (the part after
 # "face_guard."). Use this to quieten noisy subsystems without code changes.
-# Available tags: qr_scanner, auth, relay, card, preview, db, gui, native.
+# Available tags: qr_scanner, auth, relay, card, preview, db, gui, session,
+# native.
 LOG_LEVELS = {
     # librsid's C++ logs are extremely chatty at DEBUG (serial/UVC internals).
     "native": "INFO",

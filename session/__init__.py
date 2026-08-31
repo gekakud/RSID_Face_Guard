@@ -1,10 +1,9 @@
 """UI-agnostic session orchestration.
 
 This package owns the kiosk *session state machine* -- the logic that was
-previously embedded in ``gui_web/web_window.py`` (and, frozen, still lives in
-``gui_qt/main_window_qt.py``). Extracting it here satisfies NFR-19: the
-business/session logic is free of any UI or transport concern, driven only
-through the injected ``SessionView`` and ``Scheduler`` protocols.
+previously embedded in ``gui_web/web_window.py``. Extracting it here satisfies
+NFR-19: the business/session logic is free of any UI or transport concern,
+driven only through the injected ``SessionView`` and ``Scheduler`` protocols.
 
 The web front-end supplies:
   * a ``SessionView`` adapter that forwards to the page's ``window.deviceUI`` API;

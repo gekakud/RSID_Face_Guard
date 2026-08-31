@@ -5,14 +5,15 @@ Face-authentication access-control kiosk built on the Intel RealSense ID
 face (optionally combined with a Wiegand card tap), then fires a Wiegand
 "card ID" signal and/or opens a door relay.
 
-Two interchangeable front-ends (Qt widgets and an embedded web UI) share the
-exact same business/hardware logic underneath.
+A single front-end: an embedded web UI (`demo_ui/`) hosted in a QtWebEngine
+window, driven by a UI-agnostic session controller (`session/`) that sits on top
+of the shared business/hardware layers.
 
 ## 1. Module Map
 
 ```
-main_qt.py / main_web.py     Entry points: device discovery, device config,
-                              hardware init, launch a GUI.
+main_web.py                  Entry point: device discovery, device config,
+                              hardware init, launch the GUI.
 config.py                    Single source of truth for all tunables/flags.
 
 face_auth/
@@ -40,13 +41,20 @@ card_backends_impl/          Concrete card backend implementations selected by
   wiegand_card_writer.py      Real GPIO/lgpio Wiegand transmitter.
   card_read_write_simulator.py Simulated card reader/writer for dev off-Pi.
 
-gui_qt/
-  main_window_qt.py          GUIQt -- PySide6 window, session state machine.
-  display_utils_qt.py        Small-display geometry detection helper.
+session/                      The session state machine, UI- and hardware-
+                              agnostic (no Qt / rsid_py import) so it is
+                              testable off-device -- see session/tests/.
+  controller.py               SessionController -- session lifecycle, timers,
+                              card/tap triggers, auth dispatch, access decision.
+  view.py                     SessionView protocol the front-end implements.
+  scheduler.py                Timer abstraction (Qt timers in production, a
+                              manual clock in tests).
 
 gui_web/
   web_window.py               GUIWeb -- QWebEngineView window hosting the web
-                              UI, same session state machine as GUIQt.
+                              UI; implements SessionView and adapts Qt timers,
+                              signals and the JS bridge for the controller.
+  display_utils.py            Small-display geometry detection helper.
   frame_server.py             CameraStreamer (MJPEG) + WebServer (serves
                               demo_ui/ over loopback HTTP).
 
@@ -60,7 +68,7 @@ qr_scanner/
 
 provisioning/                 Binding this device to a dashboard server after
                               it scans a provisioning QR (see server/README.md):
-  binding.py                  BindingManager -- the flow both GUIs call.
+  binding.py                  BindingManager -- the flow the GUI calls.
   client.py                   The two HTTP calls (register, post_status).
   identity.py                 Load/save device_identity.json (holds a token).
   heartbeat.py                Background status-reporting thread.
@@ -70,10 +78,11 @@ server/                       Standalone FastAPI + SQLite dashboard. Issues the
                               part of the device app -- deploys separately.
 ```
 
-Both GUIs depend only on `HostModeService`, `PreviewController`, and
-`config` -- neither GUI talks to `rsid_py`, GPIO, or the DB directly.
+The GUI depends only on `SessionController`, `HostModeService`,
+`PreviewController` and `config` -- it never talks to `rsid_py`, GPIO or the DB
+directly.
 
-## 2. Startup Flow (`main_qt.py` / `main_web.py`)
+## 2. Startup Flow (`main_web.py`)
 
 1. Parse CLI args (`--port`, `--camera`).
 2. `rsid_py.discover_devices()` -- auto-detect the serial port, falling back
@@ -83,15 +92,16 @@ Both GUIs depend only on `HostModeService`, `PreviewController`, and
    on the device, then disconnect.
 5. If `config.AUTH_ONLY_ON_CARD`: initialize the card reader.
 6. If `config.RUN_WITH_RELAY`: initialize the relay (GPIO pin, active-low).
-7. Construct the Qt `QApplication`, create the GUI window (`GUIQt`/`GUIWeb`),
-   `.show()` it, install SIGINT/SIGTERM handlers for a clean, ordered
-   shutdown, and run the Qt event loop.
+7. Construct the Qt `QApplication`, create the `GUIWeb` window, `.show()` it,
+   install SIGINT/SIGTERM handlers for a clean, ordered shutdown (with a
+   watchdog force-exit), and run the Qt event loop.
 
 ## 3. Core Business Logic — `HostModeService`
 
 `face_auth/auth_service.py` owns all authentication logic and is fully
-GUI-agnostic (no Tkinter/Qt import). Constructed once per app run with the
-serial port; owns:
+GUI-agnostic (no Qt import). It **recognises**; it does not decide access -- the
+`SessionController` makes the access decision and drives the relay (see §4).
+Constructed once per app run with the serial port; owns:
 
 - `self._authenticator` -- the `rsid_py.FaceAuthenticator` connection.
 - `self.user_db` -- a `UserDatabase` instance (local JSON, optionally synced
@@ -123,9 +133,13 @@ comment for current tuning guidance).
 1. `send_w32(card_id_or_user_id)` -- fires the Wiegand transmit signal
    (`hardware/card_reader_api.py`), letting an external access-control panel
    treat this as a normal card swipe.
-2. If `config.RUN_WITH_RELAY`: open the door relay for a few seconds on a
-   background thread (`hardware/relay_api.open_door`).
-3. Return `(True, name, permission_level)` to the caller (GUI).
+2. Emit `auth_matched` (a decision breadcrumb only) and expose the matched
+   `last_user_id`.
+3. Return `(True, name, permission_level)` to the caller.
+
+The relay is **not** opened here. The `SessionController` receives the match,
+pulses the door off the UI thread, and only then emits `access_granted` -- or
+`access_output_failed` if the strike will not open (fail-secure).
 
 ### Card-reader monitoring thread
 
@@ -141,7 +155,7 @@ comment for current tuning guidance).
 - Reports registered card taps via a callback -- the GUI marshals this back
   onto its own thread and starts a session.
 
-## 4. Session State Machine (shared by `GUIQt` and `GUIWeb`)
+## 4. Session State Machine (`session/controller.py`)
 
 The camera preview is **off while idle** and only turns on for a bounded
 "session". This avoids the periodic camera-restart stutter that a fixed-
@@ -173,7 +187,8 @@ Trigger path depends on `config.AUTH_ONLY_ON_CARD`:
 2. Resume the camera preview (`PreviewController.resume()`).
 3. Start a repeating retry timer (`AUTH_RETRY_INTERVAL_SEC`) that calls
    `authenticate()` if no auth is already in flight; fire the first attempt
-   immediately.
+   after a short preview lead-in (`PREVIEW_LEAD_IN_MS`, default 700 ms) so live
+   frames reach the screen before the SDK takes the camera.
 4. Start a one-shot session timeout timer (`AUTH_SESSION_TIMEOUT_SEC`).
 
 ### `authenticate()` (runs on a background thread)
@@ -186,8 +201,8 @@ Trigger path depends on `config.AUTH_ONLY_ON_CARD`:
 ### On success (`_on_auth_complete`)
 1. Stop the retry/timeout timers immediately (prevents a stray retry firing
    during the welcome hold).
-2. Show a "Welcome, `<name>`" overlay (Qt: `ResultOverlay` widget; Web:
-   `deviceUI.success()` JS call).
+2. Pulse the relay (if enabled), then show a "Welcome, `<name>`" screen via
+   `SessionView.show_success()` -- `deviceUI.success()` over the JS bridge.
 3. After `WELCOME_DURATION_MS`, end the session (pause preview, clear card
    session flag, return to idle).
 
@@ -195,35 +210,43 @@ Trigger path depends on `config.AUTH_ONLY_ON_CARD`:
 End the session silently -- no failure UI shown, just back to idle/
 screensaver, ready for the next tap or card read.
 
-## 5. GUI Front-End Differences
+## 5. The Web UI Front-End (`gui_web` + `demo_ui`)
 
-| | `gui_qt` (`GUIQt`) | `gui_web` (`GUIWeb`) |
-|---|---|---|
-| Rendering | Native `QLabel` painting camera frames each tick | `QWebEngineView` loading `demo_ui/index.html`; camera frames served as an MJPEG stream over loopback HTTP and displayed via an `<img>` tag |
-| Trigger input | `mousePressEvent` on the window | JS `click` listener (via `QWebChannel` bridge) posts to `pyBridge.userTapped()` |
-| Result display | Custom `QPainter`-drawn overlay (`ResultOverlay`) | JS state changes via `deviceUI.success()/failed()/screensaver()` calls (`demo_ui/app.js`) |
-| Card keypad | n/a | `demo_ui` supports a keypad code entry path (`Bridge.codeSubmitted`), separate from face auth |
-| Camera transport | Frames pulled directly from `PreviewController.image_queue` | `CameraStreamer` + `WebServer` (`gui_web/frame_server.py`) re-serve the same preview frames as MJPEG |
+`GUIWeb` is a thin view adapter over `SessionController`. Its whole job is to
+translate between Qt/browser plumbing and the controller's two protocols
+(`SessionView`, scheduler):
 
-Both maintain an identical `_session_active` / retry-timer / timeout-timer
-state machine and call the same `HostModeService` methods -- only the
-rendering technology and input plumbing differ.
+| Concern | How `gui_web` does it |
+|---|---|
+| Rendering | `QWebEngineView` loads `demo_ui/index.html`; camera frames are served as an MJPEG stream over loopback HTTP and shown in an `<img>` tag (the browser engine cannot open the RealSense camera itself) |
+| Camera transport | `CameraStreamer` + `WebServer` (`gui_web/frame_server.py`) re-serve `PreviewController` frames as MJPEG on the same origin as the page |
+| Trigger input | JS `click` listener over the `QWebChannel` bridge → `pyBridge.userTapped()` → `SessionController.on_user_tapped()` |
+| Screen changes | `SessionView` methods map to `deviceUI.success()/failed()/screensaver()/…` JS calls (`demo_ui/app.js`) |
+| Timers | Qt `QTimer`s injected through the `session/scheduler.py` abstraction, so tests can swap in a manual clock |
+| Thread marshalling | Auth runs on a worker thread; results return to the UI thread via `_SignalBridge` Qt signals |
+| Keypad | `demo_ui` ships a demo keypad code path (`Bridge.codeSubmitted`), separate from face auth and with no authorisation effect |
+
+Because the state machine itself lives in `session/`, adding another front-end
+means implementing `SessionView` -- not reimplementing the session logic. The
+former Qt-widgets front-end (`gui_qt/`, `main_qt.py`) was removed on 2026-08-31.
 
 ## 6. Data Flow Diagram
 
 ```mermaid
 flowchart TD
-    U["User: tap screen / card"] --> GUI["GUIQt / GUIWeb\n(session state machine)"]
-    GUI -->|start_session| PC["PreviewController\n(hardware/camera_preview.py)"]
-    GUI -->|authenticate| HMS["HostModeService\n(face_auth/auth_service.py)"]
+    U["User: tap screen / card"] --> V["GUIWeb\n(view adapter, gui_web/web_window.py)"]
+    V --> SC["SessionController\n(session/controller.py)"]
+    SC -->|show_camera / show_success / …| V
+    SC -->|start_session| PC["PreviewController\n(hardware/camera_preview.py)"]
+    SC -->|authenticate| HMS["HostModeService\n(face_auth/auth_service.py)"]
     HMS -->|extract_faceprints_for_auth| RSID["rsid_py.FaceAuthenticator\n(native device)"]
     HMS -->|lookup faceprints| DB["UserDatabase\n(db/user_database.py)"]
     DB --> LP["local_provider.py\n(user_database.json)"]
     DB --> RP["remote_provider.py\n(optional server sync)"]
-    HMS -->|on success| WG["send_w32()\nhardware/card_reader_api.py"]
-    HMS -->|on success, if enabled| RL["open_door()\nhardware/relay_api.py"]
+    HMS -->|on match| WG["send_w32()\nhardware/card_reader_api.py"]
+    SC -->|"access decision, if enabled"| RL["open_door()\nhardware/relay_api.py"]
     HMS -->|card taps| CM["card monitor thread\nhardware/card_reader_api.get_card_id"]
-    CM -->|registered card| GUI
+    CM -->|registered card| SC
 ```
 
 ## 7. Key Config Flags (`config.py`)

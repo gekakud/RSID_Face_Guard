@@ -1,10 +1,9 @@
 """
 Single configuration point for application logging.
 
-All three entry points (main.py / main_qt.py / main_web.py) call
-setup_logging() exactly once at startup; every module then obtains its own
-child logger via get_logger("<short_name>"). This gives a proper logger
-hierarchy under the "face_guard" root:
+The entry point (main_web.py) calls setup_logging() exactly once at startup;
+every module then obtains its own child logger via get_logger("<short_name>").
+This gives a proper logger hierarchy under the "face_guard" root:
 
     face_guard.qr_scanner   qr_scanner/qr_scanner.py
     face_guard.auth         face_auth/auth_service.py
@@ -12,7 +11,8 @@ hierarchy under the "face_guard" root:
     face_guard.card         hardware/card_reader_api.py, card_backends_impl/*
     face_guard.preview      hardware/camera_preview.py
     face_guard.db           db/*
-    face_guard.gui          gui_qt/*, gui_web/*
+    face_guard.gui          gui_web/*
+    face_guard.session      session/*
     face_guard.native       librsid (C++) via the rsid_py log callback
 
 Benefits of the hierarchy: every line says which module produced it, and

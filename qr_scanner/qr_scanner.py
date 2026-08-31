@@ -42,7 +42,7 @@ to validate the QR's authenticity. See other/qr_code_poc/ for the issuer
 
 Logging: this is a security-relevant path, so every scan outcome is logged
 via the shared "face_guard" logger (console + rotating file, configured in
-main_qt.py). Benign/expected rejections (schema mismatch, expired token)
+main_web.py). Benign/expected rejections (schema mismatch, expired token)
 log at WARNING. Rejections that indicate a potential forgery/replay attempt
 (invalid signature, unknown key_id, replayed nonce) log at ERROR with a
 "SECURITY:" prefix so they stand out. Every scan attempt also logs exactly

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 
 """
-Entry point for the RealSense ID Host Mode application (Web UI front-end).
+Entry point for the RealSense ID Host Mode application -- the only one.
 
-Run this for the web-based GUI:
+Run:
 
-    .venv/bin/python main_web.py          # (main.py = Tkinter, main_qt.py = Qt widgets)
+    .venv/bin/python main_web.py          # or ./run_main_web.sh
 
-Identical device discovery/configuration flow to main.py / main_qt.py, but
-launches the QtWebEngine-hosted web UI (gui_web.web_window.GUIWeb) that renders
-the designer-provided interface in demo_ui/. All business/hardware layers
-(config, db, hardware, face_auth) are shared unchanged across all three
-front-ends.
+Discovers and configures the device, initialises hardware, then launches the
+QtWebEngine-hosted web UI (gui_web.web_window.GUIWeb) that renders the
+designer-provided interface in demo_ui/. The session state machine lives in
+session/controller.py; GUIWeb is its view adapter. Business/hardware layers
+(config, db, hardware, face_auth) carry no UI dependency.
 
 See howto.md section "QtWebEngine (web UI) setup" for the one-time system
 dependencies (libwebp/libtiff symlinks) this requires on a fresh Pi.
@@ -158,7 +158,7 @@ def main():
     # handler that triggers an orderly window shutdown (stop preview, wait for
     # in-flight auth, disconnect device) instead of letting native threads race
     # during interpreter teardown -- which otherwise aborts the process with
-    # "terminate called without an active exception". Mirrors main_qt.py.
+    # "terminate called without an active exception".
     def _handle_signal(signum, _frame):
         log.info("Received signal %s -- shutting down cleanly", signum)
         # Failsafe: if graceful cleanup blocks (native threads can hang), a

@@ -4,8 +4,8 @@ Cross-cutting logging and event telemetry for the access-control kiosk.
 
 ## Logging
 
-One configuration point: `observability/logging_setup.py`. Entry points
-(`main_qt.py`, `main_web.py`) call it once at startup:
+One configuration point: `observability/logging_setup.py`. The entry point
+(`main_web.py`) calls it once at startup:
 
 ```python
 from observability.logging_setup import get_logger, install_native_log_bridge, setup_logging
@@ -30,14 +30,15 @@ source module:
 
 | Tag | Source |
 |---|---|
-| `main` | `main_qt.py`, `main_web.py` |
+| `main` | `main_web.py` |
 | `qr_scanner` | `qr_scanner/qr_scanner.py` |
 | `auth` | `face_auth/auth_service.py` |
 | `relay` | `hardware/relay_api.py` |
 | `card` | `hardware/card_reader_api.py`, `card_backends_impl/*` |
 | `preview` | `hardware/camera_preview.py` |
 | `db` | `db/*` |
-| `gui` | `gui_qt/*`, `gui_web/*` |
+| `gui` | `gui_web/*` |
+| `session` | `session/*` |
 | `native` | librsid (C++) via the `rsid_py` log callback |
 
 ### Output format
@@ -151,15 +152,15 @@ delivered but whose response was lost (and therefore resent) never duplicates.
 
 | Event | Emitted from |
 |---|---|
-| `device_boot` | `main_qt.py` / `main_web.py` `main()` |
+| `device_boot` | `main_web.py` `main()` |
 | `device_shutdown` | `provisioning/binding.py` `shutdown()` |
 | `access_granted` / `access_denied` | `face_auth/auth_service.py` — both reference the matched user by `user_id` only (never name/card id). `access_denied` carries a `reason`: `face_mismatch`, `no_match`, `face_extraction_failed`, `no_faceprints_on_file`, `user_inactive` (record present but `active: false`), or `card_unregistered` (tapped card absent from the local DB; no user, so no `user_id`) |
 | `auth_matched` | `face_auth/auth_service.py` — low-level breadcrumb of a 1:1/1:N match by `user_id`; the door-open grant follows as `access_granted` from the controller |
-| `hardware_error` | `face_auth/auth_service.py` (`authenticator_connect`, `wiegand_tx_init`, `authenticate_face_only`, `authenticate_with_card`, `card_monitor`), `hardware/relay_api.py` (`relay_init`, `relay_open`), `hardware/camera_preview.py` (`preview_frame`, `preview_restart`, `preview_resume`), `card_backends_impl/gwiot_hid_card_reader.py` (`gwiot_reader`), `qr_scanner/qr_scanner.py` (`qr_scanner`), `observability/storage_monitor.py` (`storage_monitor`), `main_qt.py` / `main_web.py` `main()` (`boot_device_discovery`, `boot_device_config`, `boot_card_reader`, `boot_relay` — best-effort only: emitted before any heartbeat thread/BindingManager exists, so these never reach the server the boot cycle they fire in, but still land in the local log) — every occurrence carries a `where` field identifying the failure site plus an `error` string |
+| `hardware_error` | `face_auth/auth_service.py` (`authenticator_connect`, `wiegand_tx_init`, `authenticate_face_only`, `authenticate_with_card`, `card_monitor`), `hardware/relay_api.py` (`relay_init`, `relay_open`), `hardware/camera_preview.py` (`preview_frame`, `preview_restart`, `preview_resume`), `card_backends_impl/gwiot_hid_card_reader.py` (`gwiot_reader`), `qr_scanner/qr_scanner.py` (`qr_scanner`), `observability/storage_monitor.py` (`storage_monitor`), `main_web.py` `main()` (`boot_device_discovery`, `boot_device_config`, `boot_card_reader`, `boot_relay` — best-effort only: emitted before any heartbeat thread/BindingManager exists, so these never reach the server the boot cycle they fire in, but still land in the local log) — every occurrence carries a `where` field identifying the failure site plus an `error` string |
 | `relay_opened` | `hardware/relay_api.py` `open_door()` |
 | `qr_accepted` / `qr_rejected` | `qr_scanner/qr_scanner.py` `scan()` |
 | `db_sync_ok` / `db_sync_failed` | `db/remote_provider.py` |
-| `init_mode_entered` | `gui_qt` / `gui_web` `start_init_mode()` |
+| `init_mode_entered` | `session/controller.py` `start_init_mode()` |
 | `storage_low` / `storage_ok` | `observability/storage_monitor.py` `check_storage()` — fires once per threshold crossing (not every check), carries `path`, `free_mb`, and (for `storage_low`) `min_free_mb` |
 | `heartbeat_post_failed` | `provisioning/heartbeat.py` `HeartbeatWorker._run()` — fires once after 3 consecutive failed heartbeat POSTs (throttled so a brief blip doesn't flood the buffer), carries `consecutive_failures` and `server_url` |
 
@@ -176,9 +177,9 @@ storage_monitor.check_storage()        # {"path", "total_mb", "used_mb", "free_m
 storage_monitor.get_storage_metadata() # same, but never raises -- safe for heartbeat metadata_fn
 ```
 
-Both GUI windows (`gui_qt/main_window_qt.py`, `gui_web/web_window.py`) start a
+The GUI window (`gui_web/web_window.py`) starts a
 `QTimer` on `config.STORAGE_CHECK_INTERVAL_SEC` (default 300s) that calls
-`check_storage()` to detect threshold crossings between heartbeats, and embed
+`check_storage()` to detect threshold crossings between heartbeats, and embeds
 `get_storage_metadata()` under `metadata["storage"]` in every heartbeat via
 `_collect_metadata()`.
 

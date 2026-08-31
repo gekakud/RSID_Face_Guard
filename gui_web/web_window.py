@@ -19,8 +19,10 @@ Structure:
     a document-wide tap listener -> pyBridge.userTapped, and installs the
     camera <img> shim once the page has loaded.
 
-The shared business/hardware layers (HostModeService, PreviewController,
-config) are reused unchanged, exactly like gui_qt.GUIQt.
+The session state machine itself lives in session/controller.py; this class is
+its view adapter (SessionView + Scheduler) plus Qt/platform glue. The shared
+business/hardware layers (HostModeService, PreviewController, config) carry no
+UI dependency.
 """
 
 import io
@@ -343,7 +345,7 @@ class GUIWeb(QMainWindow):
         self._bridge.device_revoked.connect(self._on_device_revoked)
         self._bridge.return_to_init.connect(self._return_to_init_mode)
 
-        # Shared, GUI-agnostic layers (same as GUIQt).
+        # Shared, GUI-agnostic layers.
         self.preview_controller = PreviewController(port, camera_index, device_type)
         self.host_service = HostModeService(port)
         self.host_service.on_reconnect = self.preview_controller.restart
@@ -400,7 +402,7 @@ class GUIWeb(QMainWindow):
         )
         self.js_bridge.tap_detected.connect(self.controller.on_user_tapped)
 
-        # Window placement (same logic as GUIQt).
+        # Window placement.
         if config.RUN_ON_REAL_SCREEN:
             self.setCursor(Qt.CursorShape.BlankCursor)
             self._place_on_small_display()

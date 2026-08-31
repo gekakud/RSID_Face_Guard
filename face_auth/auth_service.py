@@ -1,10 +1,13 @@
 """
 Face authentication business logic (HostModeService).
 
-Pure business logic -- no Tkinter/GUI dependency. Talks to the
-RealSense ID device via rsid_py, the unified UserDatabase for user
-records, hardware.card_reader_api for Wiegand send, and
-hardware.relay_api for the door strike.
+Pure business logic -- no GUI dependency. Talks to the RealSense ID device via
+rsid_py, the unified UserDatabase for user records, and
+hardware.card_reader_api for Wiegand send.
+
+This service *recognises*; it does not decide access. The relay is driven by
+SessionController (session/controller.py) after it makes the access decision
+(FR-FACE-04), so the only relay call here is disconnect_relay() at shutdown.
 """
 
 import logging
@@ -215,7 +218,7 @@ class HostModeService:
 
         Looks up the card ID in the local DB, extracts a live faceprint from the
         camera, and matches it against the stored faceprint. On success, fires
-        send_w32 and optionally opens the relay.
+        send_w32 and emits auth_matched; the caller actuates the door.
 
         Returns:
             (success, user_name, permission_level_or_error_message)
@@ -294,8 +297,8 @@ class HostModeService:
         """Extract a live faceprint and match it against every user in the DB.
 
         The highest-scoring match above CUSTOM_THRESHOLD is selected. On
-        success, fires send_w32 with the winning user's numeric ID and
-        optionally opens the relay.
+        success, fires send_w32 with the winning user's numeric ID and emits
+        auth_matched; the caller actuates the door.
 
         Returns:
             (success, user_name, permission_level_or_error_message)

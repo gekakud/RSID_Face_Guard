@@ -356,12 +356,12 @@ Implemented in `provisioning/` at the repo root:
 | `identity.py` | Load/save/`clear()` `device_identity.json` (atomic write; holds the bearer token + the customer/site/door and network_profile, so it is gitignored). `clear()` is used when the server revokes the device. |
 | `client.py` | The two HTTP calls — `register()` and `post_status()`. |
 | `heartbeat.py` | Daemon thread posting status every `config.HEARTBEAT_INTERVAL_SEC`, with capped backoff. Never raises into the kiosk. |
-| `binding.py` | `BindingManager` — the flow both GUIs call. |
+| `binding.py` | `BindingManager` — the flow the GUI calls. |
 
-`_on_qr_detected()` in `gui_web/web_window.py` and `gui_qt/main_window_qt.py`
-now calls `BindingManager.bind_async()`, which registers on a worker thread
+`_on_qr_detected()` in `session/controller.py` calls
+`BindingManager.bind_async()`, which registers on a worker thread
 (registration is blocking HTTP and must not touch the UI thread) and reports
-back through each window's existing `_SignalBridge`. At startup both GUIs call
+back through the window's `_SignalBridge`. At startup the app calls
 `start_if_bound()`, so a device that was provisioned on an earlier run comes
 back online after a reboot without rescanning anything.
 
@@ -369,7 +369,7 @@ Rescanning a new QR re-binds the device to the new door, replacing the old
 identity. A failed registration leaves the device unbound rather than
 half-configured.
 
-**Removal handling.** Both GUIs pass an `on_revoked` callback to
+**Removal handling.** The GUI passes an `on_revoked` callback to
 `BindingManager`. When a heartbeat gets `410 Gone` (the device was removed on
 the dashboard), the heartbeat thread drops the identity file via
 `identity.clear()`, goes unbound, and the GUI shows "Device removed — Rescan a

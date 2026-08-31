@@ -1,8 +1,12 @@
 # Setting Up RSID_Face_Guard on a Fresh Raspberry Pi 5
 
-This document records the **exact, verified** steps used to get `main_qt.py`
+This document records the **exact, verified** steps used to get `main_web.py`
 running from a completely clean Raspberry Pi OS install. Follow it top to
 bottom on a new Pi 5 to reproduce a working environment.
+
+> `main_web.py` is the only entry point. The former Qt-widgets harness
+> (`main_qt.py`, `gui_qt/`) was removed on 2026-08-31; steps that used to be
+> optional "web UI extras" are now part of the main path.
 
 > Verified on: Raspberry Pi OS based on **Debian 13 "trixie"** (aarch64),
 > which ships **Python 3.13 only** (no `python3.11` package available in
@@ -120,14 +124,14 @@ Verify the import and version:
 
 ## 5. Install the minimal Python dependencies
 
-`requirements.txt` has been reorganized into a "core" section (what
-`main_qt.py` actually needs) and an "optional" section (Tkinter GUI, LED
-control, real card-reader GPIO helpers — not on the `main_qt.py` import
-path with the current `config.py`). Install just the core set:
+`requirements.txt` is split into a "core" section (what `main_web.py` actually
+needs) and an "optional" section (LED control, real card-reader GPIO helpers —
+not on the `main_web.py` import path with the current `config.py`). Install
+just the core set:
 
 ```bash
 .venv/bin/pip install --upgrade pip
-.venv/bin/pip install numpy requests PySide6 lgpio
+.venv/bin/pip install numpy requests PySide6 Pillow lgpio
 ```
 
 (equivalently, the first block of `requirements.txt` above the "Optional"
@@ -146,16 +150,20 @@ sudo apt install -y libzbar0
 .venv/bin/pip install pyzbar cryptography evdev
 ```
 
-- `numpy`, `PySide6` — hard imports in `main_qt.py`.
-- `requests` — imported transitively via `gui_qt` → `face_auth` →
+- `numpy`, `PySide6` — hard imports in `main_web.py`. `PySide6` must be the
+  full metapackage, not `PySide6-Essentials`: the kiosk window is a
+  `QWebEngineView`, and QtWebEngine ships in `PySide6-Addons`.
+- `Pillow` — `gui_web/frame_server.py` JPEG-encodes camera frames for the
+  MJPEG stream the page consumes.
+- `requests` — imported transitively via `session`/`gui_web` → `face_auth` →
   `db.__init__` → `db/remote_provider.py` (always imported, even in local
   DB mode).
 - `lgpio` — `hardware/relay_api.py`, used because `config.RUN_WITH_RELAY =
   True`.
 
-Not installed (not needed for `main_qt.py` as currently configured):
-`pyaudio`, `rpi_ws281x`, `adafruit-blinka`, `neopixel`, `Pillow`, `tk`,
-`gpiozero` — these are only used by other entry points / LED code paths.
+Not installed (not needed for `main_web.py` as currently configured):
+`pyaudio`, `rpi_ws281x`, `adafruit-blinka`, `neopixel`, `tk`, `gpiozero` —
+these are only used by the standalone scripts in `other/` / LED code paths.
 
 If you enable `AUTH_ONLY_ON_CARD = True`, the card-reader backend used is
 controlled by `config.CARD_READER_BACKEND`:
@@ -188,10 +196,16 @@ ls /dev/video*
 
 ## 7. Run the app
 
+> Complete [step 9](#9-qtwebengine-system-dependencies-required) first — the
+> QtWebEngine kiosk needs two library symlinks on Bookworm/trixie or the page
+> silently fails to load.
+
 ```bash
 cd /home/geka/RSID_Face_Guard
-DISPLAY=:0 .venv/bin/python main_qt.py
+DISPLAY=:0 .venv/bin/python main_web.py
 ```
+
+(or `./run_main_web.sh`, which sets `LD_LIBRARY_PATH` and `DISPLAY` for you)
 
 Expected log output on success:
 
@@ -206,15 +220,15 @@ Expected log output on success:
 [info] [Preview] Preview started!
 ```
 
-The Qt window opens, the camera preview streams, and the app cycles through
-auto-authentication every `AUTO_AUTH_INTERVAL_SEC` (5s) as configured in
-`config.py`. `AuthenticateStatus.NoFaceDetected` warnings are expected/
-normal when no one is in front of the camera.
+The kiosk window opens on `demo_ui/`, enters init mode (scanning for a
+provisioning QR for `INIT_MODE_DURATION_SEC`), then falls through to the idle
+screensaver with the camera off. A registered card tap starts a session and
+streams the preview. `AuthenticateStatus.NoFaceDetected` warnings are
+expected/normal when no one is in front of the camera.
 
 ## 8. Enable the systemd service (auto-start on boot)
 
-`face-guard.service` in the repo root has already been updated for this
-user/path (was previously pointing at `mahat` / `host_mode_gui_tk.py`):
+`face-guard.service` in the repo root is already set up for this user/path:
 
 ```ini
 [Service]
@@ -224,7 +238,9 @@ WorkingDirectory=/home/geka/RSID_Face_Guard
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/geka/.Xauthority
 Environment=XDG_RUNTIME_DIR=/run/user/1000
-ExecStart=/home/geka/RSID_Face_Guard/.venv/bin/python /home/geka/RSID_Face_Guard/main_qt.py
+Environment=LD_LIBRARY_PATH=/home/geka/RSID_Face_Guard/rpi_py_build_lib
+ExecStart=/home/geka/RSID_Face_Guard/.venv/bin/python /home/geka/RSID_Face_Guard/main_web.py
+Restart=always
 SupplementaryGroups=dialout gpio video plugdev
 ```
 
@@ -239,27 +255,21 @@ sudo systemctl status face-guard.service
 journalctl -u face-guard.service -f   # follow logs
 ```
 
-## 9. (Optional) Web UI (`main_web.py`) — NOT needed for `main_qt.py`
+## 9. QtWebEngine system dependencies (required)
 
-Only required if you use the QtWebEngine-based `main_web.py` instead of
-`main_qt.py`. It additionally needs `Pillow` (used by
-`gui_web/frame_server.py` to JPEG-encode camera frames for the web view):
-
-```bash
-.venv/bin/pip install Pillow
-```
-
-On Bookworm/trixie you also need library symlinks:
+`main_web.py` hosts `demo_ui/` in a `QWebEngineView`, so the Chromium engine
+bundled with PySide6 must be able to start. On Bookworm/trixie it needs two
+library symlinks (it links against SO versions the OS no longer ships):
 
 ```bash
 sudo ln -sf /usr/lib/aarch64-linux-gnu/libwebp.so.7 /usr/lib/aarch64-linux-gnu/libwebp.so.6
 sudo ln -sf /usr/lib/aarch64-linux-gnu/libtiff.so.6 /usr/lib/aarch64-linux-gnu/libtiff.so.5
 ```
 
-Plus running Chromium with `--no-sandbox --disable-gpu` and
-`QT_OPENGL=software` (already set inside `test_webengine_ui.py` /
-`main_web.py`). See `howto.md` §7 for full details. Skip this section
-entirely if only using `main_qt.py`.
+Chromium must also run with `--no-sandbox --disable-gpu` and
+`QT_OPENGL=software` — `main_web.py` sets these itself before importing Qt
+(see its module header), so no manual step is needed. `howto.md` §7 has the
+full background.
 
 ---
 
@@ -291,10 +301,14 @@ sudo ldconfig
 # 3. Python deps (+ libzbar0 for QR scanning in init mode)
 sudo apt install -y libzbar0
 .venv/bin/pip install --upgrade pip
-.venv/bin/pip install numpy PySide6 requests lgpio evdev pyzbar cryptography
+.venv/bin/pip install numpy PySide6 Pillow requests lgpio evdev pyzbar cryptography
 
 # 4. Permissions
 sudo usermod -aG dialout,gpio,video,plugdev,input geka   # then re-login
 
-# 5. Run
-DISPLAY=:0 .venv/bin/python main_qt.py
+# 5. QtWebEngine library symlinks (step 9)
+sudo ln -sf /usr/lib/aarch64-linux-gnu/libwebp.so.7 /usr/lib/aarch64-linux-gnu/libwebp.so.6
+sudo ln -sf /usr/lib/aarch64-linux-gnu/libtiff.so.6 /usr/lib/aarch64-linux-gnu/libtiff.so.5
+
+# 6. Run
+DISPLAY=:0 .venv/bin/python main_web.py
