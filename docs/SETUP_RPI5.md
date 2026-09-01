@@ -165,7 +165,7 @@ Not installed (not needed for `main_web.py` as currently configured):
 `pyaudio`, `rpi_ws281x`, `adafruit-blinka`, `neopixel`, `tk`, `gpiozero` —
 these are only used by the standalone scripts in `other/` / LED code paths.
 
-If you enable `AUTH_ONLY_ON_CARD = True`, the card-reader backend used is
+If you enable `REQUIRE_CARD_TO_START_SESSION = True`, the card-reader backend used is
 controlled by `config.CARD_READER_BACKEND`:
 - `"gwiot_hid"` (default) — real GWIOT USB HID card reader via `evdev`
   (`pip install evdev`, already in the core `requirements.txt`).

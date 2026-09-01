@@ -30,11 +30,11 @@ SIMULATE_CARD_READER = CARD_READER_BACKEND == "simulated"
 RUN_ON_REAL_SCREEN = True
 
 # Enable card reader monitoring (auto-authenticate when a card is tapped)
-AUTH_ONLY_ON_CARD = True
+REQUIRE_CARD_TO_START_SESSION = True
 
 # Session-based authentication: the camera preview stays OFF while idle and
 # only turns on for an active auth "session" -- triggered by a screen
-# tap/click (AUTH_ONLY_ON_CARD=False) or a valid card tap (AUTH_ONLY_ON_CARD=True).
+# tap/click (REQUIRE_CARD_TO_START_SESSION=False) or a valid card tap (REQUIRE_CARD_TO_START_SESSION=True).
 # During a session, a face-match attempt is retried every AUTH_RETRY_INTERVAL_SEC
 # until either a match succeeds or AUTH_SESSION_TIMEOUT_SEC elapses, at which
 # point the preview is paused and the UI returns silently to idle.

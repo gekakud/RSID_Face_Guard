@@ -1065,7 +1065,7 @@ suspend a user without deleting their enrolment.
 | `USER_DB_FILE` | Local user/faceprint cache path |
 | `CARD_READER_BACKEND` | `gwiot_hid` / `wiegand_gpio` / `simulated` |
 | `SIMULATE_CARD_READER` | Derived from `CARD_READER_BACKEND`; selects the dev simulator |
-| `AUTH_ONLY_ON_CARD` | Card- vs. tap-triggered session — **deprecated once `DEVICE_MODE` lands ([D4](#d4))** |
+| `REQUIRE_CARD_TO_START_SESSION` | Card- vs. tap-triggered session — **deprecated once `DEVICE_MODE` lands ([D4](#d4))** |
 | `AUTH_RETRY_INTERVAL_SEC`, `AUTH_SESSION_TIMEOUT_SEC` | Session cadence and bound |
 | `PREVIEW_LEAD_IN_MS` | Live-preview lead-in before the first match attempt ([NFR-03](#nfr-03)) |
 | `CUSTOM_THRESHOLD` | Score fallback acceptance threshold |
@@ -1248,7 +1248,7 @@ list.
 | <a id="d1"></a>D1 | [FR-HB-10](#fr-hb-10) revocation is fail-secure | *Was:* `binding.py` cleared the identity only; the local DB was retained and the door kept opening; no `device_revoked` event | ✅ **Resolved** (T6/B5) — `provisioning/binding.py` `_handle_revoked` emits + flushes `device_revoked` while still bound, stops the heartbeat, deletes the identity, purges the user DB incl. faceprints (`db/user_database.py` `detach_remote`) and re-enters init mode. Step 6 (self-restart) diverges → [D21](#d21) |
 | <a id="d2"></a>D2 | [FR-MODE-03](#fr-mode-03) `card_only` | Face always runs when a reader is present | **Implement** (T7) |
 | <a id="d3"></a>D3 | [FR-MODE-06](#fr-mode-06)..[FR-MODE-11](#fr-mode-11) time registry | Not implemented | **Implement** (T8) |
-| <a id="d4"></a>D4 | [FR-MODE-01](#fr-mode-01) server-provisioned mode | Only the boolean `AUTH_ONLY_ON_CARD` (`config.py:33`) exists. `device_mode` / `face_policy` have **zero hits** across `config.py`, `provisioning/`, `session/` and `server/` | **Implement** (T4) |
+| <a id="d4"></a>D4 | [FR-MODE-01](#fr-mode-01) server-provisioned mode | Only the boolean `REQUIRE_CARD_TO_START_SESSION` (`config.py:33`) exists. `device_mode` / `face_policy` have **zero hits** across `config.py`, `provisioning/`, `session/` and `server/` | **Implement** (T4) |
 | <a id="d5"></a>D5 | [FR-MODE-10](#fr-mode-10) durable attendance queue | Events are in-memory only, capped at 200 | **Implement** (T5) |
 | <a id="d6"></a>D6 | [FR-UI-09](#fr-ui-09) PIN path disabled | Demo keypad path present in UI assets, with the code hardcoded in **two** places: `demo_ui/app.js:103` and `gui_web/web_window.py:235` (also documented in `demo_ui/README.md`). No authorisation effect today, but no production flag either | Disable for production (T18) |
 | <a id="d7"></a>D7 | [FR-API-12](#fr-api-12) mode/interval refresh | Heartbeat response is not consumed for config | Deferred — moved to future work ([§12.3](#123-out-of-scope-for-this-release)), rev 1.2 |

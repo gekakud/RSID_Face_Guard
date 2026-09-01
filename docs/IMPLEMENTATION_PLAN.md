@@ -74,11 +74,11 @@ FR-DATA row contradicted its own detail section; both are corrected here).
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-MODE-01](SOFTWARE_REQUIREMENTS.md#fr-mode-01) | ❌ | `device_mode` / `face_policy` have **zero hits** across `config.py`, `provisioning/`, `session/` and `server/`; absent from `server/models.py` `RegisterResponse` and from `provisioning/identity.py` `DeviceIdentity`. Mode is still the local boolean `config.AUTH_ONLY_ON_CARD` → **[T4](#t4)** |
+| [FR-MODE-01](SOFTWARE_REQUIREMENTS.md#fr-mode-01) | ❌ | `device_mode` / `face_policy` have **zero hits** across `config.py`, `provisioning/`, `session/` and `server/`; absent from `server/models.py` `RegisterResponse` and from `provisioning/identity.py` `DeviceIdentity`. Mode is still the local boolean `config.REQUIRE_CARD_TO_START_SESSION` → **[T4](#t4)** |
 | [FR-MODE-02](SOFTWARE_REQUIREMENTS.md#fr-mode-02) | ✅ | `face_auth/auth_service.py` `card_is_registered()` — DB-only check, no camera |
 | [FR-MODE-03](SOFTWARE_REQUIREMENTS.md#fr-mode-03) | ❌ | No `card_only`; `controller.py` `on_card_detected()` always starts a session → **[T7](#t7)** |
 | [FR-MODE-04](SOFTWARE_REQUIREMENTS.md#fr-mode-04) | ✅ | `auth_service.py` `authenticate_with_card_and_face()` — 1:1 against the cardholder |
-| [FR-MODE-05](SOFTWARE_REQUIREMENTS.md#fr-mode-05) | ✅ | `auth_service.py` `authenticate_face_only()`, gated by `AUTH_ONLY_ON_CARD` via `controller.py` `on_user_tapped()` |
+| [FR-MODE-05](SOFTWARE_REQUIREMENTS.md#fr-mode-05) | ✅ | `auth_service.py` `authenticate_face_only()`, gated by `REQUIRE_CARD_TO_START_SESSION` via `controller.py` `on_user_tapped()` |
 | [FR-MODE-06](SOFTWARE_REQUIREMENTS.md#fr-mode-06) | ❌ | No IN/OUT screen or latch. The `demo_ui/app.js` `setAttendanceMode()` toggle is cosmetic — never read by Python → **[T8](#t8)** |
 | [FR-MODE-07](SOFTWARE_REQUIREMENTS.md#fr-mode-07) | ❌ | No `attendance_event` emission anywhere → **[T8](#t8)** |
 | [FR-MODE-08](SOFTWARE_REQUIREMENTS.md#fr-mode-08) | ❌ | No relay-suppressed mode → **[T8](#t8)** |
@@ -374,7 +374,7 @@ file; resolve at runtime as *server value → `config.py` fallback*. Introduce
 `DEVICE_MODE`, `FACE_POLICY`, `DIRECTION_SELECT_TIMEOUT_SEC` in `config.py`
 (all three are already specified in
 [SRS §9.4](SOFTWARE_REQUIREMENTS.md#94-configuration-parameters) but absent from
-the module). Mark `AUTH_ONLY_ON_CARD` deprecated and route its remaining callers
+the module). Mark `REQUIRE_CARD_TO_START_SESSION` deprecated and route its remaining callers
 — `controller.on_user_tapped()` and `main_web.main()` — through the new mode.
 
 **Files.** `server/models.py` (`RegisterResponse`), `server/main.py`
@@ -631,7 +631,7 @@ ported web UI is behaviourally unchanged:
    screen, then idle; no retry loop, no relay pulse.
 3. **Unregistered card** — unknown card → brief failure only, with **no** camera
    preview or auth attempt.
-4. **Session timeout / demo mode** — with `AUTH_ONLY_ON_CARD=False`, a tap starts
+4. **Session timeout / demo mode** — with `REQUIRE_CARD_TO_START_SESSION=False`, a tap starts
    a face-only session that retries on cadence and falls back to idle after
    `AUTH_SESSION_TIMEOUT_SEC`.
 5. **Init mode + provisioning** — "Init Mode" overlay + camera; a valid QR binds

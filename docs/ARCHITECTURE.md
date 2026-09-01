@@ -90,7 +90,7 @@ directly.
 3. `rsid_py.discover_device_type(port)` -- identify F45x/F46x.
 4. Open a short-lived `FaceAuthenticator` session just to disable dump mode
    on the device, then disconnect.
-5. If `config.AUTH_ONLY_ON_CARD`: initialize the card reader.
+5. If `config.REQUIRE_CARD_TO_START_SESSION`: initialize the card reader.
 6. If `config.RUN_WITH_RELAY`: initialize the relay (GPIO pin, active-low).
 7. Construct the Qt `QApplication`, create the `GUIWeb` window, `.show()` it,
    install SIGINT/SIGTERM handlers for a clean, ordered shutdown (with a
@@ -111,10 +111,10 @@ Constructed once per app run with the serial port; owns:
 
 ### Two authentication modes
 
-- **`authenticate_face_only()`** (used when `AUTH_ONLY_ON_CARD=False`) --
+- **`authenticate_face_only()`** (used when `REQUIRE_CARD_TO_START_SESSION=False`) --
   extracts one live faceprint from the camera, then matches it against
   *every* user in the DB, picking the highest-scoring match above threshold.
-- **`authenticate_with_card_and_face(card_id)`** (used when `AUTH_ONLY_ON_CARD=True`)
+- **`authenticate_with_card_and_face(card_id)`** (used when `REQUIRE_CARD_TO_START_SESSION=True`)
   -- looks up the tapped card's user record directly, then only needs to
   match the live faceprint against that *one* user's stored faceprint.
 
@@ -166,14 +166,14 @@ auth attempt briefly restarts the UVC stream).
 ```mermaid
 stateDiagram-v2
     [*] --> Idle
-    Idle --> Session: tap/click (AUTH_ONLY_ON_CARD=False)\nor registered card read (AUTH_ONLY_ON_CARD=True)
+    Idle --> Session: tap/click (REQUIRE_CARD_TO_START_SESSION=False)\nor registered card read (REQUIRE_CARD_TO_START_SESSION=True)
     Session --> Session: retry face-match every AUTH_RETRY_INTERVAL_SEC
     Session --> Success: match found
     Session --> Idle: AUTH_SESSION_TIMEOUT_SEC elapsed, no match
     Success --> Idle: WELCOME_DURATION_MS hold elapses
 ```
 
-Trigger path depends on `config.AUTH_ONLY_ON_CARD`:
+Trigger path depends on `config.REQUIRE_CARD_TO_START_SESSION`:
 - **`False`** (default) -- any tap/click anywhere on the window/page starts
   a session with no `card_id` (`authenticate_face_only()` runs each retry).
 - **`True`** -- only a registered card tap (detected by the background
@@ -255,7 +255,7 @@ flowchart TD
 |---|---|
 | `DB_MODE` | `"local"` = JSON file only; `"remote"` = periodic server sync into local cache |
 | `SIMULATE_CARD_READER` | Use simulated card reader/relay (dev off-Pi) |
-| `AUTH_ONLY_ON_CARD` | `False` = tap-anywhere triggers auth against all users; `True` = only a registered card tap triggers auth against that user |
+| `REQUIRE_CARD_TO_START_SESSION` | `False` = tap-anywhere triggers auth against all users; `True` = only a registered card tap triggers auth against that user |
 | `AUTH_RETRY_INTERVAL_SEC` / `AUTH_SESSION_TIMEOUT_SEC` | Session retry cadence and max session duration |
 | `KIOSK_BORDERLESS` | Fullscreen/frameless kiosk window vs. bordered debug window |
 | `CUSTOM_THRESHOLD` | Fallback raw score threshold for accepting a match when the SDK's own `.success` is `False` |

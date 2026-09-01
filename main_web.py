@@ -124,7 +124,7 @@ def main():
     log.info("Using port: %s (%s)", port, device_type)
     log.info("Using camera index: %d", camera_index)
 
-    if config.AUTH_ONLY_ON_CARD:
+    if config.REQUIRE_CARD_TO_START_SESSION:
         try:
             initialize_card_reader()
             log.info("Card reader initialized")

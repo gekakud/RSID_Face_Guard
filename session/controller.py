@@ -104,7 +104,7 @@ class SessionController:
 
     def on_user_tapped(self) -> None:
         """Screen tap: wakes a session only in the demo face-only config."""
-        if not config.AUTH_ONLY_ON_CARD and not self._init_mode_active:
+        if not config.REQUIRE_CARD_TO_START_SESSION and not self._init_mode_active:
             self.start_session()
 
     def on_card_detected(self, card_id) -> None:

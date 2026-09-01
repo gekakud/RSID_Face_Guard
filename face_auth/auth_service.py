@@ -481,7 +481,7 @@ class AuthService:
         except Exception:
             pass
         try:
-            if config.AUTH_ONLY_ON_CARD:
+            if config.REQUIRE_CARD_TO_START_SESSION:
                 disconnect_card_reader()
                 close_wiegand_tx()
         except Exception:
