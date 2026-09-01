@@ -160,7 +160,7 @@ class FakeHost:
         self._user_id = user_id
         self.last_user_id = None
 
-    def authenticate_with_card(self, card_id):
+    def authenticate_with_card_and_face(self, card_id):
         self.card_calls.append(card_id)
         self.last_user_id = None
         if self.raises:

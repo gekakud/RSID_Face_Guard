@@ -229,7 +229,7 @@ class SessionController:
         resumed = False
         try:
             if self._session_card_id is not None:
-                success, name, permission = self._host.authenticate_with_card(
+                success, name, permission = self._host.authenticate_with_card_and_face(
                     self._session_card_id
                 )
             else:

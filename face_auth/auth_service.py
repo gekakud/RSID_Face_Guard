@@ -213,7 +213,7 @@ class AuthService:
         for a card that could never succeed)."""
         return self.user_db.get_user(str(card_id)) is not None
 
-    def authenticate_with_card(self, card_id: int) -> Tuple[bool, Optional[str], Optional[str]]:
+    def authenticate_with_card_and_face(self, card_id: int) -> Tuple[bool, Optional[str], Optional[str]]:
         """Authenticate using a Wiegand card ID combined with a live face scan.
 
         Looks up the card ID in the local DB, extracts a live faceprint from the
@@ -285,8 +285,8 @@ class AuthService:
                 return False, None, "Authentication callback not invoked"
             return result[0]
         except Exception as e:
-            log.exception("authenticate_with_card error")
-            events.emit("hardware_error", where="authenticate_with_card", error=str(e))
+            log.exception("authenticate_with_card_and_face error")
+            events.emit("hardware_error", where="authenticate_with_card_and_face", error=str(e))
             # Block further auth attempts for 20s while reconnect runs in background
             self._error_backoff_until = time.monotonic() + 20.0
             threading.Thread(target=self._reconnect, daemon=True).start()

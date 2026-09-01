@@ -114,7 +114,7 @@ Constructed once per app run with the serial port; owns:
 - **`authenticate_face_only()`** (used when `AUTH_ONLY_ON_CARD=False`) --
   extracts one live faceprint from the camera, then matches it against
   *every* user in the DB, picking the highest-scoring match above threshold.
-- **`authenticate_with_card(card_id)`** (used when `AUTH_ONLY_ON_CARD=True`)
+- **`authenticate_with_card_and_face(card_id)`** (used when `AUTH_ONLY_ON_CARD=True`)
   -- looks up the tapped card's user record directly, then only needs to
   match the live faceprint against that *one* user's stored faceprint.
 
@@ -178,7 +178,7 @@ Trigger path depends on `config.AUTH_ONLY_ON_CARD`:
   a session with no `card_id` (`authenticate_face_only()` runs each retry).
 - **`True`** -- only a registered card tap (detected by the background
   monitoring thread) starts a session bound to that `card_id`
-  (`authenticate_with_card()` runs each retry).
+  (`authenticate_with_card_and_face()` runs each retry).
 
 ### `start_session(card_id=None)`
 1. Mark session active; if card-triggered, call

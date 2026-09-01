@@ -77,7 +77,7 @@ FR-DATA row contradicted its own detail section; both are corrected here).
 | [FR-MODE-01](SOFTWARE_REQUIREMENTS.md#fr-mode-01) | ❌ | `device_mode` / `face_policy` have **zero hits** across `config.py`, `provisioning/`, `session/` and `server/`; absent from `server/models.py` `RegisterResponse` and from `provisioning/identity.py` `DeviceIdentity`. Mode is still the local boolean `config.AUTH_ONLY_ON_CARD` → **[T4](#t4)** |
 | [FR-MODE-02](SOFTWARE_REQUIREMENTS.md#fr-mode-02) | ✅ | `face_auth/auth_service.py` `card_is_registered()` — DB-only check, no camera |
 | [FR-MODE-03](SOFTWARE_REQUIREMENTS.md#fr-mode-03) | ❌ | No `card_only`; `controller.py` `on_card_detected()` always starts a session → **[T7](#t7)** |
-| [FR-MODE-04](SOFTWARE_REQUIREMENTS.md#fr-mode-04) | ✅ | `auth_service.py` `authenticate_with_card()` — 1:1 against the cardholder |
+| [FR-MODE-04](SOFTWARE_REQUIREMENTS.md#fr-mode-04) | ✅ | `auth_service.py` `authenticate_with_card_and_face()` — 1:1 against the cardholder |
 | [FR-MODE-05](SOFTWARE_REQUIREMENTS.md#fr-mode-05) | ✅ | `auth_service.py` `authenticate_face_only()`, gated by `AUTH_ONLY_ON_CARD` via `controller.py` `on_user_tapped()` |
 | [FR-MODE-06](SOFTWARE_REQUIREMENTS.md#fr-mode-06) | ❌ | No IN/OUT screen or latch. The `demo_ui/app.js` `setAttendanceMode()` toggle is cosmetic — never read by Python → **[T8](#t8)** |
 | [FR-MODE-07](SOFTWARE_REQUIREMENTS.md#fr-mode-07) | ❌ | No `attendance_event` emission anywhere → **[T8](#t8)** |
@@ -106,12 +106,12 @@ holds only the `WebSessionView` adapter, `QtScheduler` and platform glue.
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-FACE-01](SOFTWARE_REQUIREMENTS.md#fr-face-01) | ✅ | `auth_service.AuthService.__init__` connects; 1:1 `authenticate_with_card()`, 1:N `authenticate_face_only()` |
-| [FR-FACE-02](SOFTWARE_REQUIREMENTS.md#fr-face-02) | ✅ | `authenticate_with_card()` matches only the cardholder's stored faceprints |
+| [FR-FACE-01](SOFTWARE_REQUIREMENTS.md#fr-face-01) | ✅ | `auth_service.AuthService.__init__` connects; 1:1 `authenticate_with_card_and_face()`, 1:N `authenticate_face_only()` |
+| [FR-FACE-02](SOFTWARE_REQUIREMENTS.md#fr-face-02) | ✅ | `authenticate_with_card_and_face()` matches only the cardholder's stored faceprints |
 | [FR-FACE-03](SOFTWARE_REQUIREMENTS.md#fr-face-03) | ✅ | **T12 done.** One decision line per path: `1:1 decision: card=… sdk_success=… score=… threshold=… -> GRANT/DENY`, and the 1:N equivalent |
 | [FR-FACE-04](SOFTWARE_REQUIREMENTS.md#fr-face-04) | ✅ | **T2 done.** `auth_service.py` emits `auth_matched` only and imports just `disconnect_relay`; `controller._open_access_point()` actuates |
 | [FR-FACE-05](SOFTWARE_REQUIREMENTS.md#fr-face-05) | ✅ | Distinct denial reasons: `face_extraction_failed`, `no_faceprints_on_file`, `face_mismatch`, `no_match`, `user_inactive` |
-| [FR-FACE-06](SOFTWARE_REQUIREMENTS.md#fr-face-06) | ⚠️ | Backoff + background reconnect + `hardware_error` all exist (`_reconnect()`, `_error_backoff_until`), but the **gate sits inside `authenticate_face_only()` only** — `authenticate_with_card()` has none, and nothing surfaces the condition to the UI → **[T9](#t9)** |
+| [FR-FACE-06](SOFTWARE_REQUIREMENTS.md#fr-face-06) | ⚠️ | Backoff + background reconnect + `hardware_error` all exist (`_reconnect()`, `_error_backoff_until`), but the **gate sits inside `authenticate_face_only()` only** — `authenticate_with_card_and_face()` has none, and nothing surfaces the condition to the UI → **[T9](#t9)** |
 | [FR-FACE-07](SOFTWARE_REQUIREMENTS.md#fr-face-07) | ✅ | Every exception path returns a deny tuple |
 
 ### 1.6 Card reader — FR-CARD
@@ -435,7 +435,7 @@ powered; an unknown card is still rejected pre-camera
 2. `on_card_detected()` must respect the init-mode guard that
    `on_user_tapped()` and `on_card_rejected()` already apply.
 3. Apply the 20 s biometric backoff on the **card** path
-   (`authenticate_with_card()`), not just the face-only path.
+   (`authenticate_with_card_and_face()`), not just the face-only path.
 4. Surface that condition as a distinct "temporarily unavailable" screen. **The
    seam already exists**: `SessionView.show_unavailable()` is declared and
    aliased to `show_failure` in `WebSessionView` pending this task — so the work
