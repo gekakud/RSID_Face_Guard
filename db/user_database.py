@@ -17,6 +17,7 @@ from .local_provider import LocalUserDataProvider
 from .remote_provider import RemoteUserDataProvider
 
 from observability import events
+from observability.events import EventType
 from observability.logging_setup import get_logger
 
 log = get_logger("db")
@@ -106,7 +107,7 @@ class UserDatabase:
             len(remote_users), len(removed),
         )
         if removed:
-            events.emit("db_users_revoked", count=len(removed))
+            events.emit(EventType.DB_USERS_REVOKED, count=len(removed))
         return len(remote_users)
 
     def start_auto_sync(self, interval_sec: float, on_updated: Optional[Callable[[int], None]] = None):
@@ -135,7 +136,7 @@ class UserDatabase:
                         on_updated(updated)
             except Exception as e:
                 log.error("UserDatabase initial sync error: %s", e)
-                events.emit("db_sync_failed", reason="exception", error=str(e))
+                events.emit(EventType.DB_SYNC_FAILED, reason="exception", error=str(e))
 
             while not self._sync_stop_event.wait(interval_sec):
                 try:
@@ -146,7 +147,7 @@ class UserDatabase:
                             on_updated(updated)
                 except Exception as e:
                     log.error("UserDatabase auto-sync error: %s", e)
-                    events.emit("db_sync_failed", reason="exception", error=str(e))
+                    events.emit(EventType.DB_SYNC_FAILED, reason="exception", error=str(e))
             log.info("UserDatabase auto-sync stopped")
 
         self._sync_thread = threading.Thread(target=_loop, daemon=True)

@@ -16,6 +16,7 @@ import numpy as np
 import rsid_py
 
 from observability import events
+from observability.events import EventType
 from observability.logging_setup import get_logger
 
 
@@ -68,7 +69,7 @@ class PreviewController(threading.Thread):
             self.image_queue.put(array2d.copy())
         except Exception as e:
             log.exception("Error in preview frame callback")
-            events.emit("hardware_error", where="preview_frame", error=str(e))
+            events.emit(EventType.HARDWARE_ERROR, where="preview_frame", error=str(e))
 
 
     def start_preview(self):
@@ -134,7 +135,7 @@ class PreviewController(threading.Thread):
                         log.info("Preview restarted after reconnect")
                     except Exception as e:
                         log.error("Preview restart failed: %s", e)
-                        events.emit("hardware_error", where="preview_restart", error=str(e))
+                        events.emit(EventType.HARDWARE_ERROR, where="preview_restart", error=str(e))
 
 
         if self.preview:
@@ -175,7 +176,7 @@ class PreviewController(threading.Thread):
                 log.info("Preview resumed after authentication")
             except Exception as e:
                 log.error("Preview resume failed: %s", e)
-                events.emit("hardware_error", where="preview_resume", error=str(e))
+                events.emit(EventType.HARDWARE_ERROR, where="preview_resume", error=str(e))
 
 
     def stop(self):

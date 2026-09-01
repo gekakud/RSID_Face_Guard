@@ -15,6 +15,7 @@ Run: .venv/bin/python -m pytest face_auth/tests/test_card_unregistered_event.py 
 """
 
 import observability.events as events
+from observability.events import EventType
 
 
 def setup_function(_):
@@ -28,7 +29,7 @@ def _reject(card_id):
     neither a name nor the raw badge number -- just the reason. The badge id is
     still used locally for the same-card cooldown de-dupe, but never emitted.
     """
-    events.emit("access_denied", method="card", reason="card_unregistered")
+    events.emit(EventType.ACCESS_DENIED, method="card", reason="card_unregistered")
 
 
 def _cooldown_gate(taps, cooldown=2.0):

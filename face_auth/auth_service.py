@@ -25,6 +25,7 @@ from hardware.card_reader_api import (
 from hardware.relay_api import disconnect_relay
 
 from observability import events
+from observability.events import EventType
 from observability.logging_setup import get_logger
 
 log = get_logger("auth")
@@ -71,14 +72,14 @@ class AuthService:
             log.info("FaceAuthenticator connected")
         except Exception as e:
             log.error("FaceAuthenticator connect failed: %s", e)
-            events.emit("hardware_error", where="authenticator_connect", error=str(e))
+            events.emit(EventType.HARDWARE_ERROR, where="authenticator_connect", error=str(e))
 
         try:
             initialize_wiegand_writer()
             log.info("Wiegand transmitter initialized")
         except Exception as e:
             log.warning("Wiegand initialization failed: %s", e)
-            events.emit("hardware_error", where="wiegand_tx_init", error=str(e))
+            events.emit(EventType.HARDWARE_ERROR, where="wiegand_tx_init", error=str(e))
 
         # The DB is fully responsible for keeping itself fresh; nothing
         # above this layer needs to know about sync scheduling. In "local"
@@ -132,7 +133,7 @@ class AuthService:
             log.info("Post-pairing DB sync: %d user(s) fetched", fetched)
         except Exception as e:
             log.error("Post-pairing DB sync failed: %s", e)
-            events.emit("db_sync_failed", reason="exception", error=str(e))
+            events.emit(EventType.DB_SYNC_FAILED, reason="exception", error=str(e))
         self._start_remote_sync()
         return True
 
@@ -226,12 +227,12 @@ class AuthService:
         self.last_user_id = None
         user_info = self.user_db.get_user(str(card_id))
         if not user_info:
-            events.emit("card_unregistered")
+            events.emit(EventType.CARD_UNREGISTERED)
             return False, None, "Card not registered"
 
         user_id = user_info.get("user_id")
         if not user_info.get("active", True):
-            events.emit("access_denied", method="card", user_id=user_id,
+            events.emit(EventType.ACCESS_DENIED, method="card", user_id=user_id,
                         reason="user_inactive")
             return False, None, "User inactive"
         self.last_user_id = user_id
@@ -243,14 +244,14 @@ class AuthService:
         # One comparison, one verdict.
         def on_fp_auth_result(status, new_prints):
             if status != rsid_py.AuthenticateStatus.Success or not new_prints:
-                events.emit("access_denied", method="card", user_id=user_id,
+                events.emit(EventType.ACCESS_DENIED, method="card", user_id=user_id,
                             reason="face_extraction_failed", status=str(status))
                 result[0] = (False, None, f"Face extraction failed: {status}")
                 return
 
             fp = user_info.get('faceprints')
             if not fp:
-                events.emit("access_denied", method="card", user_id=user_id,
+                events.emit(EventType.ACCESS_DENIED, method="card", user_id=user_id,
                             reason="no_faceprints_on_file")
                 result[0] = (False, None, "No faceprints on file")
                 return
@@ -275,11 +276,11 @@ class AuthService:
                 # Decision only (T2): recognition emits a low-level breadcrumb;
                 # the controller actuates the door and emits access_granted
                 # only after a successful relay pulse.
-                events.emit("auth_matched", user_id=user_id, method="card",
+                events.emit(EventType.AUTH_MATCHED, user_id=user_id, method="card",
                             score=match_result.score)
                 result[0] = (True, user_info['name'], user_info['permission_level'])
             else:
-                events.emit("access_denied", method="card", user_id=user_id, reason="face_mismatch")
+                events.emit(EventType.ACCESS_DENIED, method="card", user_id=user_id, reason="face_mismatch")
                 result[0] = (False, None, f"Face match failed (score: {match_result.score})")
 
         try:
@@ -289,7 +290,7 @@ class AuthService:
             return result[0]
         except Exception as e:
             log.exception("authenticate_with_card_and_face error")
-            events.emit("hardware_error", where="authenticate_with_card_and_face", error=str(e))
+            events.emit(EventType.HARDWARE_ERROR, where="authenticate_with_card_and_face", error=str(e))
             # Block further auth attempts for 20s while reconnect runs in background
             self._error_backoff_until = time.monotonic() + 20.0
             threading.Thread(target=self._reconnect, daemon=True).start()
@@ -321,7 +322,7 @@ class AuthService:
         # Loops over every active user in the DB, running match_faceprints() against each one's stored faceprints.
         def on_fp_auth_result(status, new_prints):
             if status != rsid_py.AuthenticateStatus.Success or not new_prints:
-                events.emit("access_denied", method="face",
+                events.emit(EventType.ACCESS_DENIED, method="face",
                             reason="face_extraction_failed", status=str(status))
                 result[0] = (False, None, f"Face extraction failed: {status}")
                 return
@@ -363,7 +364,7 @@ class AuthService:
                     "1:N decision: user=%s best_score=%s threshold=%s -> GRANT",
                     selected_user_id, max_score, config.CUSTOM_THRESHOLD,
                 )
-                events.emit("auth_matched", user_id=selected_user_id,
+                events.emit(EventType.AUTH_MATCHED, user_id=selected_user_id,
                             method="face", score=max_score)
                 result[0] = (True, selected_user_info['name'], selected_user_info['permission_level'])
             else:
@@ -371,7 +372,7 @@ class AuthService:
                     "1:N decision: no user reached threshold=%s -> DENY",
                     config.CUSTOM_THRESHOLD,
                 )
-                events.emit("access_denied", method="face", reason="no_match")
+                events.emit(EventType.ACCESS_DENIED, method="face", reason="no_match")
                 result[0] = (False, None, "No match found")
 
         try:
@@ -381,7 +382,7 @@ class AuthService:
             return result[0]
         except Exception as e:
             log.exception("authenticate_face_only error")
-            events.emit("hardware_error", where="authenticate_face_only", error=str(e))
+            events.emit(EventType.HARDWARE_ERROR, where="authenticate_face_only", error=str(e))
             # Block further auth attempts for 20s while reconnect runs in background
             self._error_backoff_until = time.monotonic() + 20.0
             threading.Thread(target=self._reconnect, daemon=True).start()
@@ -435,7 +436,7 @@ class AuthService:
                             # already dropped rapid repeats of the same card) so
                             # the same badge held on the reader can't flood the
                             # bounded event buffer during an outage.
-                            events.emit("access_denied", method="card",
+                            events.emit(EventType.ACCESS_DENIED, method="card",
                                         reason="card_unregistered")
                             last_card_id = card_id
                             last_read_time = current_time
@@ -450,7 +451,7 @@ class AuthService:
 
                 except Exception as e:
                     log.error("Card reader error: %s", e)
-                    events.emit("hardware_error", where="card_monitor", error=str(e))
+                    events.emit(EventType.HARDWARE_ERROR, where="card_monitor", error=str(e))
                     time.sleep(1)
 
 

@@ -9,6 +9,7 @@ from evdev import InputDevice, categorize, ecodes, list_devices
 
 from observability.logging_setup import get_logger
 from observability import events
+from observability.events import EventType
 
 log = get_logger("card")
 
@@ -144,7 +145,7 @@ def _reader_loop():
             # Device hiccup (e.g. transient read error) -- avoid a tight
             # error loop, keep trying.
             log.error("GWIOT card reader error: %s", e)
-            events.emit("hardware_error", where="gwiot_reader", error=str(e))
+            events.emit(EventType.HARDWARE_ERROR, where="gwiot_reader", error=str(e))
             _stop_event.wait(1.0)
 
 

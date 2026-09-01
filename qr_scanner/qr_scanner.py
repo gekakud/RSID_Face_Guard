@@ -64,6 +64,7 @@ from pyzbar.pyzbar import ZBarSymbol, decode as zbar_decode
 import config
 
 from observability import events
+from observability.events import EventType
 
 from observability.logging_setup import get_logger
 
@@ -210,7 +211,7 @@ class QRScanner:
             results = zbar_decode(gray, symbols=[ZBarSymbol.QRCODE])
         except Exception as e:
             log.exception("QR scan result: REJECTED (detection error)")
-            events.emit("hardware_error", where="qr_scanner", error=str(e))
+            events.emit(EventType.HARDWARE_ERROR, where="qr_scanner", error=str(e))
             return None
 
 
@@ -237,9 +238,9 @@ class QRScanner:
 
         if not self._verify(payload):
             log.warning("QR scan result: REJECTED -- %s", _payload_context(payload))
-            events.emit("qr_rejected", door_id=payload.get("door_id"))
+            events.emit(EventType.QR_REJECTED, door_id=payload.get("door_id"))
             return None
 
         log.info("QR scan result: ACCEPTED -- %s", _payload_context(payload))
-        events.emit("qr_accepted", door_id=payload.get("door_id"))
+        events.emit(EventType.QR_ACCEPTED, door_id=payload.get("door_id"))
         return payload

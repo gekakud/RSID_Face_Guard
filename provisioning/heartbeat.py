@@ -10,6 +10,7 @@ import threading
 from typing import Callable, Optional
 
 from observability import events
+from observability.events import EventType
 from observability.logging_setup import get_logger
 from provisioning import client
 from provisioning.identity import DeviceIdentity
@@ -127,7 +128,7 @@ class HeartbeatWorker:
                 # successful beat anyway, so it must stay rare).
                 if self._consecutive_failures == 3:
                     events.emit(
-                        "heartbeat_post_failed",
+                        EventType.HEARTBEAT_POST_FAILED,
                         consecutive_failures=self._consecutive_failures,
                         server_url=self.identity.server_url,
                     )

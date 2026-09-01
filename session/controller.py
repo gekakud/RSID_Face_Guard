@@ -20,6 +20,7 @@ thread.
 
 import config
 from observability import events
+from observability.events import EventType
 from observability.logging_setup import get_logger
 
 log = get_logger("session")
@@ -315,7 +316,7 @@ class SessionController:
         if success and pulsed:
             # Door opened: only now is it a grant (T2 -- access_granted never
             # precedes actuation).
-            events.emit("access_granted", user_id=self._host.last_user_id,
+            events.emit(EventType.ACCESS_GRANTED, user_id=self._host.last_user_id,
                         method=method)
             if not self._match_shown:
                 # No early welcome (e.g. session ended mid-pulse): show it here.
@@ -330,7 +331,7 @@ class SessionController:
             self._match_shown = False
             # Matched but the door would not open: fail secure. Distinct from a
             # denial -- surfaced as access_output_failed, shown as a failure.
-            events.emit("access_output_failed", user_id=self._host.last_user_id,
+            events.emit(EventType.ACCESS_OUTPUT_FAILED, user_id=self._host.last_user_id,
                         method=method)
             self._cancel_session_timers()
             self._view.show_failure(hold_ms=config.FAIL_DURATION_MS)
@@ -361,7 +362,7 @@ class SessionController:
         with no user-visible lingering overlay is safe.
         """
         self._init_mode_active = True
-        events.emit("init_mode_entered")
+        events.emit(EventType.INIT_MODE_ENTERED)
 
         duration_ms = int(config.INIT_MODE_DURATION_SEC * 1000)
         if config.INIT_MODE_ENABLED and duration_ms > 0:

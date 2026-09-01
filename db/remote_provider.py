@@ -15,6 +15,7 @@ from typing import Dict, Optional
 import requests
 
 from observability import events
+from observability.events import EventType
 from observability.logging_setup import get_logger
 from provisioning.identity import DeviceIdentity
 
@@ -64,13 +65,13 @@ class RemoteUserDataProvider:
             )
         except Exception as e:
             log.error("Network error: %s", e)
-            events.emit("db_sync_failed", reason="network_error", error=str(e))
+            events.emit(EventType.DB_SYNC_FAILED, reason="network_error", error=str(e))
             return {}
 
         if response.status_code != 200:
             log.error("Server returned: %s", response.status_code)
             log.error("Body: %s", response.text[:500])
-            events.emit("db_sync_failed", reason="http_error", status=response.status_code)
+            events.emit(EventType.DB_SYNC_FAILED, reason="http_error", status=response.status_code)
             return {}
 
         try:
@@ -78,14 +79,14 @@ class RemoteUserDataProvider:
         except Exception:
             log.error("Invalid JSON from server")
             log.error("Body: %s", response.text[:500])
-            events.emit("db_sync_failed", reason="invalid_json")
+            events.emit(EventType.DB_SYNC_FAILED, reason="invalid_json")
             return {}
 
         users, skipped = self._parse_users(data)
         log.info("Remote fetch complete. %d users retrieved, %d skipped.", len(users), skipped)
-        events.emit("db_sync_ok", users=len(users), skipped=skipped)
+        events.emit(EventType.DB_SYNC_OK, users=len(users), skipped=skipped)
         if skipped:
-            events.emit("db_sync_skipped_entries", count=skipped)
+            events.emit(EventType.DB_SYNC_SKIPPED_ENTRIES, count=skipped)
         return users
 
     @staticmethod
@@ -109,13 +110,13 @@ class RemoteUserDataProvider:
                 return users, skipped[0]
             else:
                 log.error("Unexpected server payload shape: keys=%s", list(data.keys())[:20])
-                events.emit("db_sync_failed", reason="unexpected_payload_shape")
+                events.emit(EventType.DB_SYNC_FAILED, reason="unexpected_payload_shape")
                 return users, skipped[0]
         elif isinstance(data, list):
             entries = data
         else:
             log.error("Unexpected server payload type: %s", type(data))
-            events.emit("db_sync_failed", reason="unexpected_payload_type")
+            events.emit(EventType.DB_SYNC_FAILED, reason="unexpected_payload_type")
             return users, skipped[0]
 
         for entry in entries:
@@ -140,13 +141,13 @@ class RemoteUserDataProvider:
         faceprints = user_data.get("faceprints")
         if not _is_valid_faceprints(faceprints):
             log.warning("Skipping badge_id %s: missing/invalid faceprints", badge_id)
-            events.emit("db_sync_invalid_record", badge_id=badge_id)
+            events.emit(EventType.DB_SYNC_INVALID_RECORD, badge_id=badge_id)
             skipped[0] += 1
             return
         user_id = user_data.get("user_id")
         if user_id is None:
             log.warning("Skipping badge_id %s: missing user_id (v1 record?)", badge_id)
-            events.emit("db_sync_invalid_record", badge_id=badge_id)
+            events.emit(EventType.DB_SYNC_INVALID_RECORD, badge_id=badge_id)
             skipped[0] += 1
             return
         users[badge_id] = {

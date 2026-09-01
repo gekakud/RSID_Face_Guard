@@ -10,6 +10,7 @@ Moved unchanged from the project root relay_api.py. Public API:
 import time
 
 from observability import events
+from observability.events import EventType
 from observability.logging_setup import get_logger
 
 log = get_logger("relay")
@@ -48,7 +49,7 @@ class RelayController:
             log.info("Relay initialized on GPIO %s, chip %s (active_low=%s)", self.relay_pin, GPIO_CHIP, self.active_low)
         except Exception as e:
             log.error("Relay GPIO initialization failed: %s. Relay disabled.", e)
-            events.emit("hardware_error", where="relay_init", error=str(e))
+            events.emit(EventType.HARDWARE_ERROR, where="relay_init", error=str(e))
             self._unavailable = True
 
             if self._handle is not None:
@@ -85,7 +86,7 @@ class RelayController:
             return True
         except Exception as e:
             log.error("Relay open_door failed: %s", e)
-            events.emit("hardware_error", where="relay_open", error=str(e))
+            events.emit(EventType.HARDWARE_ERROR, where="relay_open", error=str(e))
             return False
 
 
@@ -122,7 +123,7 @@ def open_door(seconds: float = 3.0) -> bool:
     relay actuation failed (so callers can emit access_output_failed)."""
     if _relay is None:
         initialize_relay()
-    events.emit("relay_opened", seconds=seconds)
+    events.emit(EventType.RELAY_OPENED, seconds=seconds)
     return _relay.open_door(seconds)
 
 

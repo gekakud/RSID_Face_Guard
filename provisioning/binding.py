@@ -9,6 +9,7 @@ import threading
 from typing import Callable, Optional
 
 from observability import events
+from observability.events import EventType
 from observability.logging_setup import get_logger
 from provisioning import client, identity as identity_store
 from provisioning.heartbeat import HeartbeatWorker
@@ -148,7 +149,7 @@ class BindingManager:
 
         # 1. Best-effort final notification while the token is still valid.
         try:
-            events.emit("device_revoked")
+            events.emit(EventType.DEVICE_REVOKED)
             self._flush_events()
         except Exception as exc:
             log.error("Revoke flush failed (ignored): %s", exc)
@@ -184,7 +185,7 @@ class BindingManager:
         status POST to hand off whatever is still buffered before the thread
         stops. Never raises -- shutdown must not be blocked by the network.
         """
-        events.emit("device_shutdown")
+        events.emit(EventType.DEVICE_SHUTDOWN)
         self._flush_events()
         self._stop_heartbeat(timeout)
 

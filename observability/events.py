@@ -26,6 +26,7 @@ import threading
 import uuid
 from collections import deque
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Any, Dict, List
 
 from observability.logging_setup import get_logger
@@ -40,6 +41,35 @@ _TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 # and typical door traffic this holds many minutes of activity.
 _MAX_EVENTS = 200
 
+
+class EventType(StrEnum):
+    """Catalogue of real event types emitted via emit(). Members are plain
+    strings, so passing one to emit() is identical to passing its literal
+    value -- this exists so callers get autocomplete instead of a typo-prone
+    free-form string."""
+
+    HARDWARE_ERROR = "hardware_error"
+    DEVICE_BOOT = "device_boot"
+    DEVICE_REVOKED = "device_revoked"
+    DEVICE_SHUTDOWN = "device_shutdown"
+    HEARTBEAT_POST_FAILED = "heartbeat_post_failed"
+    DB_SYNC_OK = "db_sync_ok"
+    DB_SYNC_FAILED = "db_sync_failed"
+    DB_SYNC_SKIPPED_ENTRIES = "db_sync_skipped_entries"
+    DB_SYNC_INVALID_RECORD = "db_sync_invalid_record"
+    DB_USERS_REVOKED = "db_users_revoked"
+    CARD_UNREGISTERED = "card_unregistered"
+    ACCESS_DENIED = "access_denied"
+    ACCESS_GRANTED = "access_granted"
+    ACCESS_OUTPUT_FAILED = "access_output_failed"
+    AUTH_MATCHED = "auth_matched"
+    RELAY_OPENED = "relay_opened"
+    INIT_MODE_ENTERED = "init_mode_entered"
+    QR_ACCEPTED = "qr_accepted"
+    QR_REJECTED = "qr_rejected"
+    STORAGE_OK = "storage_ok"
+    STORAGE_LOW = "storage_low"
+
 _lock = threading.Lock()
 _buffer: "deque[Dict[str, Any]]" = deque(maxlen=_MAX_EVENTS)
 
@@ -52,9 +82,10 @@ def emit(event_type: str, **fields: Any) -> None:
     """Record an event. Thread-safe, never raises.
 
     Args:
-        event_type: one of the known type strings (device_boot, access_granted,
-            access_output_failed, auth_matched, qr_rejected, ...). Free-form;
-            the server stores whatever it gets.
+        event_type: an EventType member (e.g. EventType.ACCESS_GRANTED), or
+            any string -- emit() stays permissive at runtime and the server
+            stores whatever it gets; EventType is the discoverable catalogue
+            of what's actually in use, not an enforced gate.
         **fields: optional extra context (e.g. user_id="u-8f2c1a", score=471,
             reason="expired"). Kept small -- this is telemetry, not a data dump.
             Access events reference a person by user_id only, never name/card id.

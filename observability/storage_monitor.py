@@ -23,6 +23,7 @@ from typing import Any, Dict, Optional
 
 import config
 from observability import events
+from observability.events import EventType
 from observability.logging_setup import get_logger
 
 log = get_logger("storage")
@@ -58,7 +59,7 @@ def check_storage(path: Optional[str] = None) -> Dict[str, Any]:
         usage = shutil.disk_usage(target)
     except Exception as exc:
         log.error("Storage check failed for %s: %s", target, exc)
-        events.emit("hardware_error", where="storage_monitor", error=str(exc))
+        events.emit(EventType.HARDWARE_ERROR, where="storage_monitor", error=str(exc))
         return {"path": target, "error": str(exc)}
 
     total_mb = usage.total / (1024 * 1024)
@@ -81,12 +82,12 @@ def check_storage(path: Optional[str] = None) -> Dict[str, Any]:
         )
         if crossed:
             events.emit(
-                "storage_low", path=target, free_mb=round(free_mb, 1),
+                EventType.STORAGE_LOW, path=target, free_mb=round(free_mb, 1),
                 min_free_mb=min_free_mb,
             )
     elif crossed:
         log.info("Disk space recovered on %s: %.1f MB free", target, free_mb)
-        events.emit("storage_ok", path=target, free_mb=round(free_mb, 1))
+        events.emit(EventType.STORAGE_OK, path=target, free_mb=round(free_mb, 1))
 
     return {
         "path": target,

@@ -73,7 +73,8 @@ from hardware.relay_api import initialize_relay
 def main():
     """Entry point: parse CLI args, discover and configure the device, then run the web GUI."""
     from observability import events
-    events.emit("device_boot", app_version=config.APP_VERSION, ui="web")
+    from observability.events import EventType
+    events.emit(EventType.DEVICE_BOOT, app_version=config.APP_VERSION, ui="web")
     parser = argparse.ArgumentParser(prog='main_web', description='RealSense ID Host Mode GUI (Web UI)')
     parser.add_argument('-p', '--port', help='Device port', type=str, default=None)
     parser.add_argument('-c', '--camera', help='Camera number (-1 for autodetect)', type=int, default=-1)
@@ -102,7 +103,7 @@ def main():
         # Best-effort only: no heartbeat thread/BindingManager exists yet at
         # this point in boot, so this event won't reach the server this boot
         # cycle -- still useful for local log correlation.
-        events.emit("hardware_error", where="boot_device_discovery", error=str(e))
+        events.emit(EventType.HARDWARE_ERROR, where="boot_device_discovery", error=str(e))
         sys.exit(1)
 
     log.info("Configuring device...")
@@ -116,7 +117,7 @@ def main():
             log.exception("Device configuration error: %s", e)
             # Best-effort only (see note above) -- process exits before any
             # heartbeat/BindingManager can send it.
-            events.emit("hardware_error", where="boot_device_config", error=str(e))
+            events.emit(EventType.HARDWARE_ERROR, where="boot_device_config", error=str(e))
             os._exit(1)
         finally:
             f.disconnect()
@@ -131,7 +132,7 @@ def main():
         except Exception as e:
             log.exception("Card reader initialization error: %s", e)
             # Best-effort only (see note above).
-            events.emit("hardware_error", where="boot_card_reader", error=str(e))
+            events.emit(EventType.HARDWARE_ERROR, where="boot_card_reader", error=str(e))
             raise
 
     if config.RUN_WITH_RELAY:
@@ -146,7 +147,7 @@ def main():
             log.exception("Relay initialization error: %s", e)
             # Non-fatal: RelayController already degrades gracefully
             # internally, so keep booting without the relay.
-            events.emit("hardware_error", where="boot_relay", error=str(e))
+            events.emit(EventType.HARDWARE_ERROR, where="boot_relay", error=str(e))
 
     app = QApplication(sys.argv)
 
