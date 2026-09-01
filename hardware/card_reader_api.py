@@ -19,9 +19,9 @@ Public API:
     initialize_card_reader()
     get_card_id(timeout=None) -> int | str | None
     disconnect_card_reader()
-    initialize_wiegand_tx()
+    initialize_wiegand_writer()
     send_w32(value)
-    close_wiegand_tx()
+    close_wiegand_writer()
 """
 
 from observability.logging_setup import get_logger
@@ -75,6 +75,7 @@ else:
     log.critical("Unknown CARD_READER_BACKEND: %r", config.CARD_READER_BACKEND)
     sys.exit(1)
 
+# card reader API
 def initialize_card_reader():
     return _initialize_card_reader()
 
@@ -84,11 +85,12 @@ def get_card_id(timeout=None):
 def disconnect_card_reader():
     return _disconnect_card_reader()
 
-def initialize_wiegand_tx():
+# Wiegand card writer API
+def initialize_wiegand_writer():
     return _initialize_wiegand_tx()
 
 def send_w32(value: int):
     return _send_w32(value)
 
-def close_wiegand_tx():
+def close_wiegand_writer():
     return _close_wiegand_tx()

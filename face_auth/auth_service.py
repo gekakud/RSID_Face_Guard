@@ -20,7 +20,7 @@ import rsid_py
 import config
 from db import UserDatabase
 from hardware.card_reader_api import (
-    send_w32, initialize_wiegand_tx, disconnect_card_reader, close_wiegand_tx, get_card_id,
+    send_w32, initialize_wiegand_writer, disconnect_card_reader, close_wiegand_writer, get_card_id,
 )
 from hardware.relay_api import disconnect_relay
 
@@ -74,7 +74,7 @@ class AuthService:
             events.emit("hardware_error", where="authenticator_connect", error=str(e))
 
         try:
-            initialize_wiegand_tx()
+            initialize_wiegand_writer()
             log.info("Wiegand transmitter initialized")
         except Exception as e:
             log.warning("Wiegand initialization failed: %s", e)
@@ -238,6 +238,9 @@ class AuthService:
 
         result = [None]
 
+        # Looks up exactly one user by card_id before extracting a live faceprint.
+        # Compares the live faceprint against that single user's stored faceprints only.
+        # One comparison, one verdict.
         def on_fp_auth_result(status, new_prints):
             if status != rsid_py.AuthenticateStatus.Success or not new_prints:
                 events.emit("access_denied", method="card", user_id=user_id,
@@ -315,6 +318,7 @@ class AuthService:
 
         result = [None]
 
+        # Loops over every active user in the DB, running match_faceprints() against each one's stored faceprints.
         def on_fp_auth_result(status, new_prints):
             if status != rsid_py.AuthenticateStatus.Success or not new_prints:
                 events.emit("access_denied", method="face",
@@ -483,7 +487,7 @@ class AuthService:
         try:
             if config.REQUIRE_CARD_TO_START_SESSION:
                 disconnect_card_reader()
-                close_wiegand_tx()
+                close_wiegand_writer()
         except Exception:
             pass
         if config.RUN_WITH_RELAY:
