@@ -17,7 +17,7 @@ main_web.py                  Entry point: device discovery, device config,
 config.py                    Single source of truth for all tunables/flags.
 
 face_auth/
-  auth_service.py            HostModeService -- all authentication business
+  auth_service.py            AuthService -- all authentication business
                               logic (face match, card lookup, card-reader
                               monitoring thread). No GUI/hardware I/O details.
 
@@ -78,7 +78,7 @@ server/                       Standalone FastAPI + SQLite dashboard. Issues the
                               part of the device app -- deploys separately.
 ```
 
-The GUI depends only on `SessionController`, `HostModeService`,
+The GUI depends only on `SessionController`, `AuthService`,
 `PreviewController` and `config` -- it never talks to `rsid_py`, GPIO or the DB
 directly.
 
@@ -96,7 +96,7 @@ directly.
    install SIGINT/SIGTERM handlers for a clean, ordered shutdown (with a
    watchdog force-exit), and run the Qt event loop.
 
-## 3. Core Business Logic — `HostModeService`
+## 3. Core Business Logic — `AuthService`
 
 `face_auth/auth_service.py` owns all authentication logic and is fully
 GUI-agnostic (no Qt import). It **recognises**; it does not decide access -- the
@@ -193,7 +193,7 @@ Trigger path depends on `config.AUTH_ONLY_ON_CARD`:
 
 ### `authenticate()` (runs on a background thread)
 1. Pause the preview stream (camera can't stream + authenticate at once).
-2. Call the appropriate `HostModeService` method.
+2. Call the appropriate `AuthService` method.
 3. Emit the result back to the Qt main thread via a `Signal`
    (`_SignalBridge`), since UI updates must happen on the main thread.
 4. If the session is still active, resume the preview for the next retry.
@@ -238,7 +238,7 @@ flowchart TD
     V --> SC["SessionController\n(session/controller.py)"]
     SC -->|show_camera / show_success / …| V
     SC -->|start_session| PC["PreviewController\n(hardware/camera_preview.py)"]
-    SC -->|authenticate| HMS["HostModeService\n(face_auth/auth_service.py)"]
+    SC -->|authenticate| HMS["AuthService\n(face_auth/auth_service.py)"]
     HMS -->|extract_faceprints_for_auth| RSID["rsid_py.FaceAuthenticator\n(native device)"]
     HMS -->|lookup faceprints| DB["UserDatabase\n(db/user_database.py)"]
     DB --> LP["local_provider.py\n(user_database.json)"]

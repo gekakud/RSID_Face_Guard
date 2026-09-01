@@ -2,6 +2,6 @@
 Face authentication business logic package.
 """
 
-from .auth_service import HostModeService
+from .auth_service import AuthService
 
-__all__ = ["HostModeService"]
+__all__ = ["AuthService"]

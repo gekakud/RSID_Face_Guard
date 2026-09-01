@@ -106,7 +106,7 @@ holds only the `WebSessionView` adapter, `QtScheduler` and platform glue.
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-FACE-01](SOFTWARE_REQUIREMENTS.md#fr-face-01) | ✅ | `auth_service.HostModeService.__init__` connects; 1:1 `authenticate_with_card()`, 1:N `authenticate_face_only()` |
+| [FR-FACE-01](SOFTWARE_REQUIREMENTS.md#fr-face-01) | ✅ | `auth_service.AuthService.__init__` connects; 1:1 `authenticate_with_card()`, 1:N `authenticate_face_only()` |
 | [FR-FACE-02](SOFTWARE_REQUIREMENTS.md#fr-face-02) | ✅ | `authenticate_with_card()` matches only the cardholder's stored faceprints |
 | [FR-FACE-03](SOFTWARE_REQUIREMENTS.md#fr-face-03) | ✅ | **T12 done.** One decision line per path: `1:1 decision: card=… sdk_success=… score=… threshold=… -> GRANT/DENY`, and the 1:N equivalent |
 | [FR-FACE-04](SOFTWARE_REQUIREMENTS.md#fr-face-04) | ✅ | **T2 done.** `auth_service.py` emits `auth_matched` only and imports just `disconnect_relay`; `controller._open_access_point()` actuates |
@@ -132,7 +132,7 @@ holds only the `WebSessionView` adapter, `QtScheduler` and platform glue.
 | [FR-OUT-01](SOFTWARE_REQUIREMENTS.md#fr-out-01) | ✅ | `config.RELAY_*`; `hardware/relay_api.RelayController.initialize()` |
 | [FR-OUT-02](SOFTWARE_REQUIREMENTS.md#fr-out-02) | ✅ | `controller._open_access_point()` pulses off the UI thread; `open_door(seconds=3.0)` default |
 | [FR-OUT-03](SOFTWARE_REQUIREMENTS.md#fr-out-03) | ✅ | `relay_api.RelayController.open_door()` emits `relay_opened` |
-| [FR-OUT-04](SOFTWARE_REQUIREMENTS.md#fr-out-04) | ✅ | Wiegand-tx init failure non-fatal in `HostModeService.__init__` |
+| [FR-OUT-04](SOFTWARE_REQUIREMENTS.md#fr-out-04) | ✅ | Wiegand-tx init failure non-fatal in `AuthService.__init__` |
 | [FR-OUT-05](SOFTWARE_REQUIREMENTS.md#fr-out-05) | ✅ | `RelayController.initialize()` degrades gracefully when lgpio/pin is unavailable |
 | [FR-OUT-06](SOFTWARE_REQUIREMENTS.md#fr-out-06) | ✅ | **T2 done.** `access_granted` only after a successful pulse; a failed/raising pulse yields `access_output_failed` (`controller._on_auth_complete()`) |
 
@@ -146,7 +146,7 @@ holds only the `WebSessionView` adapter, `QtScheduler` and platform glue.
 | [FR-DB-04](SOFTWARE_REQUIREMENTS.md#fr-db-04) | ✅ | `get_user()` / `get_all_users()` read the cache only |
 | [FR-DB-05](SOFTWARE_REQUIREMENTS.md#fr-db-05) | ✅ | `remote_provider.load_all()` + `_parse_users()`; a failed fetch is a no-op in `sync_from_remote()` |
 | [FR-DB-06](SOFTWARE_REQUIREMENTS.md#fr-db-06) | ✅ | All four events emitted from `db/remote_provider.py` |
-| [FR-DB-07](SOFTWARE_REQUIREMENTS.md#fr-db-07) | ✅ | Skipped while unbound, and **re-armed on bind** via `attach_remote()` / `HostModeService.enable_remote_sync()` — see [Delivered #12](#delivered) |
+| [FR-DB-07](SOFTWARE_REQUIREMENTS.md#fr-db-07) | ✅ | Skipped while unbound, and **re-armed on bind** via `attach_remote()` / `AuthService.enable_remote_sync()` — see [Delivered #12](#delivered) |
 | [FR-DB-08](SOFTWARE_REQUIREMENTS.md#fr-db-08) | ✅ | `sync_from_remote()` full replace + `db_users_revoked` |
 
 ### 1.9 Provisioning & QR trust — FR-PROV
@@ -236,7 +236,7 @@ the process list → **[T15](#t15)**.
 | [FR-DATA-03](SOFTWARE_REQUIREMENTS.md#fr-data-03) | ✅ | **T10 done.** Atomic + `0600` + deleted on revocation (`identity.save()` / `clear()`) |
 | [FR-DATA-04](SOFTWARE_REQUIREMENTS.md#fr-data-04) | ✅ | `identity.load()` tolerates unknown keys |
 | [FR-DATA-05](SOFTWARE_REQUIREMENTS.md#fr-data-05) | ✅ | `events.emit()` stamps `event_id`, `type`, UTC `ts` |
-| [FR-DATA-06](SOFTWARE_REQUIREMENTS.md#fr-data-06) | ✅ | All access events carry `user_id` only — no name, no raw card id (`HostModeService.last_user_id` → `controller`); an unregistered tap emits `reason="card_unregistered"` with no user fields |
+| [FR-DATA-06](SOFTWARE_REQUIREMENTS.md#fr-data-06) | ✅ | All access events carry `user_id` only — no name, no raw card id (`AuthService.last_user_id` → `controller`); an unregistered tap emits `reason="card_unregistered"` with no user fields |
 | [FR-DATA-07](SOFTWARE_REQUIREMENTS.md#fr-data-07) | ✅ | `active` normalised at sync (defaults `True` when absent) and enforced both paths: card tap → `user_inactive`, face match → record skipped |
 
 ### 1.17 Business rules — BR
@@ -533,7 +533,7 @@ see [§3](#3-batches-and-device-validation).
 | 1 | **T1** Extract `SessionController` | Session machine moved to `session/controller.py` behind `SessionView` / `Scheduler`; `web_window.py` reduced to a view adapter. Satisfies NFR-19; covered by `session/tests/` with a manual-clock scheduler. *(B1)* |
 | 2 | **T1b** `gui_qt` freeze notice | Delivered 2026-08-26 as a comment-only banner, then **superseded**: `gui_qt/` and `main_qt.py` were deleted outright on 2026-08-31, so the artefact no longer exists. Nothing to maintain. |
 | 3 | **T2** Decision ↔ actuation split | See the [downstream contract](#119-architecture-baseline-as-delivered) — `access_granted` is post-pulse; `relay_api.open_door()` returns `bool`; `access_output_failed` is the fail-secure outcome. *(B3)* |
-| 4 | **T3** User-record schema v2 | `{user_id, name, active, permission_level, faceprints}`; `active` enforced on both auth paths; every emit rewritten to `user_id` via `HostModeService.last_user_id`. `faceprints`-as-a-list carved out as [T3b](#t3b). *(B6)* |
+| 4 | **T3** User-record schema v2 | `{user_id, name, active, permission_level, faceprints}`; `active` enforced on both auth paths; every emit rewritten to `user_id` via `AuthService.last_user_id`. `faceprints`-as-a-list carved out as [T3b](#t3b). *(B6)* |
 | 5 | **T5a** Ack by `event_id` | `events.ack(event_ids)` removes by id, never by position, so a ring eviction during an in-flight beat cannot drop undelivered events. *(B4)* |
 | 6 | **T6** Fail-secure revocation | On 410: emit + flush `device_revoked` **while still bound** → stop heartbeat/sync → delete identity → purge user DB incl. faceprints → in-process init-mode reset. Server-authoritative lifecycle below. **Step 6 diverges from the SRS** → [T20](#t20). *(B5)* |
 | 7 | **T10** Identity file `0600` | Temp file created `0o600` via `os.open`; mode re-asserted after `os.replace`. *(B0)* |
@@ -564,10 +564,10 @@ throws. Re-enrollment is collision-free by construction — every bind mints a f
 **Fix — remote DB sync not re-armed after runtime binding (FR-DB-07).** A device
 that booted **unbound** and then bound via QR never fetched its remote user DB,
 leaving a bound `remote`-mode device with no source of truth for door access:
-`HostModeService.__init__` decided remote-vs-local once at boot, and QR binding
+`AuthService.__init__` decided remote-vs-local once at boot, and QR binding
 saved the identity without re-arming the provider. Fixed by
 `UserDatabase.attach_remote()` / `is_remote_enabled()` (wire a provider *after*
-construction) plus `HostModeService.enable_remote_sync()` (load the fresh
+construction) plus `AuthService.enable_remote_sync()` (load the fresh
 identity, attach, do one **immediate blocking** `sync_from_remote()` so users
 appear right after pairing, then start auto-sync), called off the UI thread from
 `GUIWeb._on_binding_result()`. Covered by `db/test_remote_sync.py`.

@@ -8,7 +8,7 @@ Lifted out of ``gui_web/web_window.py`` (T1). Owns:
   * the init-mode technician-QR scan window.
 
 It talks to the front-end only through ``SessionView`` and ``Scheduler`` and
-to the business layer through the injected ``HostModeService``-like object and
+to the business layer through the injected ``AuthService``-like object and
 callables, so it carries no Qt / rsid_py import and behaves identically to the
 pre-extraction web flow (FR-SESS-01..08, BR-05).
 
@@ -43,7 +43,7 @@ class SessionController:
         """Wire the controller to its collaborators.
 
         Args:
-            host_service: the shared ``HostModeService`` (authenticate_*,
+            host_service: the shared ``AuthService`` (authenticate_*,
                 mark_card_session_active/done).
             preview_controller: object with ``resume()`` / ``pause()``.
             view: a ``SessionView``.

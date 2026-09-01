@@ -21,7 +21,7 @@ Structure:
 
 The session state machine itself lives in session/controller.py; this class is
 its view adapter (SessionView + Scheduler) plus Qt/platform glue. The shared
-business/hardware layers (HostModeService, PreviewController, config) carry no
+business/hardware layers (AuthService, PreviewController, config) carry no
 UI dependency.
 """
 
@@ -39,7 +39,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QApplication, QMainWindow
 
 import config
-from face_auth import HostModeService
+from face_auth import AuthService
 from hardware.camera_preview import PreviewController
 from provisioning.binding import BindingManager
 from qr_scanner import QRScanner
@@ -347,7 +347,7 @@ class GUIWeb(QMainWindow):
 
         # Shared, GUI-agnostic layers.
         self.preview_controller = PreviewController(port, camera_index, device_type)
-        self.host_service = HostModeService(port)
+        self.host_service = AuthService(port)
         self.host_service.on_reconnect = self.preview_controller.restart
 
         # QR scanner used by the session controller's init-mode window.

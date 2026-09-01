@@ -1,5 +1,5 @@
 """
-Face authentication business logic (HostModeService).
+Face authentication business logic (AuthService).
 
 Pure business logic -- no GUI dependency. Talks to the RealSense ID device via
 rsid_py, the unified UserDatabase for user records, and
@@ -29,7 +29,7 @@ from observability.logging_setup import get_logger
 
 log = get_logger("auth")
 
-class HostModeService:
+class AuthService:
     """Business logic for host mode authentication."""
 
     def __init__(self, port: str):
