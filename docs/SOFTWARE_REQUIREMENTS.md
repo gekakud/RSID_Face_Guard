@@ -5,7 +5,7 @@
 | Item | Detail |
 |---|---|
 | Document ID | SRS-FG-001 |
-| Revision | 1.4 |
+| Revision | 1.5 |
 | Product | RSID Face Guard kiosk application |
 | Target platform | Raspberry Pi 5, 720×720 round touch display |
 | Biometric device | Intel RealSense ID F45x (`rsid_py` SDK) |
@@ -123,7 +123,8 @@ stateDiagram-v2
     Unbound --> InitMode: restart (dev only)
     Idle --> Denied: card not in local DB / device unavailable
     Idle --> Granted: valid card (card_only)
-    Idle --> Session: valid card (card_and_face) / screen tap (demo)
+    Idle --> Session: valid card (card_and_face)
+    Idle --> Session: screen tap (face_only)
     Idle --> DirectionSelected: IN/OUT tap (time_registry)
     DirectionSelected --> Attendance: card tap (face policy none)
     DirectionSelected --> Session: card tap (face policy verify)
@@ -813,7 +814,7 @@ idle screen.
 <a id="fr-ui-05"></a>**FR-UI-05 Registered card, face mismatch** — show the failure screen once for
 `FAIL_DURATION_MS`, cancel session timers, then return to the idle screen.
 
-<a id="fr-ui-06"></a>**FR-UI-06 Face-only (demo) timeout** — return silently to the idle screen
+<a id="fr-ui-06"></a>**FR-UI-06 `face_only` session timeout** — return silently to the idle screen
 with no failure screen.
 
 <a id="fr-ui-07"></a>**FR-UI-07** Internal denial reasons (score, SDK status, extraction failure)
@@ -1061,14 +1062,14 @@ suspend a user without deleting their enrolment.
 
 | Parameter | Purpose |
 |---|---|
-| `DEVICE_MODE` **[NEW]** | Fallback mode when the server has not provisioned one |
+| `DEVICE_MODE` | Operating mode ([§4](#4-device-operating-modes)): `card_only` / `card_and_face` / `face_only` / `time_registry`. Validated at import — an unknown value raises `ValueError`. Fallback until the server provisions one ([FR-MODE-01](#fr-mode-01)) |
 | `FACE_POLICY` **[NEW]** | `none` / `verify` — fallback time-registry face policy ([§4.3](#43-time-registry-mode-new)) |
 | `DIRECTION_SELECT_TIMEOUT_SEC` **[NEW]** | IN/OUT selection latch timeout |
 | `DB_MODE` | `local` (file only) or `remote` (periodic server sync) |
 | `USER_DB_FILE` | Local user/faceprint cache path |
 | `CARD_READER_BACKEND` | `gwiot_hid` / `wiegand_gpio` / `simulated` |
 | `SIMULATE_CARD_READER` | Derived from `CARD_READER_BACKEND`; selects the dev simulator |
-| `REQUIRE_CARD_TO_START_SESSION` | Card- vs. tap-triggered session — **deprecated once `DEVICE_MODE` lands ([D4](#d4))** |
+| `mode_uses_card_reader()`, `mode_uses_tap_to_wake()` | Derived from `DEVICE_MODE`: the reader is used in every mode except `face_only`; a screen tap wakes only in `face_only` ([FR-UI-08](#fr-ui-08)) |
 | `AUTH_RETRY_INTERVAL_SEC`, `AUTH_SESSION_TIMEOUT_SEC` | Session cadence and bound |
 | `PREVIEW_LEAD_IN_MS` | Live-preview lead-in before the first match attempt ([NFR-03](#nfr-03)) |
 | `CUSTOM_THRESHOLD` | Score fallback acceptance threshold |
@@ -1249,9 +1250,9 @@ list.
 | # | Requirement | Current behaviour | Action |
 |---|---|---|---|
 | <a id="d1"></a>D1 | [FR-HB-10](#fr-hb-10) revocation is fail-secure | *Was:* `binding.py` cleared the identity only; the local DB was retained and the door kept opening; no `device_revoked` event | ✅ **Resolved** (T6/B5) — `provisioning/binding.py` `_handle_revoked` emits + flushes `device_revoked` while still bound, stops the heartbeat, deletes the identity, purges the user DB incl. faceprints (`db/user_database.py` `detach_remote`) and re-enters init mode. Step 6 (self-restart) diverges → [D21](#d21) |
-| <a id="d2"></a>D2 | [FR-MODE-03](#fr-mode-03) `card_only` | Face always runs when a reader is present | **Implement** (T7) |
+| <a id="d2"></a>D2 | [FR-MODE-03](#fr-mode-03) `card_only` | *Was:* face always ran when a reader was present | ✅ **Resolved** (T7) — `config.DEVICE_MODE == "card_only"` routes `session/controller.py` `on_card_detected()` into `_handle_card_only()`: relay pulse, result hold, no session and no camera |
 | <a id="d3"></a>D3 | [FR-MODE-06](#fr-mode-06)..[FR-MODE-11](#fr-mode-11) time registry | Not implemented | **Implement** (T8) |
-| <a id="d4"></a>D4 | [FR-MODE-01](#fr-mode-01) server-provisioned mode | Only the boolean `REQUIRE_CARD_TO_START_SESSION` (`config.py:33`) exists. `device_mode` / `face_policy` have **zero hits** across `config.py`, `provisioning/`, `session/` and `server/` | **Implement** (T4) |
+| <a id="d4"></a>D4 | [FR-MODE-01](#fr-mode-01) server-provisioned mode | **Partly closed (rev 1.5).** `config.DEVICE_MODE` now exists and selects all four modes (`card_only`, `card_and_face`, `face_only`, `time_registry`), validated at import, with `mode_uses_card_reader()` / `mode_uses_tap_to_wake()` derived from it; the obsolete `DEMO_FACE_ONLY` and `REQUIRE_CARD_TO_START_SESSION` flags were deleted. **Still local-only**: `device_mode` / `face_policy` have zero hits across `provisioning/` and `server/`, so nothing is provisioned by the server | **Implement remaining half** (T4) |
 | <a id="d5"></a>D5 | [FR-MODE-10](#fr-mode-10) durable attendance queue | Events are in-memory only, capped at 200 | **Implement** (T5) |
 | <a id="d6"></a>D6 | [FR-UI-09](#fr-ui-09) PIN path disabled | ✅ **Resolved (rev 1.5)** — keypad markup, styles, JS state machine and `Bridge.codeSubmitted()` removed outright; no `keypad`/`codeApproved`/`setExpectedCode` references remain in `demo_ui/` or `gui_web/`. The hardcoded `"1234"` is gone from both former sites | Closed (T18) |
 | <a id="d7"></a>D7 | [FR-API-12](#fr-api-12) mode/interval refresh | Heartbeat response is not consumed for config | Deferred — moved to future work ([§12.3](#123-out-of-scope-for-this-release)), rev 1.2 |
@@ -1293,5 +1294,5 @@ list.
 | 1.2 | 2026-08-26 | requirements review | Stakeholder rulings U1–U10 (face policy confirmed, durable attendance mandatory, token-replacement semantics, schema-discard migration, vendor threshold note, relay default, server-side replay protection, `unbound` = dev-only); simplification pass: FR-STATE-06/08/10/12, FR-UI-02, FR-UI-10, FR-API-12 deprecated; rationale prose trimmed |
 | 1.3 | 2026-08-26 | code reconciliation | Static audit of the working tree. Added §5.5 and §5.6 service diagrams; D1–D10 confirmed with evidence and mapped to tasks; new deviations D11–D20 recorded. Companion [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) holds the per-requirement reconciliation table and the ordered task list T1–T18 |
 | 1.4 | 2026-08-31 | code reconciliation | **Qt-widgets front-end removed from the repository**: the harness dropped from §1.2 scope and the §11 traceability table, NFR-19 rejustified on the UI-agnostic `session/controller.py`, D20 closed. §5.1 and §11 now name `session/`; §9.4 gained seven shipped-but-undocumented parameters. Post-B0–B6 re-verification: D1, D11, D13, D14, D18 marked ✅ Resolved with evidence; D12 re-targeted (not delivered by T6); D4, D6, D9, D10, D17 evidence refreshed; new D21 records the in-process revocation reset vs. FR-HB-10's self-restart |
-| 1.5 | 2026-09-02 | design change | **`face_only` promoted to a fourth first-class device mode** (§4, FR-MODE-05): `DEVICE_MODE` now selects `card_only` / `card_and_face` / `face_only` / `time_registry`, and the `DEMO_FACE_ONLY` flag plus the derived `REQUIRE_CARD_TO_START_SESSION` were deleted. FR-UI-08, FR-SESS-03 and FR-SESS-04 reworded off "demo face-only". **Keypad/PIN path removed outright** — D6 closed, T18 delivered, FR-UI-09 restated as "shall not exist" |
+| 1.5 | 2026-09-02 | design change | **`face_only` promoted to a fourth first-class device mode** (§4, FR-MODE-05): `DEVICE_MODE` now selects `card_only` / `card_and_face` / `face_only` / `time_registry`, and the `DEMO_FACE_ONLY` flag plus the derived `REQUIRE_CARD_TO_START_SESSION` were deleted. FR-UI-08, FR-SESS-03 and FR-SESS-04 reworded off "demo face-only". **Keypad/PIN path removed outright** — D6 closed, T18 delivered, FR-UI-09 restated as "shall not exist". §3 state diagram splits the `card_and_face` and `face_only` session triggers; FR-UI-06 reworded off "demo"; §9.4 drops `REQUIRE_CARD_TO_START_SESSION` and documents `DEVICE_MODE` plus the derived `mode_uses_card_reader()` / `mode_uses_tap_to_wake()` helpers; D2 closed (`card_only` shipped as T7), D4 marked half-closed (mode is local-only until T4) |
 

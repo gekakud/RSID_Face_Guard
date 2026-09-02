@@ -5,9 +5,9 @@
 | Item | Detail |
 |---|---|
 | Document ID | PLAN-FG-001 |
-| Revision | 1.2 |
-| Date | 2026-08-31 |
-| Specification | [`SOFTWARE_REQUIREMENTS.md`](SOFTWARE_REQUIREMENTS.md) rev 1.4 |
+| Revision | 1.3 |
+| Date | 2026-09-02 |
+| Specification | [`SOFTWARE_REQUIREMENTS.md`](SOFTWARE_REQUIREMENTS.md) rev 1.5 |
 | Basis | Static audit of the working tree. Evidence cites **file + symbol**, never line numbers — rev 1.1 used `file:line` and every reference rotted the moment [T1](#delivered) moved the session machine |
 | Scope | Device application **and** the reference server (`server/`) |
 | Delivery model | Small batches (B0..B14, [§3](#3-batches-and-device-validation)); each batch is device-validated by the owner before the next starts |
@@ -31,7 +31,7 @@ Status legend: **✅ IMPLEMENTED** · **⚠️ PARTIAL** · **❌ MISSING** ·
 | Area | ✅ | ⚠️ | ❌ | ➖ |
 |---|---|---|---|---|
 | FR-STATE (12) | 8 | 0 | 0 | 4 *(06/08/10/12)* |
-| FR-MODE (11) | 3 | 0 | 8 | 0 |
+| FR-MODE (11) | 4 | 1 | 6 | 0 |
 | FR-SESS (8) | 7 | 1 | 0 | 0 |
 | FR-FACE (7) | 6 | 1 | 0 | 0 |
 | FR-CARD (6) | 5 | 1 | 0 | 0 |
@@ -47,9 +47,9 @@ Status legend: **✅ IMPLEMENTED** · **⚠️ PARTIAL** · **❌ MISSING** ·
 | FR-DATA (7) | 6 | 1 | 0 | 0 |
 | BR (7) | 6 | 1 | 0 | 0 |
 | NFR (22) | 21 | 1 | 0 | 0 |
-| **Total (156)** | **123** | **16** | **10** | **7** |
+| **Total (156)** | **124** | **17** | **8** | **7** |
 
-Active requirements: 149. **Compliance today: 123/149 = 83 %** (rev 1.1 stated
+Active requirements: 149. **Compliance today: 124/149 = 83 %** (rev 1.1 stated
 72 %, against a summary table whose FR-STATE row summed to 10 of 12 and whose
 FR-DATA row contradicted its own detail section; both are corrected here).
 
@@ -74,11 +74,11 @@ FR-DATA row contradicted its own detail section; both are corrected here).
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-MODE-01](SOFTWARE_REQUIREMENTS.md#fr-mode-01) | ❌ | `device_mode` / `face_policy` have **zero hits** across `config.py`, `provisioning/`, `session/` and `server/`; absent from `server/models.py` `RegisterResponse` and from `provisioning/identity.py` `DeviceIdentity`. Mode is still the local boolean `config.REQUIRE_CARD_TO_START_SESSION` → **[T4](#t4)** |
+| [FR-MODE-01](SOFTWARE_REQUIREMENTS.md#fr-mode-01) | ⚠️ | **Device half done (rev 1.5).** `config.DEVICE_MODE` selects all four modes, validated at import, with `mode_uses_card_reader()` / `mode_uses_tap_to_wake()` derived; `DEMO_FACE_ONLY` / `REQUIRE_CARD_TO_START_SESSION` deleted. Still **not server-provisioned**: `device_mode` / `face_policy` have zero hits in `provisioning/` and `server/`, absent from `server/models.py` `RegisterResponse` and `provisioning/identity.py` `DeviceIdentity` → **[T4](#t4)** |
 | [FR-MODE-02](SOFTWARE_REQUIREMENTS.md#fr-mode-02) | ✅ | `face_auth/auth_service.py` `card_is_registered()` — DB-only check, no camera |
-| [FR-MODE-03](SOFTWARE_REQUIREMENTS.md#fr-mode-03) | ❌ | No `card_only`; `controller.py` `on_card_detected()` always starts a session → **[T7](#t7)** |
+| [FR-MODE-03](SOFTWARE_REQUIREMENTS.md#fr-mode-03) | ✅ | **T7 done.** `controller.on_card_detected()` routes to `_handle_card_only()` when `config.DEVICE_MODE == "card_only"`: DB + `active` check, relay pulse off the UI thread, result hold, no session and no preview |
 | [FR-MODE-04](SOFTWARE_REQUIREMENTS.md#fr-mode-04) | ✅ | `auth_service.py` `authenticate_with_card_and_face()` — 1:1 against the cardholder |
-| [FR-MODE-05](SOFTWARE_REQUIREMENTS.md#fr-mode-05) | ✅ | `auth_service.py` `authenticate_face_only()`, gated by `REQUIRE_CARD_TO_START_SESSION` via `controller.py` `on_user_tapped()` |
+| [FR-MODE-05](SOFTWARE_REQUIREMENTS.md#fr-mode-05) | ✅ | `auth_service.py` `authenticate_face_only()`, gated by `config.mode_uses_tap_to_wake()` via `controller.py` `on_user_tapped()`; `face_only` is now a first-class `DEVICE_MODE` (rev 1.5) and skips reader init in `main_web.py` / `gui_web/web_window.py` |
 | [FR-MODE-06](SOFTWARE_REQUIREMENTS.md#fr-mode-06) | ❌ | No IN/OUT screen or latch. The `demo_ui/app.js` `setAttendanceMode()` toggle is cosmetic — never read by Python → **[T8](#t8)** |
 | [FR-MODE-07](SOFTWARE_REQUIREMENTS.md#fr-mode-07) | ❌ | No `attendance_event` emission anywhere → **[T8](#t8)** |
 | [FR-MODE-08](SOFTWARE_REQUIREMENTS.md#fr-mode-08) | ❌ | No relay-suppressed mode → **[T8](#t8)** |
@@ -208,7 +208,7 @@ the process list → **[T15](#t15)**.
 | [FR-UI-01](SOFTWARE_REQUIREMENTS.md#fr-ui-01) | ⚠️ | All screens exist except the **IN/OUT selection screen**; `demo_ui/index.html` `#attendance` is a cosmetic toggle → **[T8](#t8)** |
 | FR-UI-02 | ➖ | Deprecated rev 1.2 |
 | [FR-UI-03](SOFTWARE_REQUIREMENTS.md#fr-ui-03) | ✅ | `WebSessionView.show_idle()` returns to the screensaver, overriding the JS default |
-| [FR-UI-04](SOFTWARE_REQUIREMENTS.md#fr-ui-04)..[08](SOFTWARE_REQUIREMENTS.md#fr-ui-08) | ✅ | `controller.on_card_rejected()` (no camera), `_on_auth_complete()` denial branches, `on_user_tapped()` demo-only wake; generic failure text in `demo_ui/app.js` |
+| [FR-UI-04](SOFTWARE_REQUIREMENTS.md#fr-ui-04)..[08](SOFTWARE_REQUIREMENTS.md#fr-ui-08) | ✅ | `controller.on_card_rejected()` (no camera), `_on_auth_complete()` denial branches, `on_user_tapped()` gated on `config.mode_uses_tap_to_wake()` (`face_only` only); generic failure text in `demo_ui/app.js` |
 | [FR-UI-09](SOFTWARE_REQUIREMENTS.md#fr-ui-09) | ✅ | Keypad path **removed outright** (rev 1.5): markup, styles, JS state machine and `Bridge.codeSubmitted()` all deleted; no hardcoded code constant remains → **[T18](#t18)** done |
 | FR-UI-10 | ➖ | Deprecated rev 1.2 |
 | [FR-UI-11](SOFTWARE_REQUIREMENTS.md#fr-ui-11) | ✅ | `config.KIOSK_BORDERLESS` / `RUN_ON_REAL_SCREEN`; `GUIWeb._place_on_small_display()` |
@@ -292,7 +292,7 @@ baseline every remaining task builds on:
 
 ## 2. Task list
 
-Live queue: **12 open tasks**. Delivered work is rolled up in
+Live queue: **10 open tasks**. Delivered work is rolled up in
 [Delivered](#delivered). The `Depends on` column lists only *open*
 dependencies — everything else has shipped.
 
@@ -300,16 +300,17 @@ dependencies — everything else has shipped.
 |---|---|---|---|---|
 | [T19](#t19) | Remove the device-side nonce set | device | — | FR-PROV-03, NFR-14 |
 | [T20](#t20) | Resolve D21 (revocation restart semantics) | spec/ops | — | FR-HB-10, NFR-21 |
-| [T4](#t4) | `device_mode` / `face_policy` plumbing | device+server | — | FR-MODE-01 |
+| [T4](#t4) | `device_mode` / `face_policy` **server plumbing** | device+server | — | FR-MODE-01 |
 | [T3b](#t3b) | `faceprints` as a list | device+server | — | FR-DB-01, FR-DATA-01 |
-| [T7](#t7) | `card_only` mode | device | T4 | FR-MODE-03 |
 | [T9](#t9) | Session edge cases + unavailable screen | device | — | FR-SESS-03, FR-CARD-04, FR-FACE-06, FR-UI-12, BR-04 |
 | [T5b](#t5b) | Durable event queue | device | — | FR-MODE-10 |
 | [T8](#t8) | `time_registry` mode | device+server | T4, T5b | FR-MODE-06..11, FR-API-15 |
 | [T13](#t13) | HTTP error classification | device | — | FR-API-04 |
 | [T14](#t14) | Server rebinding + door scoping | server | — | FR-API-07/08/13 |
 | [T15](#t15) | Network profile defaults + password handling | device | — | FR-NET-03, FR-LOG-04 |
-| [T18](#t18) | Retire keypad demo path | device | — | FR-UI-09 |
+
+Delivered since rev 1.2: [T7](#t7) `card_only` and [T18](#t18) keypad removal —
+see [Delivered](#delivered).
 
 ### Phase A — Hygiene and open decisions
 
@@ -367,15 +368,19 @@ mismatch between FR-HB-10 and the code.
 
 ### Phase B — Mode plumbing and data shape
 
-#### <a id="t4"></a>T4. `device_mode` / `face_policy` plumbing
+#### <a id="t4"></a>T4. `device_mode` / `face_policy` plumbing (server half)
 
-**Do.** Add both to the register response, the QR envelope and the identity
-file; resolve at runtime as *server value → `config.py` fallback*. Introduce
-`DEVICE_MODE`, `FACE_POLICY`, `DIRECTION_SELECT_TIMEOUT_SEC` in `config.py`
-(all three are already specified in
+**Already done (rev 1.5).** `config.DEVICE_MODE` exists and selects all four
+modes, is validated at import (`DEVICE_MODES`, `ValueError` on a typo), and the
+`DEMO_FACE_ONLY` / `REQUIRE_CARD_TO_START_SESSION` flags are gone; callers use
+`config.mode_uses_card_reader()` / `config.mode_uses_tap_to_wake()`.
+
+**Do.** Add `device_mode` and `face_policy` to the register response, the QR
+envelope and the identity file; resolve at runtime as *server value →
+`config.py` fallback*. Add the still-missing `FACE_POLICY` and
+`DIRECTION_SELECT_TIMEOUT_SEC` to `config.py` (specified in
 [SRS §9.4](SOFTWARE_REQUIREMENTS.md#94-configuration-parameters) but absent from
-the module). Mark `REQUIRE_CARD_TO_START_SESSION` deprecated and route its remaining callers
-— `controller.on_user_tapped()` and `main_web.main()` — through the new mode.
+the module).
 
 **Files.** `server/models.py` (`RegisterResponse`), `server/main.py`
 (`generate_qr()`, `register_device()`); `provisioning/identity.py`
@@ -410,17 +415,21 @@ rejected or coerced, never crashed on.
 
 ---
 
-#### <a id="t7"></a>T7. `card_only` mode
+#### <a id="t7"></a>T7. `card_only` mode — ✅ **DONE**
 
-**Do.** In `card_only`, a card present in the local DB opens the relay
+In `card_only`, a card present and `active` in the local DB opens the relay
 immediately — no session, no preview, no biometric call. Path:
-`CardReader → SessionController → AccessOutput`.
+`CardReader → SessionController → AccessOutput`, via
+`controller._handle_card_only()` / `_run_card_only_output()` /
+`_on_card_only_complete()`, with a `_card_only_busy` flag holding the reader off
+for the result hold. A failed pulse yields `access_output_failed`, never a grant.
 
 **Files.** `session/controller.py`; `config.py`.
 
 **Accept.** With `card_only`, a valid card opens the door with the camera never
 powered; an unknown card is still rejected pre-camera
 ([BR-02](SOFTWARE_REQUIREMENTS.md#br-02)); `card_and_face` is unaffected.
+Covered off-device by `session/tests/test_card_only.py`.
 
 ---
 
@@ -513,7 +522,7 @@ stdin/file instead of argv (`network.apply()`).
 **Accept.** A dev machine is never reconfigured by default; the password is
 absent from the process list.
 
-#### <a id="t18"></a>T18. Retire the keypad demo path — ✅ **DONE (rev 1.5)**
+#### <a id="t18"></a>T18. Retire the keypad demo path — ✅ **DONE (rev 1.5)** *(see [Delivered](#delivered))*
 Removed outright rather than flag-gated: the `#keypad` markup and dev-panel
 button (`demo_ui/index.html`), all `.keypad__*` / `.code-*` rules
 (`demo_ui/styles.css`), the keypad state machine, `expectedCode` and the
@@ -546,6 +555,9 @@ see [§3](#3-batches-and-device-validation).
 | 10 | **T16** Init mode on every start | `start_init_mode()` always enters and emits `init_mode_entered`; `INIT_MODE_ENABLED` sizes the window only (0-length = enter-then-end, `end_init_mode()` idempotent). *(B2)* |
 | 11 | **T17** systemd unit | `face-guard.service` runs `main_web.py`, `Restart=always`, with the `rpi_py_build_lib` `LD_LIBRARY_PATH` that the old unit lacked; dead `docs/rsid-host-mode.service` deleted. *(2026-08-31)* |
 | 12 | **Fix** Remote DB sync re-armed on bind (FR-DB-07) | Detail below. |
+| 13 | **T7** `card_only` mode | `controller._handle_card_only()` pulses the relay straight from a valid, `active` card — no session, no preview, no biometric call; `_card_only_busy` holds the reader off for the result hold; a failed pulse emits `access_output_failed`. Closes SRS [D2](SOFTWARE_REQUIREMENTS.md#d2); covered by `session/tests/test_card_only.py`. |
+| 14 | **T18** Keypad/PIN path retired | Removed outright across `demo_ui/` (markup, styles, JS state machine, `deviceUI.code*` API) and `gui_web/web_window.py` (`Bridge.codeSubmitted()`, `DeviceUI.code_*`, `onSubmitCode`), taking the hardcoded `"1234"` with it. Closes SRS [D6](SOFTWARE_REQUIREMENTS.md#d6). *(rev 1.5)* |
+| 15 | **`face_only` promotion** | Fourth first-class `DEVICE_MODE`; `DEMO_FACE_ONLY` / `REQUIRE_CARD_TO_START_SESSION` deleted, `DEVICE_MODES` validated at import, `mode_uses_card_reader()` / `mode_uses_tap_to_wake()` derived. No new session logic — `on_user_tapped()` → `start_session()` → `authenticate_face_only()` already existed. Device half of [T4](#t4). *(rev 1.5)* |
 
 **T6 — server-authoritative revocation lifecycle** *(kept in full: T14 and T20
 both depend on it).* Revocation is a server-side tombstone handshake, so the
@@ -603,12 +615,12 @@ dev box — the Pi or the project venv is the reference environment.
 | **B6** | [T3](#delivered) schema v2 (server, then device) | Implemented — awaiting device validation |
 | **B7** | [T19](#t19) nonce removal + [T20](#t20) D21 ruling | pending |
 | B8 | [T4](#t4) `device_mode` / `face_policy` | pending |
-| B9 | [T7](#t7) `card_only` + [T3b](#t3b) `faceprints` as a list | pending |
+| B9 | [T3b](#t3b) `faceprints` as a list | pending |
 | B10 | [T9](#t9) pre-emption + card-path backoff + unavailable screen | pending |
 | B11 | [T5b](#t5b) durable event queue | pending |
 | B12 | [T8](#t8) server half (attendance intake + journal) | pending |
 | B13 | [T8](#t8) device half (IN/OUT flow) | pending |
-| B14 | [T13](#t13) + [T14](#t14) + [T15](#t15) + [T18](#t18) | pending |
+| B14 | [T13](#t13) + [T14](#t14) + [T15](#t15) | pending |
 
 ### B0 device checklist
 
@@ -635,7 +647,7 @@ ported web UI is behaviourally unchanged:
    screen, then idle; no retry loop, no relay pulse.
 3. **Unregistered card** — unknown card → brief failure only, with **no** camera
    preview or auth attempt.
-4. **Session timeout / demo mode** — with `REQUIRE_CARD_TO_START_SESSION=False`, a tap starts
+4. **Session timeout / face-only mode** — with `DEVICE_MODE = "face_only"`, a tap starts
    a face-only session that retries on cadence and falls back to idle after
    `AUTH_SESSION_TIMEOUT_SEC`.
 5. **Init mode + provisioning** — "Init Mode" overlay + camera; a valid QR binds

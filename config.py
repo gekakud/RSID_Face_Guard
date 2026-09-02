@@ -164,7 +164,7 @@ STORAGE_CHECK_INTERVAL_SEC = 300
 # =====================================================
 
 # How often to sync with server (seconds)
-DB_SYNC_INTERVAL_SEC = 600   # 10 minutes
+DB_SYNC_INTERVAL_SEC = 60   # 1 minutes
 
 # Remote user/faceprint sync now reuses the dashboard server this device is
 # bound to (provisioning/identity.py's DeviceIdentity.users_url), authenticated
@@ -187,7 +187,7 @@ DEVICE_IDENTITY_FILE = "device_identity.json"
 
 # How often a bound device reports its status. The server marks a device
 # offline after its own (longer) timeout, so one missed beat won't flap it.
-HEARTBEAT_INTERVAL_SEC = 30
+HEARTBEAT_INTERVAL_SEC = 10
 
 # Reported to the dashboard as app_version.
 APP_VERSION = "face-guard-0.1.0"
