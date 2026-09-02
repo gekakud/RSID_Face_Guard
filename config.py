@@ -26,15 +26,47 @@ CARD_READER_BACKEND = "gwiot_hid"
 # it directly -- derived from CARD_READER_BACKEND, do not set independently.
 SIMULATE_CARD_READER = CARD_READER_BACKEND == "simulated"
 
+# =====================================================
+# Device Operating Mode (SRS section 4)
+# =====================================================
+
+# Per-door operating mode. FR-MODE-01: the server provisions this per door and
+# returns it in the registration response; this value is only the install-time
+# fallback used until a server value is present (server plumbing lands with T4).
+#
+#   "card_only"     -> valid card opens the relay immediately; no face step,
+#                      no session, no camera (FR-MODE-03).
+#   "card_and_face" -> valid card starts a session and verifies the live face
+#                      1:1 against that cardholder (FR-MODE-04). Production default.
+#   "time_registry" -> IN/OUT attendance journalling, no relay (FR-MODE-06..11).
+#                      Not implemented yet (T8).
+DEVICE_MODE = "card_and_face"
+
+# Non-production demo only (FR-MODE-05): a face-only (1:N) session triggered by
+# a screen tap. NOT one of the three door modes, and "shall not be enabled at a
+# door that has a card reader" -- pair it with CARD_READER_BACKEND="simulated",
+# otherwise the reader's keystrokes have no owner.
+DEMO_FACE_ONLY = False
+
+
+def mode_uses_card_reader() -> bool:
+    """True when the resolved mode is driven by card taps (FR-MODE-02).
+
+    All three door modes need the reader; only the face-only demo does not.
+    """
+    return not DEMO_FACE_ONLY
+
+
 # Set True on RPi5 with the small 720x720 touch screen
 RUN_ON_REAL_SCREEN = True
 
-# Enable card reader monitoring (auto-authenticate when a card is tapped)
-REQUIRE_CARD_TO_START_SESSION = True
+# DEPRECATED (D4/T4): superseded by DEVICE_MODE / DEMO_FACE_ONLY above. Derived
+# so straggling references keep working; do not set it independently.
+REQUIRE_CARD_TO_START_SESSION = not DEMO_FACE_ONLY
 
 # Session-based authentication: the camera preview stays OFF while idle and
-# only turns on for an active auth "session" -- triggered by a screen
-# tap/click (REQUIRE_CARD_TO_START_SESSION=False) or a valid card tap (REQUIRE_CARD_TO_START_SESSION=True).
+# only turns on for an active auth "session" -- triggered by a valid card tap
+# (the three door modes) or a screen tap (DEMO_FACE_ONLY).
 # During a session, a face-match attempt is retried every AUTH_RETRY_INTERVAL_SEC
 # until either a match succeeds or AUTH_SESSION_TIMEOUT_SEC elapses, at which
 # point the preview is paused and the UI returns silently to idle.

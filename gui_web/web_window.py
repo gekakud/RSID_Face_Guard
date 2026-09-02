@@ -3,7 +3,7 @@ Web-based main window for RealSense ID Host Mode.
 
 Session-based flow: the camera preview is OFF while idle and only turns on
 for a bounded auth "session" -- triggered by a tap anywhere on the page
-(REQUIRE_CARD_TO_START_SESSION=False) or a valid card tap (REQUIRE_CARD_TO_START_SESSION=True).
+(DEMO_FACE_ONLY) or a valid card tap (the three door modes).
 During a session, face-match is retried every AUTH_RETRY_INTERVAL_SEC until
 either a match succeeds or AUTH_SESSION_TIMEOUT_SEC elapses, at which point
 the preview stops and the UI silently returns to its resting screensaver.
@@ -422,7 +422,7 @@ class GUIWeb(QMainWindow):
         log.info("Loading web UI: %s", url)
         self.view.load(QUrl(url))
 
-        if config.REQUIRE_CARD_TO_START_SESSION:
+        if config.mode_uses_card_reader():
             self.host_service.start_card_monitoring(
                 on_card_detected=lambda cid: self._bridge.card_detected.emit(cid),
                 on_card_rejected=lambda cid: self._bridge.card_rejected.emit(cid),
@@ -630,7 +630,7 @@ class GUIWeb(QMainWindow):
         self._page_ready = True
         self.view.page().runJavaScript(BRIDGE_SETUP_JS)
         self.view.page().runJavaScript(STATUS_OVERLAY_SETUP_JS)
-        hint = "Tap your card to enter" if config.REQUIRE_CARD_TO_START_SESSION else "Tap the display to enter"
+        hint = "Tap the display to enter" if config.DEMO_FACE_ONLY else "Tap your card to enter"
         self.device_ui.set_hint_text(hint)
         # UI rests on its native screensaver; the user wakes it by tapping
         # (no-card mode) or the card monitor detects a registered card

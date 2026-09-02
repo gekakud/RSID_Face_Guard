@@ -82,6 +82,10 @@ class SessionController:
         self._match_shown = False
         self._welcome_handles = []
 
+        # card_only: set while a pulse + result hold is in flight, so the reader
+        # stays suppressed until the hold ends (FR-CARD-04).
+        self._card_only_busy = False
+
         self._init_mode_active = False
         self._init_timer_handle = None
         self._qr_scan_handle = None
@@ -105,12 +109,86 @@ class SessionController:
 
     def on_user_tapped(self) -> None:
         """Screen tap: wakes a session only in the demo face-only config."""
-        if not config.REQUIRE_CARD_TO_START_SESSION and not self._init_mode_active:
+        if getattr(config, "DEMO_FACE_ONLY", False) and not self._init_mode_active:
             self.start_session()
 
     def on_card_detected(self, card_id) -> None:
         """A registered card was tapped (monitor already filtered unknowns)."""
+        if getattr(config, "DEVICE_MODE", "card_and_face") == "card_only":
+            self._handle_card_only(card_id)
+            return
         self.start_session(card_id=card_id)
+
+    # --- card_only mode (FR-MODE-03) ----------------------------------- #
+
+    def _handle_card_only(self, card_id) -> None:
+        """Valid card -> open the door immediately: no session, no camera, no
+        biometric call. Path: CardReader -> here -> Access Output.
+
+        The monitor already established the card is *present* in the local DB;
+        'active' is checked here because card_only skips the biometric stage
+        that normally enforces it (BR-01, FR-DATA-07).
+        """
+        if self._session_active or self._init_mode_active or not self._is_page_ready():
+            return
+
+        holder = self._host.resolve_cardholder(card_id)
+        if holder is None:
+            # Raced with a sync that dropped the user: treat as unregistered.
+            events.emit(EventType.ACCESS_DENIED, method="card",
+                        reason="card_unregistered")
+            self._deny_card_only()
+            return
+        if not holder.get("active", True):
+            events.emit(EventType.ACCESS_DENIED, method="card",
+                        user_id=holder.get("user_id"), reason="user_inactive")
+            self._deny_card_only()
+            return
+
+        # Hold the reader off for the whole pulse + result hold so one physical
+        # tap cannot queue a second actuation (BR-04).
+        self._host.mark_card_session_active()
+        self._card_only_busy = True
+        self._view.show_success(str(holder["name"]) if holder.get("name") else None)
+        # The pulse blocks ~3 s, so actuate on a worker and marshal the outcome
+        # back to the UI thread (NFR-01, FR-OUT-02).
+        self._run_in_thread(lambda: self._run_card_only_output(holder))
+
+    def _run_card_only_output(self, holder) -> None:
+        pulsed = self._open_access_point()
+        if pulsed:
+            log.info("Access granted (card_only): %s", holder.get("name"))
+        else:
+            log.error("Access output FAILED after valid card: %s", holder.get("name"))
+        self._sched.post_to_ui(lambda: self._on_card_only_complete(pulsed, holder))
+
+    def _on_card_only_complete(self, pulsed, holder) -> None:
+        if pulsed:
+            # Only a grant once the strike actually fired (FR-FACE-04, T2).
+            events.emit(EventType.ACCESS_GRANTED, user_id=holder.get("user_id"),
+                        method="card")
+            self._sched.call_later(config.WELCOME_DURATION_MS, self._end_card_only)
+            self._sched.call_later(config.WELCOME_DURATION_MS, self._view.show_idle)
+        else:
+            # Authorised but the door would not open: distinct from a denial
+            # (FR-OUT-06). Retract the welcome.
+            events.emit(EventType.ACCESS_OUTPUT_FAILED, user_id=holder.get("user_id"),
+                        method="card")
+            self._view.show_failure(hold_ms=config.FAIL_DURATION_MS)
+            self._sched.call_later(config.FAIL_DURATION_MS, self._end_card_only)
+            self._sched.call_later(config.FAIL_DURATION_MS, self._view.show_idle)
+
+    def _deny_card_only(self) -> None:
+        """Failure screen for a denied card, camera never started (FR-UI-04)."""
+        self._view.show_failure(hold_ms=config.FAIL_DURATION_MS)
+        self._sched.call_later(config.FAIL_DURATION_MS, self._view.show_idle)
+
+    def _end_card_only(self) -> None:
+        """Release the reader once the result hold is over (FR-CARD-04)."""
+        if not self._card_only_busy:
+            return
+        self._card_only_busy = False
+        self._host.mark_card_session_done()
 
     def on_card_rejected(self, card_id) -> None:
         """An unregistered card: brief failure, no camera/session (FR-UI-04)."""

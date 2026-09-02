@@ -47,8 +47,28 @@ class GwiotCardReader:
             device_path=device_path,
             device_name_contains=device_name_contains,
         )
+        self._grabbed = False
 
         log.info("Card reader connected: %s (%s)", self.device.name, self.device.path)
+        self._grab()
+
+    def _grab(self) -> None:
+        """Take exclusive ownership of the HID device (EVIOCGRAB).
+
+        The GWIOT reader emulates a keyboard: without a grab the OS keeps
+        delivering the badge digits (and the trailing Enter) to whatever window
+        has focus, so a card tap also types into the kiosk page. Non-fatal if it
+        fails -- reads still work, we just log it (FR-CARD-06).
+        """
+        try:
+            self.device.grab()
+            self._grabbed = True
+            log.info("Card reader input grabbed (exclusive)")
+        except Exception as e:
+            log.error(
+                "Could not grab card reader %s: %s -- badge keystrokes may leak "
+                "into the UI", self.device.path, e
+            )
 
     @staticmethod
     def _open_device(
@@ -119,6 +139,12 @@ class GwiotCardReader:
                 card_buffer = ""
 
     def close(self) -> None:
+        if self._grabbed:
+            try:
+                self.device.ungrab()
+            except Exception:
+                pass
+            self._grabbed = False
         self.device.close()
 
 # ====== Module-level singleton API (matches other card backends) ======

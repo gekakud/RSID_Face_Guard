@@ -86,7 +86,7 @@ def test_face_only_retries_until_match(make_controller, sched, view):
     host = FakeHost(result=(False, None, "no_match"))
     c = make_controller(
         host_service=host,
-        REQUIRE_CARD_TO_START_SESSION=False,
+        DEMO_FACE_ONLY=True,
         AUTH_RETRY_INTERVAL_SEC=1.0,
         AUTH_SESSION_TIMEOUT_SEC=30.0,
     )
@@ -109,7 +109,7 @@ def test_face_only_times_out_to_idle(make_controller, sched, view):
     host = FakeHost(result=(False, None, "no_match"))
     c = make_controller(
         host_service=host,
-        REQUIRE_CARD_TO_START_SESSION=False,
+        DEMO_FACE_ONLY=True,
         AUTH_RETRY_INTERVAL_SEC=5.0,
         AUTH_SESSION_TIMEOUT_SEC=10.0,
     )
@@ -122,7 +122,7 @@ def test_face_only_times_out_to_idle(make_controller, sched, view):
 
 
 def test_tap_ignored_in_card_mode(make_controller, host):
-    c = make_controller(REQUIRE_CARD_TO_START_SESSION=True)
+    c = make_controller(DEMO_FACE_ONLY=False)
     c.on_user_tapped()
     assert host.face_only_calls == 0
     assert c.session_active is False
@@ -180,7 +180,7 @@ def test_init_mode_times_out_to_idle(make_controller, sched, view, preview):
 
 
 def test_init_mode_tap_does_not_start_session(make_controller, host):
-    c = make_controller(REQUIRE_CARD_TO_START_SESSION=False)
+    c = make_controller(DEMO_FACE_ONLY=True)
     c.start_init_mode()
     c.on_user_tapped()
     assert c.session_active is False

@@ -159,6 +159,13 @@ class FakeHost:
         # most recent decision, which the controller emits (never name/card_id).
         self._user_id = user_id
         self.last_user_id = None
+        self.resolve_calls = []
+        # card_only lookup result; overridden per-test.
+        self.cardholder = {"user_id": user_id, "name": "Emma Stone", "active": True}
+
+    def resolve_cardholder(self, card_id):
+        self.resolve_calls.append(card_id)
+        return self.cardholder
 
     def authenticate_with_card_and_face(self, card_id):
         self.card_calls.append(card_id)

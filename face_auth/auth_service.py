@@ -214,6 +214,24 @@ class AuthService:
         for a card that could never succeed)."""
         return self.user_db.get_user(str(card_id)) is not None
 
+    def resolve_cardholder(self, card_id) -> Optional[dict]:
+        """Camera-free DB lookup for the card_only path (FR-MODE-03).
+
+        Returns {"user_id", "name", "active"} for a known card, or None when the
+        card is absent from the local DB. Deliberately separate from
+        card_is_registered(), which only tests presence: card_only skips the
+        biometric stage where the 'active' check normally lives, so the caller
+        must apply it itself (BR-01, FR-DATA-07).
+        """
+        user_info = self.user_db.get_user(str(card_id))
+        if not user_info:
+            return None
+        return {
+            "user_id": user_info.get("user_id"),
+            "name": user_info.get("name"),
+            "active": bool(user_info.get("active", True)),
+        }
+
     def authenticate_with_card_and_face(self, card_id: int) -> Tuple[bool, Optional[str], Optional[str]]:
         """Authenticate using a Wiegand card ID combined with a live face scan.
 
@@ -486,7 +504,7 @@ class AuthService:
         except Exception:
             pass
         try:
-            if config.REQUIRE_CARD_TO_START_SESSION:
+            if config.mode_uses_card_reader():
                 disconnect_card_reader()
                 close_wiegand_writer()
         except Exception:
