@@ -3,7 +3,7 @@ Web-based main window for RealSense ID Host Mode.
 
 Session-based flow: the camera preview is OFF while idle and only turns on
 for a bounded auth "session" -- triggered by a tap anywhere on the page
-(DEMO_FACE_ONLY) or a valid card tap (the three door modes).
+(face_only) or a valid card tap (the card modes).
 During a session, face-match is retried every AUTH_RETRY_INTERVAL_SEC until
 either a match succeeds or AUTH_SESSION_TIMEOUT_SEC elapses, at which point
 the preview stops and the UI silently returns to its resting screensaver.
@@ -14,10 +14,9 @@ Structure:
   * WebServer + CameraStreamer serve demo_ui and an MJPEG feed on 127.0.0.1
     (page loads over http:// so the <img> stream is same-origin).
   * DeviceUI  -> Python->JS wrapper over the page's window.deviceUI API.
-  * Bridge    -> JS->Python via QWebChannel (keypad code submissions, tap-to-wake).
-  * BRIDGE_SETUP_JS wires window.deviceUI.onSubmitCode -> pyBridge.codeSubmitted,
-    a document-wide tap listener -> pyBridge.userTapped, and installs the
-    camera <img> shim once the page has loaded.
+  * Bridge    -> JS->Python via QWebChannel (tap-to-wake).
+  * BRIDGE_SETUP_JS wires a document-wide tap listener -> pyBridge.userTapped,
+    and installs the camera <img> shim once the page has loaded.
 
 The session state machine itself lives in session/controller.py; this class is
 its view adapter (SessionView + Scheduler) plus Qt/platform glue. The shared
@@ -119,19 +118,14 @@ BRIDGE_SETUP_JS = """
       .observe(err, { attributes: true, attributeFilter: ['hidden'] });
   }
 
-  // 2. Wire the QWebChannel bridge (JS -> Python) for keypad submissions and
-  //    tap-to-wake (no-card mode -- a tap anywhere while resting starts an
-  //    auth session; ignored while a session/keypad/result is already showing).
+  // 2. Wire the QWebChannel bridge (JS -> Python) for tap-to-wake (face_only
+  //    mode -- a tap anywhere while resting starts an auth session; ignored
+  //    while a session/result is already showing).
   var script = document.createElement('script');
   script.src = 'qrc:///qtwebchannel/qwebchannel.js';
   script.onload = function() {
     new QWebChannel(qt.webChannelTransport, function(channel) {
       window.pyBridge = channel.objects.pyBridge;
-      if (window.deviceUI) {
-        window.deviceUI.onSubmitCode = function(code) {
-          window.pyBridge.codeSubmitted(code);
-        };
-      }
       document.addEventListener('click', function() {
         var state = document.body.dataset.state;
         if (state === 'screensaver' || state === 'screensaver-basic') {
@@ -204,23 +198,11 @@ class DeviceUI:
     def camera(self):
         self._call("camera")
 
-    def code_entry(self):
-        self._call("codeEntry")
-
-    def code_approved(self, hold=None):
-        self._call("codeApproved", hold)
-
-    def code_rejected(self, hold=None):
-        self._call("codeRejected", hold)
-
-    def set_expected_code(self, code):
-        self._call("setExpectedCode", str(code))
-
     def set_hint_text(self, text):
         self._call("setHintText", text)
 
 class Bridge(QObject):
-    """JS -> Python. Keypad code submissions and tap-to-wake from the web UI."""
+    """JS -> Python. Tap-to-wake from the web UI."""
 
     # Note: named differently from the userTapped() slot below (JS calls
     # pyBridge.userTapped()) to avoid the slot definition shadowing this
@@ -230,14 +212,6 @@ class Bridge(QObject):
     def __init__(self, device_ui: DeviceUI):
         super().__init__()
         self._device_ui = device_ui
-
-    @Slot(str)
-    def codeSubmitted(self, code):
-        log.info("Keypad code submitted: %r", code)
-        if code == "1234":
-            self._device_ui.code_approved(hold=4000)
-        else:
-            self._device_ui.code_rejected(hold=3000)
 
     @Slot()
     def userTapped(self):
@@ -630,7 +604,7 @@ class GUIWeb(QMainWindow):
         self._page_ready = True
         self.view.page().runJavaScript(BRIDGE_SETUP_JS)
         self.view.page().runJavaScript(STATUS_OVERLAY_SETUP_JS)
-        hint = "Tap the display to enter" if config.DEMO_FACE_ONLY else "Tap your card to enter"
+        hint = "Tap the display to enter" if config.mode_uses_tap_to_wake() else "Tap your card to enter"
         self.device_ui.set_hint_text(hint)
         # UI rests on its native screensaver; the user wakes it by tapping
         # (no-card mode) or the card monitor detects a registered card

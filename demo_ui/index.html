@@ -18,16 +18,6 @@
   <main class="screen">
     <video id="camera" class="camera" autoplay playsinline muted></video>
 
-    <!-- Opaque backdrop for the code-entry route. Stays fully opaque across every
-         code-flow state (keypad · code result), so the live camera never bleeds
-         through while those screens cross-fade into one another. -->
-    <div class="code-backdrop" aria-hidden="true"></div>
-
-    <!-- Camera-state action: opens the code-entry screen. Commented out — the
-         current flow has no PIN fallback, but kept for possible future states.
-    <button id="code-btn" class="code-btn" type="button">Enter a code</button>
-    -->
-
     <!-- Semi-transparent purple overlay (shown only on recognition result) -->
     <div id="overlay" class="overlay" aria-live="polite">
       <div class="overlay__content">
@@ -87,26 +77,6 @@
       </div>
     </div>
 
-    <!-- Code entry — number keypad + typed-code display -->
-    <div id="keypad" class="keypad-screen">
-      <div id="code-display" class="keypad__display" data-empty="true" aria-live="polite"></div>
-      <div id="keypad-grid" class="keypad__grid">
-        <button class="keypad__key" data-key="1" type="button">1</button>
-        <button class="keypad__key" data-key="2" type="button">2</button>
-        <button class="keypad__key" data-key="3" type="button">3</button>
-        <button class="keypad__key" data-key="4" type="button">4</button>
-        <button class="keypad__key" data-key="5" type="button">5</button>
-        <button class="keypad__key" data-key="6" type="button">6</button>
-        <button class="keypad__key" data-key="7" type="button">7</button>
-        <button class="keypad__key" data-key="8" type="button">8</button>
-        <button class="keypad__key" data-key="9" type="button">9</button>
-        <button class="keypad__key keypad__key--action" data-key="back" type="button" aria-label="Delete">&#9003;</button>
-        <button class="keypad__key" data-key="0" type="button">0</button>
-        <button class="keypad__key keypad__key--ok" data-key="ok" type="button" aria-label="Confirm">OK</button>
-      </div>
-      <button id="keypad-back" class="keypad__back" type="button" aria-label="Back">&larr;</button>
-    </div>
-
     <!-- Shown if the camera cannot start -->
     <div id="camera-error" class="camera-error" hidden>
       <div class="camera-error__inner">
@@ -122,10 +92,9 @@
     <button data-cmd="screensaver">Idle · Attendance</button>
     <button data-cmd="screensaver-basic">Idle · No Attendance</button>
     <button data-cmd="idle">Camera</button>
-    <button data-cmd="keypad">Code</button>
     <button data-cmd="success">Success</button>
     <button data-cmd="failed">Failed</button>
-    <span class="devpanel__hint">keys 0 · 9 · 1 · c · 2 · 3 &nbsp;|&nbsp; A attendance · H hide</span>
+    <span class="devpanel__hint">keys 0 · 9 · 1 · 2 · 3 &nbsp;|&nbsp; A attendance · H hide</span>
   </aside>
 
   <script src="app.js?v=ambient12"></script>

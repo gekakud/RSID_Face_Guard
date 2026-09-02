@@ -115,8 +115,8 @@ def test_card_and_face_mode_still_starts_a_session(make_controller, view, host):
     assert "camera" in view.names()
 
 
-def test_tap_ignored_when_not_demo_face_only(make_controller, host):
-    ctl = make_controller(DEVICE_MODE="card_only", DEMO_FACE_ONLY=False)
+def test_tap_ignored_when_mode_is_not_face_only(make_controller, host):
+    ctl = make_controller(DEVICE_MODE="card_only")
 
     ctl.on_user_tapped()
 

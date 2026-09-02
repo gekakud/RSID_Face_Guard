@@ -58,27 +58,6 @@ html, body {
   background: #05040a;
 }
 
-/* -------------------------------------------------- Code-route backdrop
-   A solid field that sits just above the camera for the whole code-entry flow
-   (keypad → code result). Its opacity is 1 in every code-flow state, so it
-   never re-transitions when those screens swap — the camera stays fully hidden
-   through each cross-fade, instead of flickering through the momentary gap. It
-   only fades when entering from / returning to the live-camera screen. */
-.code-backdrop {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgb(var(--purple-dark)) 0%, rgb(var(--purple-light)) 100%);
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity var(--transition), visibility var(--transition);
-}
-body[data-state="keypad"] .code-backdrop,
-body[data-state="code-success"] .code-backdrop,
-body[data-state="code-failed"]  .code-backdrop {
-  opacity: 1;
-  visibility: visible;
-}
-
 /* -------------------------------------------------- Overlay */
 .overlay {
   position: absolute;
@@ -108,27 +87,15 @@ body[data-state="code-failed"]  .code-backdrop {
 
 /* Show overlay on any result state */
 body[data-state="success"] .overlay,
-body[data-state="failed"]  .overlay,
-body[data-state="code-success"] .overlay,
-body[data-state="code-failed"]  .overlay {
+body[data-state="failed"]  .overlay {
   opacity: 1;
   visibility: visible;
-}
-
-/* Code-entry results reuse the recognition overlay, but the person came in by
-   code — there is no camera match to show behind it. Make the gradient fully
-   opaque so it reads as a solid result screen, not a live-camera overlay. */
-body[data-state="code-success"] .overlay,
-body[data-state="code-failed"]  .overlay {
-  --overlay-alpha-top: 1;
-  --overlay-alpha-bottom: 1;
 }
 
 /* Success keeps the violet gradient (set on the base .overlay).
    Failed swaps only the two gradient colors to muted red — same gradient
    direction, same opacity, same transparency, so the camera still reads through. */
-body[data-state="failed"] .overlay,
-body[data-state="code-failed"] .overlay {
+body[data-state="failed"] .overlay {
   --grad-top: var(--rose-dark);
   --grad-bottom: var(--rose-light);
 }
@@ -145,9 +112,7 @@ body[data-state="code-failed"] .overlay {
 }
 
 body[data-state="success"] .overlay__content,
-body[data-state="failed"]  .overlay__content,
-body[data-state="code-success"] .overlay__content,
-body[data-state="code-failed"]  .overlay__content {
+body[data-state="failed"]  .overlay__content {
   transform: translateY(0) scale(1);
   opacity: 1;
 }
@@ -200,33 +165,25 @@ body[data-state="code-failed"]  .overlay__content {
 }
 
 /* Icon 01 · Success — left dot → right dot → smile is drawn L→R
-   (same sequence and timing as the failed state).
-   The code-approved screen shares this exact reveal. */
-body[data-state="success"] .dot--left,
-body[data-state="code-success"] .dot--left {
+   (same sequence and timing as the failed state). */
+body[data-state="success"] .dot--left {
   animation: itsu-dot-in 420ms var(--ease) 0ms both;
 }
-body[data-state="success"] .dot--right,
-body[data-state="code-success"] .dot--right {
+body[data-state="success"] .dot--right {
   animation: itsu-dot-in 450ms var(--ease) 420ms both;
 }
-body[data-state="success"] .smile-draw,
-body[data-state="code-success"] .smile-draw {
+body[data-state="success"] .smile-draw {
   animation: itsu-mouth-draw 1050ms var(--ease) 900ms both;
 }
 
-/* Icon 02 · Failed — left dot → right dot → frown is drawn L→R.
-   The wrong-code screen shares this exact reveal. */
-body[data-state="failed"] .dot--left,
-body[data-state="code-failed"] .dot--left {
+/* Icon 02 · Failed — left dot → right dot → frown is drawn L→R. */
+body[data-state="failed"] .dot--left {
   animation: itsu-dot-in 420ms var(--ease) 0ms both;
 }
-body[data-state="failed"] .dot--right,
-body[data-state="code-failed"] .dot--right {
+body[data-state="failed"] .dot--right {
   animation: itsu-dot-in 450ms var(--ease) 420ms both;
 }
-body[data-state="failed"] .frown-draw,
-body[data-state="code-failed"] .frown-draw {
+body[data-state="failed"] .frown-draw {
   animation: itsu-mouth-draw 1050ms var(--ease) 900ms both;
 }
 
@@ -273,8 +230,7 @@ body[data-state="code-failed"] .frown-draw {
    (No override: both use the base .message__primary style.) */
 
 /* Failed state: the message reads as an alert — deemphasise the hint */
-body[data-state="failed"] .message__secondary,
-body[data-state="code-failed"] .message__secondary { color: rgba(255, 255, 255, 0.72); }
+body[data-state="failed"] .message__secondary { color: rgba(255, 255, 255, 0.72); }
 
 /* -------------------------------------------------- Screensaver · Ambient Depth
    Resting state, composed for the round display. A centred lockup — brand smile,
@@ -556,143 +512,6 @@ body[data-state="screensaver-basic"] .attendance { display: none; }
   transition: color 220ms var(--ease);
 }
 .attendance__opt.is-active { color: #fff; }
-
-/* -------------------------------------------------- Code button (camera state)
-   A discreet on-screen action shown only while the camera is live.
-   Commented out — no PIN fallback in the current flow (the button was
-   removed from index.html); kept here in case a future system state needs it.
-.code-btn {
-  position: absolute;
-  left: 50%;
-  bottom: clamp(28px, 8vmin, 72px);
-  transform: translateX(-50%);
-  z-index: 20;
-  font-family: inherit;
-  font-weight: 600;
-  font-size: clamp(15px, 3.4vmin, 20px);
-  letter-spacing: 0.02em;
-  color: #fff;
-  background: rgba(20, 15, 38, 0.55);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 999px;
-  padding: clamp(12px, 2.4vmin, 18px) clamp(26px, 6vmin, 44px);
-  cursor: pointer;
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition: opacity var(--transition), visibility var(--transition),
-    background 160ms ease, transform 120ms ease;
-}
-.code-btn:hover { background: rgba(30, 22, 54, 0.7); }
-.code-btn:active { transform: translateX(-50%) scale(0.97); }
-body[data-state="idle"] .code-btn {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-}
-*/
-
-/* -------------------------------------------------- Code entry (keypad) */
-.keypad-screen {
-  position: absolute;
-  inset: 0;
-  z-index: 15;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: clamp(20px, 5vmin, 40px);
-  padding: 8vmin clamp(20px, 6vmin, 48px);
-  /* Same violet gradient as the result (success) screen: deep #292356 fading
-     to an airy violet. */
-  background: linear-gradient(180deg, rgb(var(--purple-dark)) 0%, rgb(var(--purple-light)) 100%);
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transition: opacity var(--transition), visibility var(--transition);
-}
-body[data-state="keypad"] .keypad-screen {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-}
-
-/* Centred beneath the keypad, set a little apart from the number grid. */
-.keypad__back {
-  margin-top: clamp(12px, 4vmin, 28px);
-  width: clamp(52px, 13vmin, 72px);
-  height: clamp(52px, 13vmin, 72px);
-  font-family: inherit;
-  font-size: clamp(22px, 5.5vmin, 30px);
-  color: #fff;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 50%;
-  cursor: pointer;
-  transition: background 160ms ease;
-}
-.keypad__back:hover { background: rgba(255, 255, 255, 0.14); }
-
-/* Display area — shows the code as it is typed */
-.keypad__display {
-  min-height: clamp(48px, 12vmin, 72px);
-  min-width: clamp(220px, 60vw, 340px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 clamp(16px, 4vmin, 28px);
-  font-weight: 600;
-  font-size: clamp(34px, 9vmin, 56px);
-  letter-spacing: 0.28em;
-  text-indent: 0.28em; /* balance the trailing letter-spacing */
-  color: #fff;
-  border-bottom: 2px solid rgba(255, 255, 255, 0.18);
-  font-variant-numeric: tabular-nums;
-}
-.keypad__display[data-empty="true"] {
-  letter-spacing: normal;
-  text-indent: 0;
-}
-.keypad__display[data-empty="true"]::before {
-  content: "Enter code";
-  font-weight: 400;
-  font-size: clamp(16px, 4vmin, 22px);
-  letter-spacing: 0.02em;
-  color: rgba(255, 255, 255, 0.35);
-}
-
-.keypad__grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: clamp(12px, 3vmin, 20px);
-  width: min(88vw, 340px);
-}
-.keypad__key {
-  font-family: inherit;
-  font-weight: 500;
-  font-size: clamp(24px, 6vmin, 34px);
-  color: #fff;
-  aspect-ratio: 1;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 50%;
-  cursor: pointer;
-  transition: background 140ms ease, transform 100ms ease;
-}
-.keypad__key:hover { background: rgb(var(--purple-light) / 0.9); border-color: transparent; }
-.keypad__key:active { transform: scale(0.94); }
-.keypad__key--action { font-size: clamp(20px, 5vmin, 28px); }
-.keypad__key--ok {
-  font-size: clamp(18px, 4.5vmin, 24px);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: rgb(var(--purple-dark));
-  background: #fff;
-  border-color: transparent;
-}
-.keypad__key--ok:hover { color: rgb(var(--purple-dark)); background: rgba(255, 255, 255, 0.85); }
 
 /* -------------------------------------------------- Camera error */
 .camera-error {

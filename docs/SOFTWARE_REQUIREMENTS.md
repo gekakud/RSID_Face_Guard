@@ -217,13 +217,13 @@ nicety, not a requirement; noted in the connectivity table above.*
 
 ## 4. Device Operating Modes
 
-The terminal supports three mutually exclusive **door modes**, plus one
-non-production demo configuration ([FR-MODE-05](#fr-mode-05)).
+The terminal supports four mutually exclusive **device modes**.
 
 | Mode | Trigger | Face step | Relay | Event |
 |---|---|---|---|---|
 | `card_only` | Valid card tap | **skipped** | opens | `access_granted` |
 | `card_and_face` | Valid card tap | 1:1 verify against cardholder | opens on match | `access_granted` / `access_denied` |
+| `face_only` | Screen tap | 1:N identify | opens on match | `access_granted` / `access_denied` |
 | `time_registry` | End user selects IN or OUT, then taps card | per [§4.3](#43-time-registry-mode-new) face policy | **no door output** | `attendance_event` |
 
 ### 4.1 Mode selection and common rules
@@ -236,7 +236,7 @@ work ([§12.3](#123-out-of-scope-for-this-release)). *(Assumption [A1](#a1).)*
 <a id="fr-mode-02"></a>**FR-MODE-02** In every mode, a card that is not present in the local door DB
 shall be rejected **before the camera is started** ([BR-02](#br-02)).
 
-### 4.2 Card modes
+### 4.2 Card and face modes
 
 <a id="fr-mode-03"></a>**FR-MODE-03 `card_only`** — on a valid card the terminal shall open the relay
 immediately, with no face step. The decision path is
@@ -247,9 +247,12 @@ Service is not involved and no session or camera preview is started. **[NEW]**
 session and verify the live face 1:1 against that cardholder's stored
 faceprints only. This is the default production mode.
 
-<a id="fr-mode-05"></a>**FR-MODE-05** A face-only (1:N) trigger by screen tap shall exist as a
-non-production/demo configuration only, and shall not be enabled at a door
-that has a card reader. It is not one of the three door modes above.
+<a id="fr-mode-05"></a>**FR-MODE-05 `face_only`** — a screen tap shall start a face-only
+(1:N) session that identifies the presented face against all active enrolled
+users, opening the relay on a match. This mode is intended for doors with **no
+card reader fitted**; the card reader is neither initialised nor used.
+*(Revised rev 1.5: promoted from a demo-only configuration to a fourth
+first-class device mode.)*
 
 ### 4.3 Time-registry mode **[NEW]**
 
@@ -358,11 +361,11 @@ started only for the duration of a session, to avoid a permanently streaming
 camera and its associated restart stutter.
 
 <a id="fr-sess-03"></a>**FR-SESS-03** A session shall be started by a valid card tap (card modes) or
-a screen tap (demo face-only mode), and never while a session or init mode is
+a screen tap (`face_only`), and never while a session or init mode is
 already active. A **different** valid card presented during a result-screen
 hold shall pre-empt the result and start a new session ([BR-04](#br-04)).
 
-<a id="fr-sess-04"></a>**FR-SESS-04** During a **face-only (demo) session** the service shall retry
+<a id="fr-sess-04"></a>**FR-SESS-04** During a **`face_only` session** the service shall retry
 face matching every `AUTH_RETRY_INTERVAL_SEC` until a match succeeds or
 `AUTH_SESSION_TIMEOUT_SEC` elapses. In card-triggered modes the session ends
 on the **first** conclusive mismatch, per [BR-05](#br-05); retrying is not performed
@@ -826,12 +829,12 @@ not led to believe their credential was rejected.
 
 ### 7.3 Input and presentation
 
-<a id="fr-ui-08"></a>**FR-UI-08** A tap on the idle screen shall wake the terminal only in the
-demo face-only configuration; in card modes the card tap is the sole trigger.
+<a id="fr-ui-08"></a>**FR-UI-08** A tap on the idle screen shall wake the terminal only in
+`face_only` mode; in the card modes the card tap is the sole trigger.
 
-<a id="fr-ui-09"></a>**FR-UI-09** The PIN/keypad code-entry path present in the UI assets is a
-demonstration feature. It shall have **no authorisation effect** and shall be
-disabled in production builds.
+<a id="fr-ui-09"></a>**FR-UI-09** The PIN/keypad code-entry path shall not exist in the
+product. *(Resolved rev 1.5: the keypad markup, styles, JS state machine and
+the `Bridge.codeSubmitted()` slot were removed outright — see [D6](#d6).)*
 
 <a id="fr-ui-10"></a>**FR-UI-10** *DEPRECATED (rev 1.2) — branding/localisation being
 designer-supplied assets is a scope note ([§1.2](#12-scope)), not a testable requirement.*
@@ -1250,7 +1253,7 @@ list.
 | <a id="d3"></a>D3 | [FR-MODE-06](#fr-mode-06)..[FR-MODE-11](#fr-mode-11) time registry | Not implemented | **Implement** (T8) |
 | <a id="d4"></a>D4 | [FR-MODE-01](#fr-mode-01) server-provisioned mode | Only the boolean `REQUIRE_CARD_TO_START_SESSION` (`config.py:33`) exists. `device_mode` / `face_policy` have **zero hits** across `config.py`, `provisioning/`, `session/` and `server/` | **Implement** (T4) |
 | <a id="d5"></a>D5 | [FR-MODE-10](#fr-mode-10) durable attendance queue | Events are in-memory only, capped at 200 | **Implement** (T5) |
-| <a id="d6"></a>D6 | [FR-UI-09](#fr-ui-09) PIN path disabled | Demo keypad path present in UI assets, with the code hardcoded in **two** places: `demo_ui/app.js:103` and `gui_web/web_window.py:235` (also documented in `demo_ui/README.md`). No authorisation effect today, but no production flag either | Disable for production (T18) |
+| <a id="d6"></a>D6 | [FR-UI-09](#fr-ui-09) PIN path disabled | ✅ **Resolved (rev 1.5)** — keypad markup, styles, JS state machine and `Bridge.codeSubmitted()` removed outright; no `keypad`/`codeApproved`/`setExpectedCode` references remain in `demo_ui/` or `gui_web/`. The hardcoded `"1234"` is gone from both former sites | Closed (T18) |
 | <a id="d7"></a>D7 | [FR-API-12](#fr-api-12) mode/interval refresh | Heartbeat response is not consumed for config | Deferred — moved to future work ([§12.3](#123-out-of-scope-for-this-release)), rev 1.2 |
 | <a id="d8"></a>D8 | [FR-HB-05](#fr-hb-05) acknowledge by `event_id` | `events.ack(count)` pops by position, which can discard undelivered events if the ring evicts during an in-flight beat | ✅ **Resolved (B4/T5a)** — `ack(event_ids)` removes by id |
 | <a id="d9"></a>D9 | [FR-DB-01](#fr-db-01), [FR-DATA-01](#fr-data-01) record schema | `faceprints` is a single object, not a list — `db/remote_provider.py:29-32` `_is_valid_faceprints` requires a `dict` — so a user with zero or several faceprints is unrepresentable. (`user_id` and `active` — the rest of this deviation — are now implemented device- and server-side) | **Implement (device + server)** (T3b) |
@@ -1290,4 +1293,5 @@ list.
 | 1.2 | 2026-08-26 | requirements review | Stakeholder rulings U1–U10 (face policy confirmed, durable attendance mandatory, token-replacement semantics, schema-discard migration, vendor threshold note, relay default, server-side replay protection, `unbound` = dev-only); simplification pass: FR-STATE-06/08/10/12, FR-UI-02, FR-UI-10, FR-API-12 deprecated; rationale prose trimmed |
 | 1.3 | 2026-08-26 | code reconciliation | Static audit of the working tree. Added §5.5 and §5.6 service diagrams; D1–D10 confirmed with evidence and mapped to tasks; new deviations D11–D20 recorded. Companion [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) holds the per-requirement reconciliation table and the ordered task list T1–T18 |
 | 1.4 | 2026-08-31 | code reconciliation | **Qt-widgets front-end removed from the repository**: the harness dropped from §1.2 scope and the §11 traceability table, NFR-19 rejustified on the UI-agnostic `session/controller.py`, D20 closed. §5.1 and §11 now name `session/`; §9.4 gained seven shipped-but-undocumented parameters. Post-B0–B6 re-verification: D1, D11, D13, D14, D18 marked ✅ Resolved with evidence; D12 re-targeted (not delivered by T6); D4, D6, D9, D10, D17 evidence refreshed; new D21 records the in-process revocation reset vs. FR-HB-10's self-restart |
+| 1.5 | 2026-09-02 | design change | **`face_only` promoted to a fourth first-class device mode** (§4, FR-MODE-05): `DEVICE_MODE` now selects `card_only` / `card_and_face` / `face_only` / `time_registry`, and the `DEMO_FACE_ONLY` flag plus the derived `REQUIRE_CARD_TO_START_SESSION` were deleted. FR-UI-08, FR-SESS-03 and FR-SESS-04 reworded off "demo face-only". **Keypad/PIN path removed outright** — D6 closed, T18 delivered, FR-UI-09 restated as "shall not exist" |
 

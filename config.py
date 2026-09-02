@@ -38,40 +38,45 @@ SIMULATE_CARD_READER = CARD_READER_BACKEND == "simulated"
 #                      no session, no camera (FR-MODE-03).
 #   "card_and_face" -> valid card starts a session and verifies the live face
 #                      1:1 against that cardholder (FR-MODE-04). Production default.
+#   "face_only"     -> a screen tap starts a face-only (1:N) session; no card
+#                      reader is present or used (FR-MODE-05).
 #   "time_registry" -> IN/OUT attendance journalling, no relay (FR-MODE-06..11).
 #                      Not implemented yet (T8).
-DEVICE_MODE = "card_and_face"
+DEVICE_MODE = "face_only"
 
-# Non-production demo only (FR-MODE-05): a face-only (1:N) session triggered by
-# a screen tap. NOT one of the three door modes, and "shall not be enabled at a
-# door that has a card reader" -- pair it with CARD_READER_BACKEND="simulated",
-# otherwise the reader's keystrokes have no owner.
-DEMO_FACE_ONLY = False
+DEVICE_MODES = ("card_only", "card_and_face", "face_only", "time_registry")
+
+if DEVICE_MODE not in DEVICE_MODES:
+    # Fail loudly: a typo must not silently fall through to a weaker mode.
+    raise ValueError(
+        f"Invalid DEVICE_MODE {DEVICE_MODE!r}; expected one of {DEVICE_MODES}"
+    )
 
 
 def mode_uses_card_reader() -> bool:
-    """True when the resolved mode is driven by card taps (FR-MODE-02).
+    """True when the mode is driven by card taps (FR-MODE-02).
 
-    All three door modes need the reader; only the face-only demo does not.
+    Every mode except face_only needs the reader.
     """
-    return not DEMO_FACE_ONLY
+    return DEVICE_MODE != "face_only"
+
+
+def mode_uses_tap_to_wake() -> bool:
+    """True when a screen tap starts a session (face_only only, FR-MODE-05)."""
+    return DEVICE_MODE == "face_only"
 
 
 # Set True on RPi5 with the small 720x720 touch screen
 RUN_ON_REAL_SCREEN = True
 
-# DEPRECATED (D4/T4): superseded by DEVICE_MODE / DEMO_FACE_ONLY above. Derived
-# so straggling references keep working; do not set it independently.
-REQUIRE_CARD_TO_START_SESSION = not DEMO_FACE_ONLY
-
 # Session-based authentication: the camera preview stays OFF while idle and
 # only turns on for an active auth "session" -- triggered by a valid card tap
-# (the three door modes) or a screen tap (DEMO_FACE_ONLY).
+# (card modes) or a screen tap (face_only).
 # During a session, a face-match attempt is retried every AUTH_RETRY_INTERVAL_SEC
 # until either a match succeeds or AUTH_SESSION_TIMEOUT_SEC elapses, at which
 # point the preview is paused and the UI returns silently to idle.
 AUTH_RETRY_INTERVAL_SEC = 3.0
-AUTH_SESSION_TIMEOUT_SEC = 30.0
+AUTH_SESSION_TIMEOUT_SEC = 10.0
 
 # Preview lead-in: how long the live preview is shown before the FIRST face
 # match attempt takes the camera. Each attempt needs exclusive UVC access, so

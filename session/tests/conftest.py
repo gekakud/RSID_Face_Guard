@@ -257,6 +257,10 @@ def make_controller(sched, view, preview, host):
         # fire-immediately behaviour, NFR-03). Tests covering the lead-in pass
         # an explicit PREVIEW_LEAD_IN_MS.
         config_overrides.setdefault("PREVIEW_LEAD_IN_MS", 0)
+        # Pin the mode: the suite must not depend on whatever DEVICE_MODE the
+        # local config.py happens to be set to. card_only/face_only tests
+        # override this explicitly.
+        config_overrides.setdefault("DEVICE_MODE", "card_and_face")
         saved = {k: getattr(config, k) for k in config_overrides}
         for k, v in config_overrides.items():
             setattr(config, k, v)

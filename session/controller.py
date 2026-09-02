@@ -108,8 +108,8 @@ class SessionController:
     # --- entry points -------------------------------------------------- #
 
     def on_user_tapped(self) -> None:
-        """Screen tap: wakes a session only in the demo face-only config."""
-        if getattr(config, "DEMO_FACE_ONLY", False) and not self._init_mode_active:
+        """Screen tap: wakes a session only in face_only mode."""
+        if config.mode_uses_tap_to_wake() and not self._init_mode_active:
             self.start_session()
 
     def on_card_detected(self, card_id) -> None:

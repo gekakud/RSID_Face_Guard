@@ -89,20 +89,7 @@
     hint: document.getElementById("saver-hint"),
     companyLogo: document.getElementById("company-logo"),
     attendance: document.getElementById("attendance"),
-    // Camera-state code button (commented out in index.html -- kept here for
-    // possible future re-enable; getElementById returns null harmlessly).
-    // codeBtn: document.getElementById("code-btn"),
-    codeDisplay: document.getElementById("code-display"),
-    keypadGrid: document.getElementById("keypad-grid"),
-    keypadBack: document.getElementById("keypad-back"),
   };
-
-  /* Demo code for the built-in keypad flow. The real system should verify the
-     code itself and drive the result via deviceUI.codeApproved()/codeRejected();
-     override this default with deviceUI.setExpectedCode("…"). */
-  let expectedCode = "1234";
-  const MAX_CODE_LEN = 8;
-  let entered = "";
 
   /* ---------------------------------------------- State machine */
 
@@ -137,31 +124,6 @@
         els.primary.textContent = "";
         els.secondary.textContent = "";
         els.secondary.hidden = true;
-        break;
-      }
-      case "keypad": {
-        // Fresh code-entry screen.
-        setEntered("");
-        els.icon.innerHTML = "";
-        els.primary.textContent = "";
-        els.secondary.textContent = "";
-        els.secondary.hidden = true;
-        break;
-      }
-      case "code-success": {
-        // Same success visual, but entry was by code — the identity is unknown,
-        // so greet without a name.
-        els.icon.innerHTML = ICONS.success;
-        els.primary.textContent = "Hello";
-        els.secondary.textContent = "";
-        els.secondary.hidden = true;
-        break;
-      }
-      case "code-failed": {
-        els.icon.innerHTML = ICONS.failed;
-        els.primary.textContent = "Verification Failed";
-        els.secondary.textContent = "Please try again";
-        els.secondary.hidden = false;
         break;
       }
       case "idle":
@@ -208,11 +170,6 @@
     screensaverBasic: () => setState("screensaver-basic"),
     success: (name, hold) => setState("success", { name, hold }),
     failed: (hold) => setState("failed", { hold }),
-    // Code-entry flow
-    codeEntry: () => setState("keypad"),
-    codeApproved: (hold) => setState("code-success", { hold }),
-    codeRejected: (hold) => setState("code-failed", { hold }),
-    setExpectedCode: (code) => { expectedCode = String(code); },
     setLogo: (src) => setLogo(src),
     setHintText: (text) => { if (els.hint) els.hint.textContent = text; },
     // Employee attendance — controlled by the admin/device-management system.
@@ -274,60 +231,10 @@
     });
   }
 
-  /* ---------------------------------------------- Code entry (keypad) */
-
-  function setEntered(value) {
-    entered = value;
-    els.codeDisplay.textContent = entered;
-    els.codeDisplay.dataset.empty = entered ? "false" : "true";
-  }
-
-  function pressKey(key) {
-    if (key === "back") {
-      setEntered(entered.slice(0, -1));
-    } else if (key === "ok") {
-      submitCode();
-    } else if (/^\d$/.test(key) && entered.length < MAX_CODE_LEN) {
-      setEntered(entered + key);
-    }
-  }
-
-  function submitCode() {
-    if (!entered) return;
-    const ok = entered === expectedCode;
-    if (ok) {
-      // Approved → greet (no name), then return to the resting screensaver.
-      setState("code-success", { hold: 4000, then: "screensaver" });
-    } else {
-      // Wrong → show failure, then reopen the keypad to try again.
-      setState("code-failed", { hold: 3000, then: "keypad" });
-    }
-  }
-
-  function initCodeFlow() {
-    // Camera-state button opens the keypad. Commented out — the "Enter a
-    // code" button is currently removed from index.html (no PIN fallback in
-    // the current flow), so els.codeBtn is undefined. Re-enable both together
-    // if a PIN-entry state is needed again in the future.
-    // els.codeBtn.addEventListener("click", () => setState("keypad"));
-
-    // Keypad taps.
-    els.keypadGrid.addEventListener("click", (e) => {
-      const key = e.target.closest("[data-key]")?.dataset.key;
-      if (key) pressKey(key);
-    });
-
-    // Back out of the keypad to the camera state.
-    els.keypadBack.addEventListener("click", () => setState("idle"));
-
-    // Tapping the screensaver used to act as the physical wake button in this
-    // preview. Commented out — waking is now driven entirely from Python via
-    // the tap listener installed by BRIDGE_SETUP_JS in gui_web/web_window.py,
-    // so the JS-side state and the Python session state can't get out of sync.
-    // document
-    //   .getElementById("screensaver")
-    //   .addEventListener("click", () => setState("idle"));
-  }
+  /* NOTE: tapping the screensaver used to act as the physical wake button in
+     this preview. Waking is now driven entirely from Python via the tap
+     listener installed by BRIDGE_SETUP_JS in gui_web/web_window.py, so the
+     JS-side state and the Python session state can't get out of sync. */
 
   /* ---------------------------------------------- Camera */
 
@@ -363,22 +270,10 @@
     document.addEventListener("keydown", (e) => {
       if (e.target.matches("input, textarea")) return;
 
-      // While the keypad is open, the number keys type the code instead of
-      // switching preview states.
-      if (els.body.dataset.state === "keypad") {
-        if (/^\d$/.test(e.key)) { pressKey(e.key); e.preventDefault(); return; }
-        if (e.key === "Backspace") { pressKey("back"); return; }
-        if (e.key === "Enter") { pressKey("ok"); return; }
-        if (e.key === "Escape") { setState("idle"); return; }
-        return;
-      }
-
       switch (e.key) {
         case "0": setState("screensaver"); break;
         case "9": setState("screensaver-basic"); break;
         case "1": setState("idle"); break;
-        case "c":
-        case "C": setState("keypad"); break;
         case "2": setState("success"); break;
         case "3": setState("failed"); break;
         case "a":
@@ -405,7 +300,6 @@
   updateClock();
   setInterval(updateClock, 1000);
   startCamera();                // camera runs behind, revealed on wake
-  initCodeFlow();
   initAttendance();
   initDevControls();
 })();

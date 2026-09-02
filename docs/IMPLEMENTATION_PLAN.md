@@ -209,7 +209,7 @@ the process list → **[T15](#t15)**.
 | FR-UI-02 | ➖ | Deprecated rev 1.2 |
 | [FR-UI-03](SOFTWARE_REQUIREMENTS.md#fr-ui-03) | ✅ | `WebSessionView.show_idle()` returns to the screensaver, overriding the JS default |
 | [FR-UI-04](SOFTWARE_REQUIREMENTS.md#fr-ui-04)..[08](SOFTWARE_REQUIREMENTS.md#fr-ui-08) | ✅ | `controller.on_card_rejected()` (no camera), `_on_auth_complete()` denial branches, `on_user_tapped()` demo-only wake; generic failure text in `demo_ui/app.js` |
-| [FR-UI-09](SOFTWARE_REQUIREMENTS.md#fr-ui-09) | ⚠️ | Keypad exists with the code hardcoded in **two** places — `demo_ui/app.js` (`expectedCode`) and `web_window.py` `Bridge.codeSubmitted()`. No auth effect today, but no production flag either → **[T18](#t18)** |
+| [FR-UI-09](SOFTWARE_REQUIREMENTS.md#fr-ui-09) | ✅ | Keypad path **removed outright** (rev 1.5): markup, styles, JS state machine and `Bridge.codeSubmitted()` all deleted; no hardcoded code constant remains → **[T18](#t18)** done |
 | FR-UI-10 | ➖ | Deprecated rev 1.2 |
 | [FR-UI-11](SOFTWARE_REQUIREMENTS.md#fr-ui-11) | ✅ | `config.KIOSK_BORDERLESS` / `RUN_ON_REAL_SCREEN`; `GUIWeb._place_on_small_display()` |
 | [FR-UI-12](SOFTWARE_REQUIREMENTS.md#fr-ui-12) | ❌ | **Seam built, deliberately stubbed.** `session/view.py` `show_unavailable()` documents "front-ends may alias this to `show_failure` until T9", and `WebSessionView.show_unavailable()` does exactly that. `controller.py` never calls it, and there is no dedicated screen → **[T9](#t9)** (smaller than it looks) |
@@ -513,10 +513,14 @@ stdin/file instead of argv (`network.apply()`).
 **Accept.** A dev machine is never reconfigured by default; the password is
 absent from the process list.
 
-#### <a id="t18"></a>T18. Retire the keypad demo path
-Remove the hardcoded code from `demo_ui/app.js` **and**
-`web_window.py` `Bridge.codeSubmitted()`, or gate the whole path behind an
-explicitly non-production flag. `demo_ui/README.md` documents the constant too.
+#### <a id="t18"></a>T18. Retire the keypad demo path — ✅ **DONE (rev 1.5)**
+Removed outright rather than flag-gated: the `#keypad` markup and dev-panel
+button (`demo_ui/index.html`), all `.keypad__*` / `.code-*` rules
+(`demo_ui/styles.css`), the keypad state machine, `expectedCode` and the
+`codeEntry`/`codeApproved`/`codeRejected`/`setExpectedCode` API
+(`demo_ui/app.js`), the `Bridge.codeSubmitted()` slot plus the `DeviceUI`
+code_* wrappers and the `onSubmitCode` bridge wiring (`gui_web/web_window.py`),
+and the code-flow documentation (`demo_ui/README.md`).
 **Accept.** No credential constant ships in production assets; no code path
 grants on PIN entry.
 
