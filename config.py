@@ -42,7 +42,7 @@ SIMULATE_CARD_READER = CARD_READER_BACKEND == "simulated"
 #                      reader is present or used (FR-MODE-05).
 #   "time_registry" -> IN/OUT attendance journalling, no relay (FR-MODE-06..11).
 #                      Not implemented yet (T8).
-DEVICE_MODE = "face_only"
+DEVICE_MODE = "card_and_face"
 
 DEVICE_MODES = ("card_only", "card_and_face", "face_only", "time_registry")
 
