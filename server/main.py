@@ -2,17 +2,31 @@
 and the dashboard that displays it all.
 
 Route map
-    GET  /                      dashboard: device list (HTML)
-    GET  /new                   dashboard: generate a provisioning QR (HTML)
-    GET  /device/{id}           dashboard: device detail (HTML)
+    GET    /                      dashboard: device list (HTML)
+    GET    /new                   dashboard: generate a provisioning QR (HTML)
+    GET    /device/{id}           dashboard: device detail (HTML)
 
-    POST /devices/generate-qr   mint a one-time token + signed QR image
-    POST /devices/register      device redeems the token, gets its credentials
-    POST /devices/{id}/status   device heartbeat (Bearer device_token)
-    GET  /devices               list devices with derived online/offline
-    GET  /devices/{id}          device detail + status history
-    GET  /tokens                pending (unused, unexpired) tokens
-    GET  /healthz               unauthenticated liveness probe
+    POST   /devices/generate-qr   mint a one-time token + signed QR image
+    POST   /devices/register      device redeems the token, gets its credentials
+    POST   /devices/{id}/status   device heartbeat (Bearer device_token)
+    GET    /devices/{id}/users    device: fetch its assigned face users (Bearer device_token)
+    POST   /devices/{id}/users    dashboard: replace a device's assigned face users
+    GET    /devices               list devices with derived online/offline
+    GET    /devices/{id}          device detail + status history
+    DELETE /devices/{id}          soft-delete (suspend) a device
+    GET    /devices/{id}/events   recent device events, optionally filtered by type
+    DELETE /devices/{id}/events   clear a device's stored event log
+    GET    /tokens                pending (unused, unexpired) tokens
+    GET    /healthz               unauthenticated liveness probe
+
+    GET/POST /customers           customer CRUD (idempotent by name)
+    GET/POST /sites?customer_id=  site CRUD (idempotent by name within customer)
+    GET/POST /doors?site_id=      door CRUD (idempotent by name within site)
+
+    All dashboard endpoints above are HTTP-Basic-authed via require_admin when
+    ADMIN_USER/ADMIN_PASSWORD are set; device endpoints (register, status,
+    users GET) are authed differently -- the provisioning token or the
+    per-device Bearer device_token, respectively.
 """
 
 import hashlib

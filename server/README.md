@@ -37,6 +37,9 @@ All optional; every value has a working default.
 | `STATUS_HISTORY_LIMIT` | `200` | History rows kept per device. |
 | `EVENTS_LIMIT` | `500` | Event-log rows kept per device. |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | unset | Both set ⇒ HTTP Basic on the dashboard. Unset ⇒ open. |
+| `SEED_DEFAULTS` | `true` | Seed the demo Customer/Site/Door on first startup with an empty DB. Tests turn this off. |
+| `USER_STORE_FILE` | `server_user_database.json` | Path (relative to `server/`) of the per-device assigned-users JSON store. |
+| `DEFAULT_USER_DB_FILE` | `default_user_database.json` | Path (relative to `server/`) of the flat template every newly-registered device is seeded with. |
 
 ## Customer / site / door
 
@@ -240,6 +243,19 @@ resends never duplicate. The per-device log is trimmed to `EVENTS_LIMIT` rows.
 The dashboard shows these in an **Event log** section on each device's detail
 page (`/device/{id}`), with a type filter, auto-refreshing on the same cadence
 as the device list.
+
+### `DELETE /devices/{device_id}/events` — dashboard
+
+Admin-authed. Clears this device's stored event log only — the device row,
+its status history, and its assigned users are left untouched. Idempotent:
+clearing an already-empty log returns `deleted: 0`. `404` if `device_id`
+doesn't exist. Because ingestion is keyed by the device-generated `event_id`,
+cleared events are not re-created unless the device actually resends them on
+a later heartbeat.
+```jsonc
+// response
+{ "ok": true, "device_id": "uuid", "deleted": 12 }
+```
 
 ## Signing
 
