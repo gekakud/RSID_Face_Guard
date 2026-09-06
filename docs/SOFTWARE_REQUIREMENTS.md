@@ -502,8 +502,9 @@ flowchart TD
 ```
 
 <a id="fr-db-01"></a>**FR-DB-01** The local database shall hold, per user: badge/card id, stable
-`user_id`, display name, `active` flag, permission level and a list of zero or
-more faceprints, persisted as a local JSON store and written atomically (temp
+`user_id`, display name, `active` flag, permission level and a list of one or
+more faceprints ([A7](#a7)), persisted as a local JSON store and written
+atomically (temp
 file + rename) so a power cut cannot leave a truncated file. No in-place
 schema migration is required: a cache file in an older schema shall simply be
 discarded at startup and repopulated by the next successful sync — the server
@@ -970,7 +971,7 @@ minimisation that makes [BR-01](#br-01) sound.
                "name": "Emma Stone",
                "active": true,
                "permission_level": "employee",
-               "faceprints": [ /* zero or more SDK-shaped faceprint objects */ ] } } }
+               "faceprints": [ /* one or more SDK-shaped faceprint objects (A7) */ ] } } }
 ```
 
 <a id="fr-api-13"></a>**FR-API-13** The payload shall be per-device; the terminal shall never
@@ -998,15 +999,19 @@ Keyed by card/badge id in the local JSON store.
   "name": "Emma Stone",
   "active": true,                     // false = record retained but not authorising
   "permission_level": "employee",     // informational only (BR-01)
-  "faceprints": [ /* zero or more SDK-shaped faceprint objects, restored
-                     into rsid_py.Faceprints for matching */ ]
+  "faceprints": [ /* one or more SDK-shaped faceprint objects, restored
+                     into rsid_py.Faceprints for matching. Every enrolled
+                     user has at least one, in every mode (A7). */ ]
 }
 ```
 
 <a id="fr-data-01"></a>**FR-DATA-01** A record shall be usable for matching only if `active` is true
 and its `faceprints` list contains at least one well-formed entry; otherwise
-it shall be skipped and counted at sync time. An empty list is a valid record
-in `card_only` mode, where no face step occurs.
+it shall be skipped and counted at sync time. **Every enrolled user carries at
+least one faceprint regardless of the device mode** ([A7](#a7)): `card_only`
+is a property of a *door*, not of a *person*, so a terminal in that mode simply
+never runs the face step. A record that reaches a device with no usable
+faceprint is therefore a data fault, not a supported configuration.
 
 <a id="fr-data-02"></a>**FR-DATA-02** Faceprints are biometric data: they shall never be written to
 ordinary logs and shall be deleted on revocation ([FR-HB-10](#fr-hb-10)).
@@ -1239,6 +1244,14 @@ Verification methods: **T** = Test, **D** = Demonstration, **I** = Inspection,
   `DIRECTION_SELECT_TIMEOUT_SEC` defaults to 15 s. Approved as the
   implementation baseline.
 
+- <a id="a7"></a>**A7** *(Stakeholder ruling 2026-09-06.)* **Every enrolled user has a
+  faceprint stored, in every mode.** `card_only` is a property of a *door*, not
+  of a *person*: the people on a site are the same people whichever door they
+  use, and they are enrolled once. A `card_only` terminal therefore holds
+  ordinary face-carrying records and simply never runs the face step. "A user
+  with no faceprints" is consequently **not** a supported configuration, and no
+  device- or server-side capability is required to represent one.
+
 ### 12.2 Known deviations (specification vs. current build)
 
 Established by static code audit 2026-08-26; **re-verified against the working
@@ -1259,7 +1272,7 @@ list.
 | <a id="d6"></a>D6 | [FR-UI-09](#fr-ui-09) PIN path disabled | ✅ **Resolved (rev 1.5)** — keypad markup, styles, JS state machine and `Bridge.codeSubmitted()` removed outright; no `keypad`/`codeApproved`/`setExpectedCode` references remain in `demo_ui/` or `gui_web/`. The hardcoded `"1234"` is gone from both former sites | Closed (T18) |
 | <a id="d7"></a>D7 | [FR-API-12](#fr-api-12) mode/interval refresh | Heartbeat response is not consumed for config | Deferred — moved to future work ([§12.3](#123-out-of-scope-for-this-release)), rev 1.2 |
 | <a id="d8"></a>D8 | [FR-HB-05](#fr-hb-05) acknowledge by `event_id` | `events.ack(count)` pops by position, which can discard undelivered events if the ring evicts during an in-flight beat | ✅ **Resolved (B4/T5a)** — `ack(event_ids)` removes by id |
-| <a id="d9"></a>D9 | [FR-DB-01](#fr-db-01), [FR-DATA-01](#fr-data-01) record schema | `faceprints` is a single object, not a list — `db/remote_provider.py:29-32` `_is_valid_faceprints` requires a `dict` — so a user with zero or several faceprints is unrepresentable. (`user_id` and `active` — the rest of this deviation — are now implemented device- and server-side) | **Implement (device + server)** (T3b) |
+| <a id="d9"></a>D9 | [FR-DB-01](#fr-db-01), [FR-DATA-01](#fr-data-01) record schema | `faceprints` is a single object, not a list — `db/remote_provider.py:29-32` `_is_valid_faceprints` requires a `dict` — so a user with **several** faceprints is unrepresentable. The zero-faceprint case is **no longer a gap**: per [A7](#a7) every enrolled user always carries a faceprint, in every mode, so `card_only` needs no face-less record. (`user_id` and `active` — the rest of this deviation — are now implemented device- and server-side) | **Accepted for now** — multi-faceprint re-enrolment deferred, no `card_only` impact (T3b deferred) |
 | <a id="d10"></a>D10 | [BR-04](#br-04) / [FR-SESS-03](#fr-sess-03) pre-emption, [FR-UI-12](#fr-ui-12) | A different card during a result hold is swallowed. The unavailable screen is **plumbed but unwired**: `session/view.py` declares `show_unavailable` and `gui_web/web_window.py:307` implements it, but `session/controller.py` never calls it, so the [FR-FACE-06](#fr-face-06) backoff still surfaces as a generic failure | **Implement** (T9) |
 | <a id="d11"></a>D11 | [FR-FACE-04](#fr-face-04), [FR-OUT-06](#fr-out-06) | *Was:* `auth_service.py` opened the relay from the match callback and emitted `access_granted` before the relay outcome was known | ✅ **Resolved** (T2/B3) — `face_auth/auth_service.py:22` imports only `disconnect_relay` and emits `auth_matched`; the controller actuates (`session/controller.py` `_open_access_point`) and emits `access_granted` **post-pulse**, else `access_output_failed` |
 | <a id="d12"></a>D12 | [FR-PROV-03](#fr-prov-03), [NFR-14](#nfr-14) | *Was:* an in-process nonce set in `qr_scanner/qr_scanner.py` duplicated replay protection that rev 1.2 moved server-side; being process-local it reset on every restart, so it looked protective without being so | ✅ **Resolved** (T19, rev 1.6) — `_seen_nonces` and its rejection branch deleted from `QRScanner.__init__()` / `_verify()`; the module docstring no longer lists "replayed nonce". The `nonce` field is still parsed and forwarded to registration for the server to cross-check against the single-use token row ([FR-API-07](#fr-api-07)) |
@@ -1298,5 +1311,6 @@ list.
 | 1.4 | 2026-08-31 | code reconciliation | **Qt-widgets front-end removed from the repository**: the harness dropped from §1.2 scope and the §11 traceability table, NFR-19 rejustified on the UI-agnostic `session/controller.py`, D20 closed. §5.1 and §11 now name `session/`; §9.4 gained seven shipped-but-undocumented parameters. Post-B0–B6 re-verification: D1, D11, D13, D14, D18 marked ✅ Resolved with evidence; D12 re-targeted (not delivered by T6); D4, D6, D9, D10, D17 evidence refreshed; new D21 records the in-process revocation reset vs. FR-HB-10's self-restart |
 | 1.5 | 2026-09-02 | design change | **`face_only` promoted to a fourth first-class device mode** (§4, FR-MODE-05): `DEVICE_MODE` now selects `card_only` / `card_and_face` / `face_only` / `time_registry`, and the `DEMO_FACE_ONLY` flag plus the derived `REQUIRE_CARD_TO_START_SESSION` were deleted. FR-UI-08, FR-SESS-03 and FR-SESS-04 reworded off "demo face-only". **Keypad/PIN path removed outright** — D6 closed, T18 delivered, FR-UI-09 restated as "shall not exist". §3 state diagram splits the `card_and_face` and `face_only` session triggers; FR-UI-06 reworded off "demo"; §9.4 drops `REQUIRE_CARD_TO_START_SESSION` and documents `DEVICE_MODE` plus the derived `mode_uses_card_reader()` / `mode_uses_tap_to_wake()` helpers; D2 closed (`card_only` shipped as T7), D4 marked half-closed (mode is local-only until T4) |
 | 1.6 | 2026-09-06 | B7 delivery | **D12 and D21 closed.** T19 removed the device-side nonce set (`qr_scanner.py` `QRScanner.__init__()` / `_verify()`), leaving replay protection server-side on the single-use provisioning token; the module docstring and FR-PROV-03 / NFR-14 evidence updated. T20 ruled **spec-follows-code** on revocation restart semantics: FR-HB-10 step 6, the §3 state diagram (`Revoked --> InitMode: in-process reset`), the `revoked` state row and NFR-21 now specify the **in-process** return to `init_mode` rather than a systemd self-restart — no code change. T8a added a `NotImplementedError` guard in `config.py` for the unimplemented `time_registry` mode, which previously validated but silently behaved like `card_and_face` |
+| 1.7 | 2026-09-06 | stakeholder ruling | **A7 added: every enrolled user carries a faceprint in every mode.** `card_only` is a property of a *door*, not of a *person* — site personnel are enrolled once and are the same people at every door — so "a user with no faceprints" is not a supported configuration. FR-DATA-01 and FR-DB-01 reworded from "zero or more" to "one or more" faceprints; §9.1 record comment updated. **D9 downgraded from "Implement (device + server)" to "Accepted for now"**: its `card_only` sync-drop rationale no longer applies, leaving only multi-faceprint re-enrolment, which is deferred. T3b deferred accordingly in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) |
 
 

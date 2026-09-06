@@ -36,7 +36,7 @@ Status legend: **✅ IMPLEMENTED** · **⚠️ PARTIAL** · **❌ MISSING** ·
 | FR-FACE (7) | 6 | 1 | 0 | 0 |
 | FR-CARD (6) | 5 | 1 | 0 | 0 |
 | FR-OUT (6) | 6 | 0 | 0 | 0 |
-| FR-DB (8) | 7 | 1 | 0 | 0 |
+| FR-DB (8) | 8 | 0 | 0 | 0 |
 | FR-PROV (11) | 11 | 0 | 0 | 0 |
 | FR-NET (5) | 4 | 1 | 0 | 0 |
 | FR-HB (10) | 10 | 0 | 0 | 0 |
@@ -44,13 +44,14 @@ Status legend: **✅ IMPLEMENTED** · **⚠️ PARTIAL** · **❌ MISSING** ·
 | FR-CAM (4) | 4 | 0 | 0 | 0 |
 | FR-UI (12) | 7 | 2 | 1 | 2 *(02/10)* |
 | FR-API (15) | 9 | 4 | 1 | 1 *(12)* |
-| FR-DATA (7) | 6 | 1 | 0 | 0 |
+| FR-DATA (7) | 7 | 0 | 0 | 0 |
 | BR (7) | 6 | 1 | 0 | 0 |
 | NFR (22) | 22 | 0 | 0 | 0 |
-| **Total (156)** | **126** | **15** | **8** | **7** |
+| **Total (156)** | **128** | **13** | **8** | **7** |
 
-Active requirements: 149. **Compliance today: 126/149 = 85 %** (rev 1.3 stated
-83 %; B7 closed FR-PROV-03 and NFR-14). Rev 1.1's 72 % was measured against a
+Active requirements: 149. **Compliance today: 128/149 = 86 %** (rev 1.3 stated
+83 %; B7 closed FR-PROV-03 and NFR-14; the A7 ruling closed FR-DB-01 and
+FR-DATA-01 without a code change). Rev 1.1's 72 % was measured against a
 summary table whose FR-STATE row summed to 10 of 12 and whose FR-DATA row
 contradicted its own detail section; both were corrected in rev 1.2.
 
@@ -147,7 +148,7 @@ holds only the `WebSessionView` adapter, `QtScheduler` and platform glue.
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-DB-01](SOFTWARE_REQUIREMENTS.md#fr-db-01) | ⚠️ | Atomic write ✅ (`db/local_provider.py` `save_all()`); schema v2 ✅ (`remote_provider._add_if_valid()` requires `user_id`, normalises `active`). Remaining gap: `faceprints` is still a **dict, not a list** → **[T3b](#t3b)** |
+| [FR-DB-01](SOFTWARE_REQUIREMENTS.md#fr-db-01) | ✅ | Atomic write ✅ (`db/local_provider.py` `save_all()`); schema v2 ✅ (`remote_provider._add_if_valid()` requires `user_id`, normalises `active`). `faceprints` is a **dict, not a list** — accepted per [A7](SOFTWARE_REQUIREMENTS.md#a7): every user always has exactly one stored faceprint, so the one-per-user shape is sufficient. Multi-faceprint re-enrolment deferred → [T3b](#t3b) |
 | [FR-DB-02](SOFTWARE_REQUIREMENTS.md#fr-db-02) | ✅ | Local membership authorises; `permission_level` never gates |
 | [FR-DB-03](SOFTWARE_REQUIREMENTS.md#fr-db-03) | ✅ | `user_database.start_auto_sync()` on `DB_SYNC_INTERVAL_SEC` |
 | [FR-DB-04](SOFTWARE_REQUIREMENTS.md#fr-db-04) | ✅ | `get_user()` / `get_all_users()` read the cache only |
@@ -238,7 +239,7 @@ the process list → **[T15](#t15)**.
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-DATA-01](SOFTWARE_REQUIREMENTS.md#fr-data-01) | ⚠️ | Faceprint validity checked (`remote_provider._is_valid_faceprints()`) and `active` enforced on both auth paths ✅; still a single faceprints **dict**, so "list with ≥1 entry" and empty-list-in-`card_only` are unrepresentable → **[T3b](#t3b)** |
+| [FR-DATA-01](SOFTWARE_REQUIREMENTS.md#fr-data-01) | ✅ | Faceprint validity checked (`remote_provider._is_valid_faceprints()`) and `active` enforced on both auth paths ✅. Stored as a single **dict** rather than a list — accepted per [A7](SOFTWARE_REQUIREMENTS.md#a7): every enrolled user always carries a faceprint, so "≥1 entry" holds by construction and the empty-list case does not arise. Multi-faceprint re-enrolment deferred → [T3b](#t3b) |
 | [FR-DATA-02](SOFTWARE_REQUIREMENTS.md#fr-data-02) | ✅ | Never logged; deleted on revocation via `UserDatabase.clear()` (faceprints live in the one JSON cache) |
 | [FR-DATA-03](SOFTWARE_REQUIREMENTS.md#fr-data-03) | ✅ | **T10 done.** Atomic + `0600` + deleted on revocation (`identity.save()` / `clear()`) |
 | [FR-DATA-04](SOFTWARE_REQUIREMENTS.md#fr-data-04) | ✅ | `identity.load()` tolerates unknown keys |
@@ -305,7 +306,6 @@ dependencies — everything else has shipped.
 
 | # | Task | Scope | Depends on | Requirements |
 |---|---|---|---|---|
-| [T3b](#t3b) | `faceprints` as a list | device+server | — | FR-DB-01, FR-DATA-01 |
 | [T4](#t4) | `device_mode` / `face_policy` **server plumbing** | device+server | — | FR-MODE-01 |
 | [T9](#t9) | Session edge cases + unavailable screen | device | — | FR-SESS-03, FR-CARD-04, FR-FACE-06, FR-UI-12, BR-04 |
 | [T5b](#t5b) | Durable event queue | device | — | FR-MODE-10 |
@@ -400,29 +400,35 @@ round-trips both fields and an older file without them still loads
 
 ---
 
-#### <a id="t3b"></a>T3b. `faceprints` as a list
+#### <a id="t3b"></a>T3b. `faceprints` as a list — **DEFERRED (2026-09-06)**
 
-**Do.** [SRS §9.1](SOFTWARE_REQUIREMENTS.md#91-local-user-record) specifies
-`faceprints` as a list of zero or more SDK-shaped objects; the code still stores
-and validates a single dict. Accept a list at sync (validating each entry), allow
-an **empty** list, and iterate a user's faceprints when matching.
+> **Deferred by stakeholder ruling** ([SRS A7](SOFTWARE_REQUIREMENTS.md#a7)).
+> **Every enrolled user carries a faceprint in every mode.** `card_only` is a
+> property of a *door*, not of a *person*: site personnel are enrolled once and
+> are the same people at every door, so a `card_only` terminal holds ordinary
+> face-carrying records and simply never runs the face step. The face-less user
+> this task was urgent for **does not exist**, so there is no sync-drop bug and
+> no `card_only` breakage. The single-dict schema stays as-is.
+>
+> **What remains open** (tracked as [D9](SOFTWARE_REQUIREMENTS.md#d9), now
+> *Accepted for now*): a dict holds exactly **one** face, so a user cannot be
+> enrolled a second time — with glasses, after a beard change, under different
+> lighting. That is a re-enrolment convenience, not a correctness or mode
+> defect, and it is deferred until it is felt operationally.
 
-**Why it is separate from T3.** [T7](#t7) `card_only` needs "a user with no
-faceprints" to be representable, which a mandatory dict forbids — so this lands
-with `card_only` rather than having blocked schema v2.
-
-**Why it now outranks [T4](#t4) (rev 1.4 reorder).** `_is_valid_faceprints()`
-requires a `dict`, so under `DB_MODE="remote"` a face-less `card_only` user is
-**dropped at sync** — silently breaking an already-shipped mode. T4 only blocks a
-mode that can still be set locally, so T3b ships first (B8 ↔ B9 swapped).
+**Original scope, if resumed.** [SRS §9.1](SOFTWARE_REQUIREMENTS.md#91-local-user-record)
+specifies `faceprints` as a list; the code stores and validates a single dict.
+Accept a list at sync (validating each entry) and iterate a user's faceprints
+when matching.
 
 **Files.** `db/remote_provider.py` (`_is_valid_faceprints()`, `_add_if_valid()`);
 `face_auth/auth_service.py` (`_to_rsid_faceprints()` and both match loops);
-`server/default_user_database.json`.
+`server/default_user_database.json`; `user_database_local_dev.json`;
+`db/test_remote_sync.py`.
 
-**Accept.** A record with `faceprints: []` syncs and is valid in `card_only`; a
-record with two faceprints matches on either; a legacy single-dict record is
-rejected or coerced, never crashed on.
+**Accept.** A record with two faceprints matches on either; a legacy
+single-dict record is coerced, never crashed on. *(Note: per A7 there is no
+"empty list" acceptance case — an empty list would be a data fault.)*
 
 ---
 
@@ -656,7 +662,7 @@ every dev box.
 | **B5** | [T6](#delivered) fail-secure revocation | Implemented — awaiting device validation |
 | **B6** | [T3](#delivered) schema v2 (server, then device) | Implemented — awaiting device validation |
 | **B7** | [T19](#t19) nonce removal + [T20](#t20) D21 ruling + [T8a](#t8a) `time_registry` guard | Implemented 2026-09-06 — awaiting device validation |
-| B8 | [T3b](#t3b) `faceprints` as a list | pending |
+| ~~B8~~ | ~~[T3b](#t3b) `faceprints` as a list~~ | **cancelled 2026-09-06** — deferred by [A7](SOFTWARE_REQUIREMENTS.md#a7); [B9](#t4) is the next batch |
 | B9 | [T4](#t4) `device_mode` / `face_policy` | pending |
 | B10 | [T9](#t9) pre-emption + card-path backoff + unavailable screen | pending |
 | B11 | [T5b](#t5b) durable event queue | pending |

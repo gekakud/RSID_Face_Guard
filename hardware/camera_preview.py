@@ -87,7 +87,7 @@ class PreviewController(threading.Thread):
             preview_cfg.device_type = self.device_type
             preview_cfg.camera_number = self.camera_index
             # TODO: maybe drop to 720p?
-            preview_cfg.preview_mode = rsid_py.PreviewMode.MJPEG_1080P
+            preview_cfg.preview_mode = rsid_py.PreviewMode.MJPEG_720P
 
             self.preview = rsid_py.Preview(preview_cfg)
             self.preview.start(preview_callback=self.on_image, snapshot_callback=None)
