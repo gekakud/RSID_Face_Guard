@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS tokens (
   customer_id     TEXT NOT NULL,
   site_id         TEXT NOT NULL,
   door_id         TEXT NOT NULL,
+  device_mode     TEXT,                -- per-door operating mode (FR-MODE-01)
   network_profile TEXT,                -- JSON of the signed network_profile
   issued_at       TEXT NOT NULL,
   expires_at      TEXT NOT NULL,
@@ -54,6 +55,7 @@ CREATE TABLE IF NOT EXISTS devices (
   customer_id     TEXT,
   site_id         TEXT,
   door_id         TEXT,
+  device_mode     TEXT,                -- operating mode it was provisioned with
   network_profile TEXT,                -- JSON of the network_profile it was given
   token_hash      TEXT NOT NULL,
   mac             TEXT,

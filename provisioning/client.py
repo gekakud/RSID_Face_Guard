@@ -102,6 +102,9 @@ def register(payload: dict, device_type: Optional[str] = None) -> DeviceIdentity
         # The server echoes customer/site/door but not the network_profile, so
         # take that straight from the signed QR payload the device just verified.
         network_profile=payload.get("network_profile") or {},
+        # Per-door mode (FR-MODE-01). Not in the signed QR: it arrives over the
+        # registration response, authenticated by the one-time token.
+        device_mode=data.get("device_mode", ""),
         registered_at=data.get("registered_at", ""),
         heartbeat_interval_sec=int(
             data.get("heartbeat_interval_sec", config.HEARTBEAT_INTERVAL_SEC)

@@ -114,7 +114,7 @@ class SessionController:
 
     def on_card_detected(self, card_id) -> None:
         """A registered card was tapped (monitor already filtered unknowns)."""
-        if getattr(config, "DEVICE_MODE", "card_and_face") == "card_only":
+        if config.mode_is_card_only():
             self._handle_card_only(card_id)
             return
         self.start_session(card_id=card_id)

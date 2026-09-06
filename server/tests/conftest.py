@@ -14,7 +14,11 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__f
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-os.environ["DB_PATH"] = os.path.join(tempfile.mkdtemp(prefix="faceguard-test-"), "test.db")
+_TEST_TMP = tempfile.mkdtemp(prefix="faceguard-test-")
+os.environ["DB_PATH"] = os.path.join(_TEST_TMP, "test.db")
+# Registration seeds a per-device user set, which would otherwise be written to
+# the real server_user_database.json next to the code and clobber it.
+os.environ["USER_STORE_FILE"] = os.path.join(_TEST_TMP, "test_user_store.json")
 os.environ["PUBLIC_BASE_URL"] = "http://testserver"
 # Tests assert against empty customer/site/door tables, so don't seed the demo
 # records (production seeds them; see server/db._seed_defaults).

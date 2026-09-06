@@ -49,6 +49,10 @@ class DeviceIdentity:
     # "local"). Carried and stored for reference; applying it on the Pi is a
     # separate concern.
     network_profile: dict = field(default_factory=dict)
+    # Per-door operating mode issued at registration (FR-MODE-01, T4). Empty
+    # means "server said nothing" -- config.DEVICE_MODE stays in force. Applied
+    # once at boot; a mode change requires re-binding and a restart.
+    device_mode: str = ""
     registered_at: str = ""
     heartbeat_interval_sec: int = 30
 

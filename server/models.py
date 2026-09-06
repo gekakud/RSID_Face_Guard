@@ -33,6 +33,17 @@ class LocalNetworkProfile(BaseModel):
 NetworkProfile = Union[WifiNetworkProfile, LocalNetworkProfile]
 
 
+# ---------------------------------------------------------- device mode
+
+# The per-door operating mode handed to the device at registration (FR-MODE-01).
+# "time_registry" is deliberately absent: the device raises NotImplementedError
+# for it (T8a), so minting a QR for it would only produce a terminal that
+# refuses to boot. Add it here as part of T8.
+DeviceMode = Literal["card_only", "card_and_face", "face_only"]
+
+DEFAULT_DEVICE_MODE = "card_and_face"
+
+
 # --------------------------------------------------- customer/site/door CRUD
 
 class CreateCustomerRequest(BaseModel):
@@ -74,6 +85,7 @@ class GenerateQRRequest(BaseModel):
     customer_id: str = Field(min_length=1, max_length=64)
     site_id: str = Field(min_length=1, max_length=64)
     door_id: str = Field(min_length=1, max_length=64)
+    device_mode: DeviceMode = DEFAULT_DEVICE_MODE
     network_profile: NetworkProfile = Field(
         default_factory=LocalNetworkProfile,
         discriminator="mode",
@@ -108,6 +120,7 @@ class RegisterResponse(BaseModel):
     customer_id: str
     site_id: str
     door_id: str
+    device_mode: str                     # per-door operating mode (FR-MODE-01)
     registered_at: str
 
 
@@ -129,6 +142,7 @@ class DeviceSummary(BaseModel):
     customer_id: Optional[str] = None
     site_id: Optional[str] = None
     door_id: Optional[str] = None
+    device_mode: Optional[str] = None
     network_profile: Dict[str, Any] = Field(default_factory=dict)
     mac: Optional[str] = None
     device_type: Optional[str] = None

@@ -200,6 +200,58 @@ def test_register_rejects_mismatched_nonce(client, qr):
 
 
 # =====================================================
+# Device mode (FR-MODE-01)
+# =====================================================
+
+def test_register_defaults_to_card_and_face(client, qr):
+    """A QR minted without a mode still yields a usable, explicit mode."""
+    body = _register(client, qr()).json()
+    assert body["device_mode"] == "card_and_face"
+
+
+@pytest.mark.parametrize("mode", ["card_only", "card_and_face", "face_only"])
+def test_device_mode_round_trips_to_the_device(client, qr, mode):
+    """The mode chosen at QR time reaches the device and the dashboard."""
+    body = _register(client, qr(device_mode=mode)).json()
+    assert body["device_mode"] == mode
+
+    devices = client.get("/devices").json()
+    assert devices[0]["device_mode"] == mode
+
+
+def test_generate_qr_rejects_an_unknown_mode(client):
+    response = client.post(
+        "/devices/generate-qr",
+        json={
+            "customer_id": "acme",
+            "site_id": "hq",
+            "door_id": "main-entrance",
+            "device_mode": "card-only",  # hyphen, not underscore
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_generate_qr_rejects_time_registry(client):
+    """T8a: the device refuses to boot in this mode, so never mint one."""
+    response = client.post(
+        "/devices/generate-qr",
+        json={
+            "customer_id": "acme",
+            "site_id": "hq",
+            "door_id": "main-entrance",
+            "device_mode": "time_registry",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_device_mode_is_not_in_the_signed_payload(client, qr):
+    """Kept out of the QR to hold it at version 17; it arrives over HTTPS."""
+    assert "device_mode" not in qr(device_mode="face_only")["payload"]
+
+
+# =====================================================
 # Status intake
 # =====================================================
 

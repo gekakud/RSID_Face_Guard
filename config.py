@@ -46,22 +46,39 @@ DEVICE_MODE = "card_and_face"
 
 DEVICE_MODES = ("card_only", "card_and_face", "face_only", "time_registry")
 
-if DEVICE_MODE not in DEVICE_MODES:
-    # Fail loudly: a typo must not silently fall through to a weaker mode.
-    raise ValueError(
-        f"Invalid DEVICE_MODE {DEVICE_MODE!r}; expected one of {DEVICE_MODES}"
-    )
+
+def set_device_mode(mode: str, source: str = "config.py") -> None:
+    """Validate `mode` and make it the process-wide DEVICE_MODE.
+
+    The single place the mode is ever assigned, so the checks below cannot be
+    bypassed by a value arriving from the server (T4) rather than this file.
+    Callers read the mode through the mode_* helpers, which resolve at call
+    time -- so overriding here updates every consumer at once.
+    """
+    global DEVICE_MODE
+
+    if mode not in DEVICE_MODES:
+        # Fail loudly: a typo must not silently fall through to a weaker mode.
+        raise ValueError(
+            f"Invalid DEVICE_MODE {mode!r} (from {source}); "
+            f"expected one of {DEVICE_MODES}"
+        )
+
+    if mode == "time_registry":
+        # T8a: the mode validates but nothing branches on it yet, so it would
+        # silently behave like card_and_face -- pulsing the door and journalling
+        # nothing. Refuse to start rather than run the wrong mode (FR-MODE-06..11).
+        raise NotImplementedError(
+            f"DEVICE_MODE 'time_registry' (from {source}) is not implemented yet "
+            "(T8); it would silently behave like 'card_and_face' and open the "
+            "door. Use 'card_only', 'card_and_face' or 'face_only'."
+        )
+
+    DEVICE_MODE = mode
 
 
-if DEVICE_MODE == "time_registry":
-    # T8a: the mode validates but nothing branches on it yet, so it would
-    # silently behave like card_and_face -- pulsing the door and journalling
-    # nothing. Refuse to start rather than run the wrong mode (FR-MODE-06..11).
-    raise NotImplementedError(
-        "DEVICE_MODE 'time_registry' is not implemented yet (T8); "
-        "it would silently behave like 'card_and_face' and open the door. "
-        "Use 'card_only', 'card_and_face' or 'face_only'."
-    )
+# Validate the install-time fallback through the same path as a server value.
+set_device_mode(DEVICE_MODE)
 
 
 def mode_uses_card_reader() -> bool:
@@ -75,6 +92,11 @@ def mode_uses_card_reader() -> bool:
 def mode_uses_tap_to_wake() -> bool:
     """True when a screen tap starts a session (face_only only, FR-MODE-05)."""
     return DEVICE_MODE == "face_only"
+
+
+def mode_is_card_only() -> bool:
+    """True when a valid card opens the relay with no face step (FR-MODE-03)."""
+    return DEVICE_MODE == "card_only"
 
 
 # Set True on RPi5 with the small 720x720 touch screen

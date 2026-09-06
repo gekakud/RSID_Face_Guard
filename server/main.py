@@ -151,6 +151,7 @@ def _device_summary(row: sqlite3.Row) -> models.DeviceSummary:
         customer_id=row["customer_id"],
         site_id=row["site_id"],
         door_id=row["door_id"],
+        device_mode=row["device_mode"],
         network_profile=_json_loads(row["network_profile"]),
         mac=row["mac"],
         device_type=row["device_type"],
@@ -264,15 +265,16 @@ def generate_qr(
 
     conn.execute(
         """INSERT INTO tokens
-               (token, nonce, customer_id, site_id, door_id, network_profile,
-                issued_at, expires_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (token, nonce, customer_id, site_id, door_id, device_mode,
+                network_profile, issued_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             token,
             payload["nonce"],
             body.customer_id,
             body.site_id,
             body.door_id,
+            body.device_mode,
             json.dumps(network_profile, separators=(",", ":")),
             payload["issued_at"],
             payload["expires_at"],
@@ -315,19 +317,23 @@ def register_device(
     device_id = str(uuid.uuid4())
     device_token = secrets.token_urlsafe(32)
     now = timeutil.now_ts()
+    # Tokens minted before device_mode existed have NULL here; fall back rather
+    # than handing the device an empty mode it would have to interpret.
+    device_mode = row["device_mode"] or models.DEFAULT_DEVICE_MODE
 
     conn.execute(
         """INSERT INTO devices
-               (device_id, name, customer_id, site_id, door_id, network_profile,
-                token_hash, mac, device_type, fw_version, app_version,
-                ip_address, registered_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (device_id, name, customer_id, site_id, door_id, device_mode,
+                network_profile, token_hash, mac, device_type, fw_version,
+                app_version, ip_address, registered_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             device_id,
             row["door_id"],
             row["customer_id"],
             row["site_id"],
             row["door_id"],
+            device_mode,
             row["network_profile"],
             _hash_token(device_token),
             body.mac,
@@ -359,6 +365,7 @@ def register_device(
         customer_id=row["customer_id"],
         site_id=row["site_id"],
         door_id=row["door_id"],
+        device_mode=device_mode,
         registered_at=now,
     )
 

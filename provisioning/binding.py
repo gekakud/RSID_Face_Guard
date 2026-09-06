@@ -8,6 +8,7 @@ callback and a completion callback; nothing Qt-specific lives here.
 import threading
 from typing import Callable, Optional
 
+import config
 from observability import events
 from observability.events import EventType
 from observability.logging_setup import get_logger
@@ -100,6 +101,17 @@ class BindingManager:
             self._start_heartbeat()
 
             door = new_identity.door_id or new_identity.device_id[:8]
+            new_mode = new_identity.device_mode
+            if new_mode and new_mode != config.DEVICE_MODE:
+                # The mode is applied at boot (services are built from it), so
+                # say so rather than appearing to run a mode we are not in.
+                log.info(
+                    "Provisioned mode %s differs from running mode %s -- restart required",
+                    new_mode, config.DEVICE_MODE,
+                )
+                on_done(True, f"Device registered\n{door}\nRestart for {new_mode}")
+                return
+
             on_done(True, f"Device registered\n{door}")
 
         except client.RegistrationError as exc:

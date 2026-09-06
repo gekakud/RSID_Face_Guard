@@ -43,6 +43,36 @@ setup_logging()
 install_native_log_bridge()
 log = get_logger("main")
 
+
+def _apply_provisioned_mode() -> None:
+    """Let the server-issued mode override config.DEVICE_MODE (FR-MODE-01, T4).
+
+    Must run before any service is built: the mode decides whether a card
+    reader exists at all. The identity is read once at boot -- a device keeps
+    the mode it was bound with, and changing it means re-binding and
+    restarting.
+    """
+    try:
+        from provisioning import identity as identity_store
+
+        identity = identity_store.load()
+    except Exception as exc:
+        log.error("Could not read device identity for mode (ignored): %s", exc)
+        return
+
+    if identity is None or not identity.device_mode:
+        log.info("Device mode: %s (config.py fallback)", config.DEVICE_MODE)
+        return
+
+    try:
+        config.set_device_mode(identity.device_mode, source="device identity")
+        log.info("Device mode: %s (provisioned by server)", config.DEVICE_MODE)
+    except NotImplementedError:
+        # An unimplemented mode must not be downgraded to a door-opening one.
+        raise
+    except ValueError as exc:
+        log.error("%s -- keeping %s", exc, config.DEVICE_MODE)
+
 try:
     import rsid_py
     log.info("rsid_py version: %s", rsid_py.__version__)
@@ -93,6 +123,10 @@ def main():
         log.info("Using specified port: %s", port)
 
     camera_index = args.camera
+
+    # Before any service is built: the mode decides whether a card reader is
+    # initialised at all (FR-MODE-01, T4).
+    _apply_provisioned_mode()
 
     log.info("Discovering device type on port: %s", port)
     try:
