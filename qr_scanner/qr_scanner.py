@@ -3,7 +3,7 @@ QR code scanning for the technician/maintenance "init mode" flow.
 
 Wraps pyzbar (zbar) to detect + decode a QR code in a single RGB frame (as
 produced by hardware.camera_preview.PreviewController), then verifies the
-"Provisioning QR Envelope" signature/expiry/nonce before trusting it.
+"Provisioning QR Envelope" signature/expiry before trusting it.
 
 zbar is used rather than OpenCV's QRCodeDetector because it reads large,
 dense QR symbols (the signed payload lands at version 17+) far more reliably
@@ -35,16 +35,19 @@ Payload shape:
 
 Trust model: the device only holds Ed25519 PUBLIC keys (never a private
 key), loaded from config.PROVISIONING_PUBLIC_KEYS_DIR -- one PEM file per
-trusted key_id, named "<key_id>.pem". Verification (signature, expiry,
-nonce replay) happens entirely offline/locally; no network call is needed
-to validate the QR's authenticity. See other/qr_code_poc/ for the issuer
-(signing) side of this scheme, simulated for local testing.
+trusted key_id, named "<key_id>.pem". Verification (signature, expiry)
+happens entirely offline/locally; no network call is needed
+to validate the QR's authenticity. Replay protection is *not* done here --
+the provisioning token is single-use server-side (FR-API-07), so a replayed
+QR verifies locally and is refused at registration (T19). See
+other/qr_code_poc/ for the issuer (signing) side of this scheme, simulated
+for local testing.
 
 Logging: this is a security-relevant path, so every scan outcome is logged
 via the shared "face_guard" logger (console + rotating file, configured in
 main_web.py). Benign/expected rejections (schema mismatch, expired token)
 log at WARNING. Rejections that indicate a potential forgery/replay attempt
-(invalid signature, unknown key_id, replayed nonce) log at ERROR with a
+(invalid signature, unknown key_id) log at ERROR with a
 "SECURITY:" prefix so they stand out. Every scan attempt also logs exactly
 one final "QR scan result: ACCEPTED/REJECTED" line for easy grepping.
 """
@@ -116,9 +119,6 @@ class QRScanner:
 
     def __init__(self):
         self._public_keys = _load_public_keys(config.PROVISIONING_PUBLIC_KEYS_DIR)
-        # Replay protection: nonces accepted this process lifetime. Resets on
-        # restart -- acceptable since tokens are short-lived (expires_at).
-        self._seen_nonces = set()
 
     def _canonical_payload_bytes(self, payload: dict) -> bytes:
         payload_without_signature = {k: v for k, v in payload.items() if k != "signature"}
@@ -182,14 +182,12 @@ class QRScanner:
                 log.warning("QR rejected (token expired at %s) -- %s", expires_at, ctx)
                 return False
 
-        nonce = payload.get("nonce")
-        if nonce is not None:
-            if nonce in self._seen_nonces:
-                log.error("SECURITY: QR rejected (nonce already used -- replay attempt) -- %s", ctx)
-                return False
-            self._seen_nonces.add(nonce)
+        # Replay protection is server-side (T19): the provisioning token is
+        # single-use (FR-API-07), so a replayed QR passes these offline checks
+        # and is refused at registration. The nonce is still parsed and
+        # forwarded for the server to cross-check.
 
-        log.info("QR schema/command/signature/expiry/nonce checks passed -- %s", ctx)
+        log.info("QR schema/command/signature/expiry checks passed -- %s", ctx)
         return True
 
     def scan(self, frame: np.ndarray) -> Optional[dict]:

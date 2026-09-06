@@ -53,6 +53,17 @@ if DEVICE_MODE not in DEVICE_MODES:
     )
 
 
+if DEVICE_MODE == "time_registry":
+    # T8a: the mode validates but nothing branches on it yet, so it would
+    # silently behave like card_and_face -- pulsing the door and journalling
+    # nothing. Refuse to start rather than run the wrong mode (FR-MODE-06..11).
+    raise NotImplementedError(
+        "DEVICE_MODE 'time_registry' is not implemented yet (T8); "
+        "it would silently behave like 'card_and_face' and open the door. "
+        "Use 'card_only', 'card_and_face' or 'face_only'."
+    )
+
+
 def mode_uses_card_reader() -> bool:
     """True when the mode is driven by card taps (FR-MODE-02).
 

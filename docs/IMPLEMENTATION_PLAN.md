@@ -5,9 +5,9 @@
 | Item | Detail |
 |---|---|
 | Document ID | PLAN-FG-001 |
-| Revision | 1.4 |
+| Revision | 1.5 |
 | Date | 2026-09-06 |
-| Specification | [`SOFTWARE_REQUIREMENTS.md`](SOFTWARE_REQUIREMENTS.md) rev 1.5 |
+| Specification | [`SOFTWARE_REQUIREMENTS.md`](SOFTWARE_REQUIREMENTS.md) rev 1.6 |
 | Basis | Static audit of the working tree. Evidence cites **file + symbol**, never line numbers — rev 1.1 used `file:line` and every reference rotted the moment [T1](#delivered) moved the session machine |
 | Scope | Device application **and** the reference server (`server/`) |
 | Delivery model | Small batches (B0..B14, [§3](#3-batches-and-device-validation)); each batch is device-validated by the owner before the next starts |
@@ -37,7 +37,7 @@ Status legend: **✅ IMPLEMENTED** · **⚠️ PARTIAL** · **❌ MISSING** ·
 | FR-CARD (6) | 5 | 1 | 0 | 0 |
 | FR-OUT (6) | 6 | 0 | 0 | 0 |
 | FR-DB (8) | 7 | 1 | 0 | 0 |
-| FR-PROV (11) | 10 | 1 | 0 | 0 |
+| FR-PROV (11) | 11 | 0 | 0 | 0 |
 | FR-NET (5) | 4 | 1 | 0 | 0 |
 | FR-HB (10) | 10 | 0 | 0 | 0 |
 | FR-LOG (5) | 4 | 1 | 0 | 0 |
@@ -46,12 +46,13 @@ Status legend: **✅ IMPLEMENTED** · **⚠️ PARTIAL** · **❌ MISSING** ·
 | FR-API (15) | 9 | 4 | 1 | 1 *(12)* |
 | FR-DATA (7) | 6 | 1 | 0 | 0 |
 | BR (7) | 6 | 1 | 0 | 0 |
-| NFR (22) | 21 | 1 | 0 | 0 |
-| **Total (156)** | **124** | **17** | **8** | **7** |
+| NFR (22) | 22 | 0 | 0 | 0 |
+| **Total (156)** | **126** | **15** | **8** | **7** |
 
-Active requirements: 149. **Compliance today: 124/149 = 83 %** (rev 1.1 stated
-72 %, against a summary table whose FR-STATE row summed to 10 of 12 and whose
-FR-DATA row contradicted its own detail section; both are corrected here).
+Active requirements: 149. **Compliance today: 126/149 = 85 %** (rev 1.3 stated
+83 %; B7 closed FR-PROV-03 and NFR-14). Rev 1.1's 72 % was measured against a
+summary table whose FR-STATE row summed to 10 of 12 and whose FR-DATA row
+contradicted its own detail section; both were corrected in rev 1.2.
 
 ### 1.2 Operating states — FR-STATE
 
@@ -79,11 +80,11 @@ FR-DATA row contradicted its own detail section; both are corrected here).
 | [FR-MODE-03](SOFTWARE_REQUIREMENTS.md#fr-mode-03) | ✅ | **T7 done.** `controller.on_card_detected()` routes to `_handle_card_only()` when `config.DEVICE_MODE == "card_only"`: DB + `active` check, relay pulse off the UI thread, result hold, no session and no preview. *Consistency nit:* the branch compares `getattr(config, "DEVICE_MODE", …) == "card_only"` directly rather than a `config.mode_*()` helper — fold into **[T4](#t4)** |
 | [FR-MODE-04](SOFTWARE_REQUIREMENTS.md#fr-mode-04) | ✅ | `auth_service.py` `authenticate_with_card_and_face()` — 1:1 against the cardholder |
 | [FR-MODE-05](SOFTWARE_REQUIREMENTS.md#fr-mode-05) | ✅ | `auth_service.py` `authenticate_face_only()`, gated by `config.mode_uses_tap_to_wake()` via `controller.py` `on_user_tapped()`; `face_only` is now a first-class `DEVICE_MODE` (rev 1.5) and skips reader init in `main_web.py` / `gui_web/web_window.py` |
-> ⚠️ **`time_registry` is selectable but inert.** It passes the `config.py`
-> `DEVICE_MODES` validation and `mode_uses_card_reader()` returns `True` for it,
-> but **no code branches on it** — so setting it silently yields plain
-> `card_and_face` behaviour (relay pulses, no attendance recorded). Fail loud
-> until [T8](#t8) lands → **[T8a](#t8a)**.
+> ⚠️ **`time_registry` refuses to start (T8a, B7).** The mode passes the
+> `DEVICE_MODES` validation but **no code branches on it**, so it would silently
+> run as `card_and_face` — pulsing the door and journalling nothing. `config.py`
+> now raises `NotImplementedError` for it; delete that guard as the first step of
+> [T8](#t8).
 
 | [FR-MODE-06](SOFTWARE_REQUIREMENTS.md#fr-mode-06) | ❌ | No IN/OUT screen or latch. The `demo_ui/app.js` `setAttendanceMode()` toggle is cosmetic — never read by Python → **[T8](#t8)** |
 | [FR-MODE-07](SOFTWARE_REQUIREMENTS.md#fr-mode-07) | ❌ | No `attendance_event` emission anywhere → **[T8](#t8)** |
@@ -161,7 +162,7 @@ holds only the `WebSessionView` adapter, `QtScheduler` and platform glue.
 |---|---|---|
 | [FR-PROV-01](SOFTWARE_REQUIREMENTS.md#fr-prov-01) | ✅ | **T16 done.** `controller.start_init_mode()` always enters and emits `init_mode_entered`, then either runs the scan window or ends at delay 0; called unconditionally from `GUIWeb._on_load_finished()`. `INIT_MODE_ENABLED` sizes the window only |
 | [FR-PROV-02](SOFTWARE_REQUIREMENTS.md#fr-prov-02) | ✅ | Envelope schema documented and parsed in `qr_scanner/qr_scanner.py` |
-| [FR-PROV-03](SOFTWARE_REQUIREMENTS.md#fr-prov-03) | ⚠️ | All four offline checks present in `QRScanner._verify()`, but the in-process **nonce set** (`_seen_nonces`) remains; SRS rev 1.2 moved replay protection server-side → **[T19](#t19)** *(re-targeted: T6 shipped deliberately keeping it)* |
+| [FR-PROV-03](SOFTWARE_REQUIREMENTS.md#fr-prov-03) | ✅ | **T19 done (B7).** All four offline checks present in `QRScanner._verify()`; the in-process `_seen_nonces` set is **deleted** — replay protection is server-side on the single-use token (SRS rev 1.2). `nonce` is still parsed and forwarded to registration. Closes SRS [D12](SOFTWARE_REQUIREMENTS.md#d12) |
 | [FR-PROV-04](SOFTWARE_REQUIREMENTS.md#fr-prov-04) | ✅ | `_load_public_keys()`; an empty trust store rejects all |
 | [FR-PROV-05](SOFTWARE_REQUIREMENTS.md#fr-prov-05) | ✅ | Warning vs `SECURITY:` error inside `_verify()`; `qr_accepted` / `qr_rejected` from `scan()` |
 | [FR-PROV-06](SOFTWARE_REQUIREMENTS.md#fr-prov-06) | ✅ | **T11 done.** `EXPECTED_COMMAND` check in `_verify()`, benign classification |
@@ -186,7 +187,7 @@ is checked in; the SRS requires default-disabled → **[T15](#t15)**.
 | [FR-HB-01](SOFTWARE_REQUIREMENTS.md#fr-hb-01)..[04](SOFTWARE_REQUIREMENTS.md#fr-hb-04) | ✅ | `heartbeat.HeartbeatWorker.start()` / `_run()` / `_collect()`; `events.emit()` |
 | [FR-HB-05](SOFTWARE_REQUIREMENTS.md#fr-hb-05) | ✅ | **T5a done (B4).** Ack **by `event_id`**, never by position — `events.ack(event_ids)`, called from `heartbeat._run()` and `binding._flush_events()` |
 | [FR-HB-06](SOFTWARE_REQUIREMENTS.md#fr-hb-06)..[09](SOFTWARE_REQUIREMENTS.md#fr-hb-09) | ✅ | uuid4 `event_id` in `emit()`; `_MAX_EVENTS = 200` drop-oldest; backoff in `_run()`; shutdown flush in `binding.shutdown()` |
-| [FR-HB-10](SOFTWARE_REQUIREMENTS.md#fr-hb-10) <a id="fr-hb-10-row"></a> | ✅ | **T6 done (B5).** `binding._handle_revoked()`: emit + flush `device_revoked` while bound → stop heartbeat/sync → delete identity → purge user DB incl. faceprints → in-process return to init mode. **Step 6 (systemd self-restart) is not implemented** — the reset is in-process; recorded as SRS [D21](SOFTWARE_REQUIREMENTS.md#d21) → **[T20](#t20)** |
+| [FR-HB-10](SOFTWARE_REQUIREMENTS.md#fr-hb-10) <a id="fr-hb-10-row"></a> | ✅ | **T6 done (B5); step 6 settled by T20 (B7).** `binding._handle_revoked()`: emit + flush `device_revoked` while bound → stop heartbeat/sync → delete identity → purge user DB incl. faceprints → in-process return to init mode. SRS rev 1.6 reworded step 6 to specify that in-process reset, so code and spec now agree; [D21](SOFTWARE_REQUIREMENTS.md#d21) closed |
 
 ### 1.12 Logging & storage — FR-LOG
 
@@ -269,9 +270,9 @@ shutdown watchdog `NFR-11` in `main_web.py` `main()`, security
 
 | ID | Status | Gap |
 |---|---|---|
-| [NFR-14](SOFTWARE_REQUIREMENTS.md#nfr-14) | ⚠️ | Device still keeps a nonce set; rev 1.2 puts replay protection server-side → **[T19](#t19)** |
+| [NFR-14](SOFTWARE_REQUIREMENTS.md#nfr-14) | ✅ | **T19 done (B7).** No nonce state on the device; replay protection is server-side per rev 1.2 |
 | [NFR-19](SOFTWARE_REQUIREMENTS.md#nfr-19) | ✅ | **T1 + Qt removal.** One state machine in `session/controller.py`, dependent only on the `SessionView`/`Scheduler` protocols; `session/tests/` (27 cases) exercises it with no Qt, browser or `rsid_py` |
-| [NFR-21](SOFTWARE_REQUIREMENTS.md#nfr-21) | ✅ | **T17 done.** `face-guard.service` runs `main_web.py` with `Restart=always` and the `rpi_py_build_lib` `LD_LIBRARY_PATH`; the dead `docs/rsid-host-mode.service` was deleted. *(The revocation self-restart clause depends on [T20](#t20).)* |
+| [NFR-21](SOFTWARE_REQUIREMENTS.md#nfr-21) | ✅ | **T17 done.** `face-guard.service` runs `main_web.py` with `Restart=always` and the `rpi_py_build_lib` `LD_LIBRARY_PATH`; the dead `docs/rsid-host-mode.service` was deleted. *(T20 reworded the revocation clause: the reset is in-process and does not restart the service.)* |
 
 ### 1.19 Architecture baseline as delivered
 
@@ -298,15 +299,12 @@ baseline every remaining task builds on:
 
 ## 2. Task list
 
-Live queue: **11 open tasks**. Delivered work is rolled up in
+Live queue: **8 open tasks**. Delivered work is rolled up in
 [Delivered](#delivered). The `Depends on` column lists only *open*
 dependencies — everything else has shipped.
 
 | # | Task | Scope | Depends on | Requirements |
 |---|---|---|---|---|
-| [T19](#t19) | Remove the device-side nonce set | device | — | FR-PROV-03, NFR-14 |
-| [T20](#t20) | Resolve D21 (revocation restart semantics) | spec/ops | — | FR-HB-10, NFR-21 |
-| [T8a](#t8a) | Fail loud on `time_registry` until T8 lands | device | — | FR-MODE-06..09 |
 | [T3b](#t3b) | `faceprints` as a list | device+server | — | FR-DB-01, FR-DATA-01 |
 | [T4](#t4) | `device_mode` / `face_policy` **server plumbing** | device+server | — | FR-MODE-01 |
 | [T9](#t9) | Session edge cases + unavailable screen | device | — | FR-SESS-03, FR-CARD-04, FR-FACE-06, FR-UI-12, BR-04 |
@@ -316,12 +314,13 @@ dependencies — everything else has shipped.
 | [T14](#t14) | Server rebinding + door scoping | server | — | FR-API-07/08/13 |
 | [T15](#t15) | Network profile defaults + password handling | device | — | FR-NET-03, FR-LOG-04 |
 
-Delivered since rev 1.2: [T7](#t7) `card_only` and [T18](#t18) keypad removal —
-see [Delivered](#delivered).
+Delivered since rev 1.2: [T7](#t7) `card_only`, [T18](#t18) keypad removal, and
+the B7 trio [T19](#t19) / [T20](#t20) / [T8a](#t8a) — see
+[Delivered](#delivered).
 
 ### Phase A — Hygiene and open decisions
 
-#### <a id="t19"></a>T19. Remove the device-side nonce set
+#### <a id="t19"></a>T19. Remove the device-side nonce set — ✅ **DONE (B7)**
 
 **Why now.** SRS rev 1.2 moved replay protection server-side: the provisioning
 token is one-time ([FR-API-07](SOFTWARE_REQUIREMENTS.md#fr-api-07)), so a
@@ -342,7 +341,7 @@ an actionable reason. SRS [D12](SOFTWARE_REQUIREMENTS.md#d12) closes.
 
 ---
 
-#### <a id="t20"></a>T20. Resolve D21 — revocation restart semantics
+#### <a id="t20"></a>T20. Resolve D21 — revocation restart semantics — ✅ **DONE (B7, option (a))**
 
 **The conflict.** [FR-HB-10](SOFTWARE_REQUIREMENTS.md#fr-hb-10) step 6 requires
 an orderly **self-restart under systemd**. The build performs an **in-process**
@@ -515,7 +514,7 @@ nothing; events survive a restart and appear in the server journal.
 
 ### Phase D — Isolated fixes (no refactoring)
 
-#### <a id="t8a"></a>T8a. Fail loud on `time_registry` until T8 lands
+#### <a id="t8a"></a>T8a. Fail loud on `time_registry` until T8 lands — ✅ **DONE (B7)**
 
 **Why.** `time_registry` passes `DEVICE_MODES` validation but nothing branches on
 it, so a terminal configured for attendance silently runs `card_and_face` — it
@@ -589,6 +588,9 @@ see [§3](#3-batches-and-device-validation).
 | 13 | **T7** `card_only` mode | `controller._handle_card_only()` pulses the relay straight from a valid, `active` card — no session, no preview, no biometric call; `_card_only_busy` holds the reader off for the result hold; a failed pulse emits `access_output_failed`. Closes SRS [D2](SOFTWARE_REQUIREMENTS.md#d2); covered by `session/tests/test_card_only.py`. |
 | 14 | **T18** Keypad/PIN path retired | Removed outright across `demo_ui/` (markup, styles, JS state machine, `deviceUI.code*` API) and `gui_web/web_window.py` (`Bridge.codeSubmitted()`, `DeviceUI.code_*`, `onSubmitCode`), taking the hardcoded `"1234"` with it. Closes SRS [D6](SOFTWARE_REQUIREMENTS.md#d6). *(rev 1.5)* |
 | 15 | **`face_only` promotion** | Fourth first-class `DEVICE_MODE`; `DEMO_FACE_ONLY` / `REQUIRE_CARD_TO_START_SESSION` deleted, `DEVICE_MODES` validated at import, `mode_uses_card_reader()` / `mode_uses_tap_to_wake()` derived. No new session logic — `on_user_tapped()` → `start_session()` → `authenticate_face_only()` already existed. Device half of [T4](#t4). *(rev 1.5)* |
+| 16 | **T19** Device nonce set removed | `_seen_nonces` and its rejection branch deleted from `QRScanner.__init__()` / `_verify()`; docstring no longer lists "replayed nonce" as a SECURITY rejection. Replay protection is server-side on the single-use token ([FR-API-07](SOFTWARE_REQUIREMENTS.md#fr-api-07)); `nonce` still parsed and forwarded. Closes SRS [D12](SOFTWARE_REQUIREMENTS.md#d12). *(B7)* |
+| 17 | **T20** D21 ruled — spec follows code | Revocation's **in-process** return to `init_mode` is now the specified behaviour: SRS rev 1.6 reworded FR-HB-10 step 6, the §3 state diagram (`Revoked --> InitMode: in-process reset`), the `revoked` state row and NFR-21. **No code change.** Rationale: deny-all is already satisfied without a restart, and a revoked device left powered on cannot enter a restart loop. Closes SRS [D21](SOFTWARE_REQUIREMENTS.md#d21). *(B7)* |
+| 18 | **T8a** `time_registry` fails loud | `config.py` raises `NotImplementedError` for the unimplemented mode, which previously passed validation and silently ran as `card_and_face` — pulsing the door and journalling nothing. Guard is deleted as step 1 of [T8](#t8). *(B7)* |
 
 **T6 — server-authoritative revocation lifecycle** *(kept in full: T14 and T20
 both depend on it).* Revocation is a server-side tombstone handshake, so the
@@ -653,7 +655,7 @@ every dev box.
 | **B4** | [T5a](#delivered) ack-by-`event_id` | Implemented — awaiting device validation |
 | **B5** | [T6](#delivered) fail-secure revocation | Implemented — awaiting device validation |
 | **B6** | [T3](#delivered) schema v2 (server, then device) | Implemented — awaiting device validation |
-| **B7** | [T19](#t19) nonce removal + [T20](#t20) D21 ruling + [T8a](#t8a) `time_registry` guard | pending |
+| **B7** | [T19](#t19) nonce removal + [T20](#t20) D21 ruling + [T8a](#t8a) `time_registry` guard | Implemented 2026-09-06 — awaiting device validation |
 | B8 | [T3b](#t3b) `faceprints` as a list | pending |
 | B9 | [T4](#t4) `device_mode` / `face_policy` | pending |
 | B10 | [T9](#t9) pre-emption + card-path backoff + unavailable screen | pending |
@@ -769,4 +771,22 @@ User-record schema v2 (T3).
    name, no raw card id, including for an unregistered tap
    (`reason="card_unregistered"`).
 
-*(Per-batch checklists for B7+ are added when each batch is implemented.)*
+### B7 device checklist
+
+Nonce removal (T19), the D21 ruling (T20) and the `time_registry` guard (T8a).
+
+1. **QR still binds** — present a valid provisioning QR in init mode → the device
+   binds and syncs users as before. Log shows
+   `QR schema/command/signature/expiry checks passed` (no "nonce" in that line).
+2. **Replayed QR is refused by the *server*** — present the **same** QR a second
+   time → it passes local verification (no `SECURITY: nonce already used` line
+   any more) and registration fails with an actionable server reason.
+3. **Expired / wrong-key QR still rejected locally** — unchanged behaviour.
+4. **T8a guard** — set `DEVICE_MODE = "time_registry"` → the app refuses to start
+   with `NotImplementedError: ... not implemented yet (T8)`. Restore
+   `card_and_face` afterwards.
+5. **T20 observation** — revoke the device from the dashboard and confirm the
+   process **stays up** and returns to init mode in-process. This is now the
+   *specified* behaviour, not a deviation.
+
+*(Per-batch checklists for B8+ are added when each batch is implemented.)*

@@ -125,13 +125,18 @@ def test_every_generated_qr_is_readable_by_the_device(qr):
 
 
 @needs_device_verifier
-def test_real_device_verifier_rejects_replayed_qr(qr):
+def test_real_device_verifier_accepts_a_rescanned_qr(qr):
+    """T19: replay protection is server-side, not on the device.
+
+    A re-scan is legitimate (the camera sees the same code many times per
+    second), so local verification must keep passing. The single-use token is
+    what stops an actual replay, at registration.
+    """
     frame = _frame(qr()["qr_png"])
     scanner = QRScanner()
 
     assert scanner.scan(frame) is not None
-    # Same nonce a second time -- the device's replay guard must fire.
-    assert scanner.scan(frame) is None
+    assert scanner.scan(frame) is not None
 
 
 @needs_device_verifier

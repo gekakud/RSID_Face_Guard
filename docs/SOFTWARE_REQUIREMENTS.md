@@ -5,7 +5,7 @@
 | Item | Detail |
 |---|---|
 | Document ID | SRS-FG-001 |
-| Revision | 1.5 |
+| Revision | 1.6 |
 | Product | RSID Face Guard kiosk application |
 | Target platform | Raspberry Pi 5, 720×720 round touch display |
 | Biometric device | Intel RealSense ID F45x (`rsid_py` SDK) |
@@ -137,7 +137,7 @@ stateDiagram-v2
     Denied --> Idle
     Attendance --> Idle
     Idle --> Revoked: HTTP 410
-    Revoked --> InitMode: self-restart
+    Revoked --> InitMode: in-process reset
 ```
 
 **Connectivity is orthogonal to the operating state.** Server reachability is
@@ -158,7 +158,7 @@ terminal can *report* and how fresh its data is, never what it can *decide*.
 | `session` | Camera on, face match retried |
 | `granted` / `denied` | Result screen for a fixed hold |
 | `attendance` | `time_registry` only: direction registered, result screen for a fixed hold, **no relay** |
-| `revoked` | Transient. Identity dropped, **local user DB purged, all access denied**, then orderly self-restart ([FR-HB-10](#fr-hb-10)) |
+| `revoked` | Transient. Identity dropped, **local user DB purged, all access denied**, then an in-process return to `init_mode` ([FR-HB-10](#fr-hb-10)) |
 
 | Connectivity attribute | Effect |
 |---|---|
@@ -690,14 +690,16 @@ treat the device as removed and shall, in this order:
    the server is the master copy and the first sync after re-provisioning
    restores the set;
 5. **deny all access** from that point on;
-6. perform an orderly self-restart under the supervising systemd service
-   ([NFR-21](#nfr-21)), so the terminal re-enters `init_mode` and a technician can
-   re-provision it by presenting a new QR without a power cycle.
+6. return to `init_mode` **in-process** ([FR-PROV-01](#fr-prov-01)) — the same
+   entry point used at boot — so a technician can re-provision the terminal by
+   presenting a new QR without a power cycle. With no identity and init mode
+   active the terminal is deny-all, so no restart is required; the supervising
+   systemd service ([NFR-21](#nfr-21)) is not involved in this path.
 
 Revocation is equivalent to a reset. **[NEW]** — see [§12](#12-assumptions-known-deviations-and-future-work).
 
-> Steps 1–5 are implemented as specified. **Step 6 is not**: the build returns to
-> `init_mode` in-process instead of restarting. Recorded as [D21](#d21).
+> All six steps are implemented as specified. Step 6 was reworded in rev 1.6 to
+> describe the in-process reset the build performs ([D21](#d21) closed, T20).
 
 ### 5.9 Logging & Storage Monitor
 
@@ -1179,8 +1181,8 @@ backends, simulated hardware) so the application runs off-Pi for development.
 
 <a id="nfr-21"></a>**NFR-21** The application shall run under a supervised systemd service that
 starts at host power-on and restarts on failure. Every such start enters
-`init_mode` ([FR-PROV-01](#fr-prov-01)), including the self-restart after revocation
-([FR-HB-10](#fr-hb-10)).
+`init_mode` ([FR-PROV-01](#fr-prov-01)). Revocation ([FR-HB-10](#fr-hb-10))
+re-enters `init_mode` in-process and does **not** restart the service.
 
 <a id="nfr-22"></a>**NFR-22** Tunables shall live in one configuration module ([§9.4](#94-configuration-parameters)).
 
@@ -1260,7 +1262,7 @@ list.
 | <a id="d9"></a>D9 | [FR-DB-01](#fr-db-01), [FR-DATA-01](#fr-data-01) record schema | `faceprints` is a single object, not a list — `db/remote_provider.py:29-32` `_is_valid_faceprints` requires a `dict` — so a user with zero or several faceprints is unrepresentable. (`user_id` and `active` — the rest of this deviation — are now implemented device- and server-side) | **Implement (device + server)** (T3b) |
 | <a id="d10"></a>D10 | [BR-04](#br-04) / [FR-SESS-03](#fr-sess-03) pre-emption, [FR-UI-12](#fr-ui-12) | A different card during a result hold is swallowed. The unavailable screen is **plumbed but unwired**: `session/view.py` declares `show_unavailable` and `gui_web/web_window.py:307` implements it, but `session/controller.py` never calls it, so the [FR-FACE-06](#fr-face-06) backoff still surfaces as a generic failure | **Implement** (T9) |
 | <a id="d11"></a>D11 | [FR-FACE-04](#fr-face-04), [FR-OUT-06](#fr-out-06) | *Was:* `auth_service.py` opened the relay from the match callback and emitted `access_granted` before the relay outcome was known | ✅ **Resolved** (T2/B3) — `face_auth/auth_service.py:22` imports only `disconnect_relay` and emits `auth_matched`; the controller actuates (`session/controller.py` `_open_access_point`) and emits `access_granted` **post-pulse**, else `access_output_failed` |
-| <a id="d12"></a>D12 | [FR-PROV-03](#fr-prov-03), [NFR-14](#nfr-14) | **Still open.** The in-process nonce set survives at `qr_scanner/qr_scanner.py:118-120,184-189`; rev 1.2 moved replay protection server-side | **Remove — not delivered by T6.** T6/B5 shipped without this sub-item (it explicitly keeps the set, recreated empty per init-mode entry); needs its own task |
+| <a id="d12"></a>D12 | [FR-PROV-03](#fr-prov-03), [NFR-14](#nfr-14) | *Was:* an in-process nonce set in `qr_scanner/qr_scanner.py` duplicated replay protection that rev 1.2 moved server-side; being process-local it reset on every restart, so it looked protective without being so | ✅ **Resolved** (T19, rev 1.6) — `_seen_nonces` and its rejection branch deleted from `QRScanner.__init__()` / `_verify()`; the module docstring no longer lists "replayed nonce". The `nonce` field is still parsed and forwarded to registration for the server to cross-check against the single-use token row ([FR-API-07](#fr-api-07)) |
 | <a id="d13"></a>D13 | [FR-PROV-06](#fr-prov-06) | *Was:* the `command` field was documented but never checked — any signed envelope was honoured | ✅ **Resolved** (T11/B0) — `EXPECTED_COMMAND` check in `qr_scanner/qr_scanner.py` `_verify`, rejected at warning level (benign per [FR-PROV-05](#fr-prov-05)) |
 | <a id="d14"></a>D14 | [FR-PROV-09](#fr-prov-09), [FR-DATA-03](#fr-data-03) | *Was:* identity file written atomically and gitignored, but no `chmod 0600` anywhere | ✅ **Resolved** (T10/B0) — `provisioning/identity.py:100,104`: temp file created `0o600` via `os.open`, mode re-asserted on the final path after `os.replace` |
 | <a id="d15"></a>D15 | [FR-PROV-01](#fr-prov-01) | Init mode runs only when `INIT_MODE_ENABLED` (`web_window.py:549`); spec requires entry on every start, config controlling duration only | **Done** (T16, 2026-08-26): unconditional entry via `session/controller.py:215-243`; `INIT_MODE_ENABLED` now sizes the window only |
@@ -1269,7 +1271,7 @@ list.
 | <a id="d18"></a>D18 | [NFR-21](#nfr-21) | *Was:* `docs/rsid-host-mode.service` targeted a nonexistent script; `face-guard.service` launched `main_qt.py` — which the Qt removal then **deleted**, leaving an unbootable unit | ✅ **Resolved** (T17, 2026-08-31) — `face-guard.service` runs `main_web.py` with `Restart=always` and the `rpi_py_build_lib` `LD_LIBRARY_PATH`; `docs/rsid-host-mode.service` deleted |
 | <a id="d19"></a>D19 | [FR-FACE-06](#fr-face-06) | The 20 s backoff gate is applied only on the face-only path (`auth_service.py:229-232`), not the card path | **Implement** (T9) |
 | <a id="d20"></a>D20 | [NFR-19](#nfr-19) | *Was:* the session state machine was duplicated between `gui_web/web_window.py` and `gui_qt/main_window_qt.py` | ✅ **Resolved** (T1/B1 + Qt removal 2026-08-31) — one machine in `session/controller.py`; `gui_web/web_window.py` is a view adapter; `gui_qt/` and `main_qt.py` deleted from the repository |
-| <a id="d21"></a>D21 | [FR-HB-10](#fr-hb-10) step 6, [NFR-21](#nfr-21) | Revocation performs an **in-process** return to `init_mode` (`SessionController.start_init_mode()`, the same entry point used at boot) rather than the specified orderly self-restart under systemd. With no identity and init mode active the terminal is deny-all, so the fail-secure intent is met | **Decision needed**: either reword [FR-HB-10](#fr-hb-10) step 6 (and the [§3](#3-operating-states) diagram/state table) to specify the in-process reset — the design approved in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) T6 — or implement the restart |
+| <a id="d21"></a>D21 | [FR-HB-10](#fr-hb-10) step 6, [NFR-21](#nfr-21) | *Was:* revocation performs an **in-process** return to `init_mode` (`SessionController.start_init_mode()`, the same entry point used at boot) rather than an orderly self-restart under systemd | ✅ **Resolved** (T20, rev 1.6) — **spec follows code**: FR-HB-10 step 6, the [§3](#3-operating-states) diagram (`Revoked --> InitMode: in-process reset`), the `revoked` state row and NFR-21 now specify the in-process reset. With no identity and init mode active the terminal is deny-all, so the fail-secure intent is met without a restart — and a revoked device left powered on cannot enter a restart loop. No code change |
 
 ### 12.3 Out of scope for this release
 
@@ -1295,4 +1297,6 @@ list.
 | 1.3 | 2026-08-26 | code reconciliation | Static audit of the working tree. Added §5.5 and §5.6 service diagrams; D1–D10 confirmed with evidence and mapped to tasks; new deviations D11–D20 recorded. Companion [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) holds the per-requirement reconciliation table and the ordered task list T1–T18 |
 | 1.4 | 2026-08-31 | code reconciliation | **Qt-widgets front-end removed from the repository**: the harness dropped from §1.2 scope and the §11 traceability table, NFR-19 rejustified on the UI-agnostic `session/controller.py`, D20 closed. §5.1 and §11 now name `session/`; §9.4 gained seven shipped-but-undocumented parameters. Post-B0–B6 re-verification: D1, D11, D13, D14, D18 marked ✅ Resolved with evidence; D12 re-targeted (not delivered by T6); D4, D6, D9, D10, D17 evidence refreshed; new D21 records the in-process revocation reset vs. FR-HB-10's self-restart |
 | 1.5 | 2026-09-02 | design change | **`face_only` promoted to a fourth first-class device mode** (§4, FR-MODE-05): `DEVICE_MODE` now selects `card_only` / `card_and_face` / `face_only` / `time_registry`, and the `DEMO_FACE_ONLY` flag plus the derived `REQUIRE_CARD_TO_START_SESSION` were deleted. FR-UI-08, FR-SESS-03 and FR-SESS-04 reworded off "demo face-only". **Keypad/PIN path removed outright** — D6 closed, T18 delivered, FR-UI-09 restated as "shall not exist". §3 state diagram splits the `card_and_face` and `face_only` session triggers; FR-UI-06 reworded off "demo"; §9.4 drops `REQUIRE_CARD_TO_START_SESSION` and documents `DEVICE_MODE` plus the derived `mode_uses_card_reader()` / `mode_uses_tap_to_wake()` helpers; D2 closed (`card_only` shipped as T7), D4 marked half-closed (mode is local-only until T4) |
+| 1.6 | 2026-09-06 | B7 delivery | **D12 and D21 closed.** T19 removed the device-side nonce set (`qr_scanner.py` `QRScanner.__init__()` / `_verify()`), leaving replay protection server-side on the single-use provisioning token; the module docstring and FR-PROV-03 / NFR-14 evidence updated. T20 ruled **spec-follows-code** on revocation restart semantics: FR-HB-10 step 6, the §3 state diagram (`Revoked --> InitMode: in-process reset`), the `revoked` state row and NFR-21 now specify the **in-process** return to `init_mode` rather than a systemd self-restart — no code change. T8a added a `NotImplementedError` guard in `config.py` for the unimplemented `time_registry` mode, which previously validated but silently behaved like `card_and_face` |
+
 
