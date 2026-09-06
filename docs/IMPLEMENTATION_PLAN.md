@@ -5,8 +5,8 @@
 | Item | Detail |
 |---|---|
 | Document ID | PLAN-FG-001 |
-| Revision | 1.3 |
-| Date | 2026-09-02 |
+| Revision | 1.4 |
+| Date | 2026-09-06 |
 | Specification | [`SOFTWARE_REQUIREMENTS.md`](SOFTWARE_REQUIREMENTS.md) rev 1.5 |
 | Basis | Static audit of the working tree. Evidence cites **file + symbol**, never line numbers — rev 1.1 used `file:line` and every reference rotted the moment [T1](#delivered) moved the session machine |
 | Scope | Device application **and** the reference server (`server/`) |
@@ -76,9 +76,15 @@ FR-DATA row contradicted its own detail section; both are corrected here).
 |---|---|---|
 | [FR-MODE-01](SOFTWARE_REQUIREMENTS.md#fr-mode-01) | ⚠️ | **Device half done (rev 1.5).** `config.DEVICE_MODE` selects all four modes, validated at import, with `mode_uses_card_reader()` / `mode_uses_tap_to_wake()` derived; `DEMO_FACE_ONLY` / `REQUIRE_CARD_TO_START_SESSION` deleted. Still **not server-provisioned**: `device_mode` / `face_policy` have zero hits in `provisioning/` and `server/`, absent from `server/models.py` `RegisterResponse` and `provisioning/identity.py` `DeviceIdentity` → **[T4](#t4)** |
 | [FR-MODE-02](SOFTWARE_REQUIREMENTS.md#fr-mode-02) | ✅ | `face_auth/auth_service.py` `card_is_registered()` — DB-only check, no camera |
-| [FR-MODE-03](SOFTWARE_REQUIREMENTS.md#fr-mode-03) | ✅ | **T7 done.** `controller.on_card_detected()` routes to `_handle_card_only()` when `config.DEVICE_MODE == "card_only"`: DB + `active` check, relay pulse off the UI thread, result hold, no session and no preview |
+| [FR-MODE-03](SOFTWARE_REQUIREMENTS.md#fr-mode-03) | ✅ | **T7 done.** `controller.on_card_detected()` routes to `_handle_card_only()` when `config.DEVICE_MODE == "card_only"`: DB + `active` check, relay pulse off the UI thread, result hold, no session and no preview. *Consistency nit:* the branch compares `getattr(config, "DEVICE_MODE", …) == "card_only"` directly rather than a `config.mode_*()` helper — fold into **[T4](#t4)** |
 | [FR-MODE-04](SOFTWARE_REQUIREMENTS.md#fr-mode-04) | ✅ | `auth_service.py` `authenticate_with_card_and_face()` — 1:1 against the cardholder |
 | [FR-MODE-05](SOFTWARE_REQUIREMENTS.md#fr-mode-05) | ✅ | `auth_service.py` `authenticate_face_only()`, gated by `config.mode_uses_tap_to_wake()` via `controller.py` `on_user_tapped()`; `face_only` is now a first-class `DEVICE_MODE` (rev 1.5) and skips reader init in `main_web.py` / `gui_web/web_window.py` |
+> ⚠️ **`time_registry` is selectable but inert.** It passes the `config.py`
+> `DEVICE_MODES` validation and `mode_uses_card_reader()` returns `True` for it,
+> but **no code branches on it** — so setting it silently yields plain
+> `card_and_face` behaviour (relay pulses, no attendance recorded). Fail loud
+> until [T8](#t8) lands → **[T8a](#t8a)**.
+
 | [FR-MODE-06](SOFTWARE_REQUIREMENTS.md#fr-mode-06) | ❌ | No IN/OUT screen or latch. The `demo_ui/app.js` `setAttendanceMode()` toggle is cosmetic — never read by Python → **[T8](#t8)** |
 | [FR-MODE-07](SOFTWARE_REQUIREMENTS.md#fr-mode-07) | ❌ | No `attendance_event` emission anywhere → **[T8](#t8)** |
 | [FR-MODE-08](SOFTWARE_REQUIREMENTS.md#fr-mode-08) | ❌ | No relay-suppressed mode → **[T8](#t8)** |
@@ -95,7 +101,7 @@ holds only the `WebSessionView` adapter, `QtScheduler` and platform glue.
 |---|---|---|
 | [FR-SESS-01](SOFTWARE_REQUIREMENTS.md#fr-sess-01) | ✅ | `gui_web/frame_server.py` `WebServer` + `CameraStreamer` serve page and MJPEG from one loopback origin |
 | [FR-SESS-02](SOFTWARE_REQUIREMENTS.md#fr-sess-02) | ✅ | Preview paused at construction (`GUIWeb.__init__`), resumed per session in `controller.start_session()` |
-| [FR-SESS-03](SOFTWARE_REQUIREMENTS.md#fr-sess-03) | ⚠️ | Two gaps. (a) No different-card pre-emption: the card flag clears in `controller._end_session()`, which the result hold schedules, so reads stay suppressed through the hold. (b) `on_card_detected()` → `start_session()` guards only on `_session_active` / `_is_page_ready()` — the **init-mode guard present on `on_user_tapped()` and `on_card_rejected()` is missing on the registered-card path**, so a card tap during init mode starts a session → **[T9](#t9)** |
+| [FR-SESS-03](SOFTWARE_REQUIREMENTS.md#fr-sess-03) | ⚠️ | Two gaps. (a) No different-card pre-emption: the card flag clears in `controller._end_session()`, which the result hold schedules, so reads stay suppressed through the hold. (b) `on_card_detected()` → `start_session()` guards only on `_session_active` / `_is_page_ready()` — the **init-mode guard present on `on_user_tapped()` and `on_card_rejected()` is missing on the registered-card path**, so a card tap during init mode starts a session. *Verified narrower than rev 1.3 stated:* the hole is on the **`card_and_face` path only** — `_handle_card_only()` does guard on `_init_mode_active` → **[T9](#t9)** |
 | [FR-SESS-04](SOFTWARE_REQUIREMENTS.md#fr-sess-04) | ✅ | `controller.py` retry/timeout handles; card session ends on first mismatch in `_on_auth_complete()` (BR-05) |
 | [FR-SESS-05](SOFTWARE_REQUIREMENTS.md#fr-sess-05) | ✅ | `controller._authenticate()` skips a tick while `_auth_in_progress` |
 | [FR-SESS-06](SOFTWARE_REQUIREMENTS.md#fr-sess-06) | ✅ | `_cancel_session_timers()` runs before every result render in `_on_auth_complete()` |
@@ -292,7 +298,7 @@ baseline every remaining task builds on:
 
 ## 2. Task list
 
-Live queue: **10 open tasks**. Delivered work is rolled up in
+Live queue: **11 open tasks**. Delivered work is rolled up in
 [Delivered](#delivered). The `Depends on` column lists only *open*
 dependencies — everything else has shipped.
 
@@ -300,8 +306,9 @@ dependencies — everything else has shipped.
 |---|---|---|---|---|
 | [T19](#t19) | Remove the device-side nonce set | device | — | FR-PROV-03, NFR-14 |
 | [T20](#t20) | Resolve D21 (revocation restart semantics) | spec/ops | — | FR-HB-10, NFR-21 |
-| [T4](#t4) | `device_mode` / `face_policy` **server plumbing** | device+server | — | FR-MODE-01 |
+| [T8a](#t8a) | Fail loud on `time_registry` until T8 lands | device | — | FR-MODE-06..09 |
 | [T3b](#t3b) | `faceprints` as a list | device+server | — | FR-DB-01, FR-DATA-01 |
+| [T4](#t4) | `device_mode` / `face_policy` **server plumbing** | device+server | — | FR-MODE-01 |
 | [T9](#t9) | Session edge cases + unavailable screen | device | — | FR-SESS-03, FR-CARD-04, FR-FACE-06, FR-UI-12, BR-04 |
 | [T5b](#t5b) | Durable event queue | device | — | FR-MODE-10 |
 | [T8](#t8) | `time_registry` mode | device+server | T4, T5b | FR-MODE-06..11, FR-API-15 |
@@ -405,6 +412,11 @@ an **empty** list, and iterate a user's faceprints when matching.
 faceprints" to be representable, which a mandatory dict forbids — so this lands
 with `card_only` rather than having blocked schema v2.
 
+**Why it now outranks [T4](#t4) (rev 1.4 reorder).** `_is_valid_faceprints()`
+requires a `dict`, so under `DB_MODE="remote"` a face-less `card_only` user is
+**dropped at sync** — silently breaking an already-shipped mode. T4 only blocks a
+mode that can still be set locally, so T3b ships first (B8 ↔ B9 swapped).
+
 **Files.** `db/remote_provider.py` (`_is_valid_faceprints()`, `_add_if_valid()`);
 `face_auth/auth_service.py` (`_to_rsid_faceprints()` and both match loops);
 `server/default_user_database.json`.
@@ -442,7 +454,8 @@ Covered off-device by `session/tests/test_card_only.py`.
    ([BR-04](SOFTWARE_REQUIREMENTS.md#br-04)). Requires releasing the card flag
    when the *session* ends rather than when the *hold* ends.
 2. `on_card_detected()` must respect the init-mode guard that
-   `on_user_tapped()` and `on_card_rejected()` already apply.
+   `on_user_tapped()` and `on_card_rejected()` already apply. Scope is the
+   `card_and_face` branch only — the `card_only` branch already guards.
 3. Apply the 20 s biometric backoff on the **card** path
    (`authenticate_with_card_and_face()`), not just the face-only path.
 4. Surface that condition as a distinct "temporarily unavailable" screen. **The
@@ -501,6 +514,24 @@ nothing; events survive a restart and appear in the server journal.
 ---
 
 ### Phase D — Isolated fixes (no refactoring)
+
+#### <a id="t8a"></a>T8a. Fail loud on `time_registry` until T8 lands
+
+**Why.** `time_registry` passes `DEVICE_MODES` validation but nothing branches on
+it, so a terminal configured for attendance silently runs `card_and_face` — it
+pulses the door and records nothing. A misconfiguration that opens a door is
+worse than a boot failure.
+
+**Do.** In `config.py`, after the existing `DEVICE_MODES` check, raise
+`NotImplementedError` when `DEVICE_MODE == "time_registry"`, naming T8 in the
+message. Delete the guard as the first step of [T8](#t8).
+
+**Files.** `config.py`.
+
+**Accept.** `DEVICE_MODE = "time_registry"` refuses to start with an actionable
+message; the other three modes are unaffected.
+
+---
 
 #### <a id="t13"></a>T13. HTTP error classification
 Distinguish connect error / timeout / permanent 4xx / transient 5xx in
@@ -596,13 +627,22 @@ Delivery model: each batch is a small, independently revertable change set. Afte
 every batch the owner validates on the real device using the checklist below; the
 next batch starts only after sign-off.
 
-**Green gate.** The server suite (`server/tests/`, **66 tests**) must stay green
-after every batch, alongside `session/tests/` (**27**),
-`db/test_remote_sync.py` (**7**), `provisioning/tests/test_revocation.py` (**4**)
-and `db/tests/test_revocation_wipe.py` (**2**). Run with
-`APPLY_NETWORK_PROFILE = False` on dev machines without `nmcli`
-([D17](SOFTWARE_REQUIREMENTS.md#d17)). Note `pytest` is not installed on every
-dev box — the Pi or the project venv is the reference environment.
+**Green gate.** After every batch these suites must stay green (counts verified
+by collection on 2026-09-06, **120 tests total**):
+
+| Suite | Tests |
+|---|---|
+| `server/tests/` | 66 |
+| `session/tests/` (`test_controller.py` + `test_card_only.py`) | 37 |
+| `db/` (`test_remote_sync.py` + `tests/test_revocation_wipe.py`) | 9 |
+| `observability/test_events.py` | 4 |
+| `provisioning/tests/test_revocation.py` | 4 |
+
+Run with `APPLY_NETWORK_PROFILE = False` on dev machines without `nmcli`
+([D17](SOFTWARE_REQUIREMENTS.md#d17)). The reference environment is the project
+venv — **`.venv/`** in the repo root (rev 1.3 said `.env`, which does not exist);
+invoke as `.venv/bin/python -m pytest`. `pytest` is not on the system Python of
+every dev box.
 
 | Batch | Content | Status |
 |---|---|---|
@@ -613,9 +653,9 @@ dev box — the Pi or the project venv is the reference environment.
 | **B4** | [T5a](#delivered) ack-by-`event_id` | Implemented — awaiting device validation |
 | **B5** | [T6](#delivered) fail-secure revocation | Implemented — awaiting device validation |
 | **B6** | [T3](#delivered) schema v2 (server, then device) | Implemented — awaiting device validation |
-| **B7** | [T19](#t19) nonce removal + [T20](#t20) D21 ruling | pending |
-| B8 | [T4](#t4) `device_mode` / `face_policy` | pending |
-| B9 | [T3b](#t3b) `faceprints` as a list | pending |
+| **B7** | [T19](#t19) nonce removal + [T20](#t20) D21 ruling + [T8a](#t8a) `time_registry` guard | pending |
+| B8 | [T3b](#t3b) `faceprints` as a list | pending |
+| B9 | [T4](#t4) `device_mode` / `face_policy` | pending |
 | B10 | [T9](#t9) pre-emption + card-path backoff + unavailable screen | pending |
 | B11 | [T5b](#t5b) durable event queue | pending |
 | B12 | [T8](#t8) server half (attendance intake + journal) | pending |
