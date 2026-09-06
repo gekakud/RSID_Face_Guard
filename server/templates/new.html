@@ -46,6 +46,34 @@
       </div>
     </div>
 
+    <!-- Operating mode -->
+    <div class="rounded-md border border-slate-800 bg-slate-950/40 p-3">
+      <span class="{{ label }}">Operating mode</span>
+      <div class="mt-2 space-y-2 text-sm text-slate-300">
+        <label class="flex items-start gap-2">
+          <input type="radio" name="device_mode" value="card_and_face" class="mt-1" checked>
+          <span>Card + face
+            <span class="block text-xs text-slate-500">Tap a card, then the face is verified against that cardholder.</span>
+          </span>
+        </label>
+        <label class="flex items-start gap-2">
+          <input type="radio" name="device_mode" value="card_only" class="mt-1">
+          <span>Card only
+            <span class="block text-xs text-slate-500">A valid card opens the door immediately -- no camera.</span>
+          </span>
+        </label>
+        <label class="flex items-start gap-2">
+          <input type="radio" name="device_mode" value="face_only" class="mt-1">
+          <span>Face only
+            <span class="block text-xs text-slate-500">Tap the screen to start; no card reader is used.</span>
+          </span>
+        </label>
+      </div>
+      <p class="mt-2 text-xs text-slate-500">
+        Fixed for this binding -- changing it later means revoking and re-binding the device.
+      </p>
+    </div>
+
     <!-- Network -->
     <div class="rounded-md border border-slate-800 bg-slate-950/40 p-3">
       <span class="{{ label }}">Network</span>
@@ -317,6 +345,12 @@
     countdownTimer = setInterval(tick, 1000);
   }
 
+  const MODE_LABELS = {
+    card_and_face: "Card + face",
+    card_only: "Card only",
+    face_only: "Face only",
+  };
+
   function buildNetworkProfile() {
     const mode = document.querySelector("input[name=net_mode]:checked").value;
     if (mode === "wifi") {
@@ -344,10 +378,13 @@
       return showError("Wi-Fi needs both a network name and a password");
     }
 
+    const deviceMode = document.querySelector("input[name=device_mode]:checked").value;
+
     const data = {
       customer_id: customer,
       site_id: site,
       door_id: door,
+      device_mode: deviceMode,
       network_profile: netProfile,
       validity_minutes: Number($("validity_minutes").value),
     };
@@ -372,6 +409,7 @@
         ["Door", payload.payload.door_id],
         ["Site", payload.payload.site_id],
         ["Customer", payload.payload.customer_id],
+        ["Mode", MODE_LABELS[deviceMode] || deviceMode],
         ["Network", netLabel],
         ["Registers at", payload.payload.server_url],
         ["Expires", payload.expires_at],
