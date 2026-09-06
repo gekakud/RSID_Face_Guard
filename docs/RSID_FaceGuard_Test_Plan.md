@@ -161,8 +161,8 @@ per **FR-STATE-04/05**: the access decision must be identical in both cases.
 **Expected:** Both repeats are ignored (BR-04); no duplicate sessions.
 **Verifies:** FR-CARD-03/04.
 
-### 4.2 Face-only demo mode retry cadence
-**Pre:** `REQUIRE_CARD_TO_START_SESSION=False` (demo config only — not a production door mode).
+### 4.2 Face-only mode retry cadence
+**Pre:** `face_only` mode (provisioned by the server, or `config.DEVICE_MODE` when unbound).
 **Steps:** Tap the idle screen to start a 1:N session; present no face.
 **Expected:** Retries every `AUTH_RETRY_INTERVAL_SEC` (3 s) until `AUTH_SESSION_TIMEOUT_SEC` (30 s), then falls back to idle **silently** (no failure screen per FR-UI-06).
 **Verifies:** FR-SESS-04/05, FR-MODE-05, FR-UI-06.

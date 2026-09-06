@@ -31,7 +31,7 @@ Status legend: **✅ IMPLEMENTED** · **⚠️ PARTIAL** · **❌ MISSING** ·
 | Area | ✅ | ⚠️ | ❌ | ➖ |
 |---|---|---|---|---|
 | FR-STATE (12) | 8 | 0 | 0 | 4 *(06/08/10/12)* |
-| FR-MODE (11) | 4 | 1 | 6 | 0 |
+| FR-MODE (11) | 5 | 0 | 6 | 0 |
 | FR-SESS (8) | 7 | 1 | 0 | 0 |
 | FR-FACE (7) | 6 | 1 | 0 | 0 |
 | FR-CARD (6) | 5 | 1 | 0 | 0 |
@@ -47,11 +47,11 @@ Status legend: **✅ IMPLEMENTED** · **⚠️ PARTIAL** · **❌ MISSING** ·
 | FR-DATA (7) | 7 | 0 | 0 | 0 |
 | BR (7) | 6 | 1 | 0 | 0 |
 | NFR (22) | 22 | 0 | 0 | 0 |
-| **Total (156)** | **128** | **13** | **8** | **7** |
+| **Total (156)** | **129** | **12** | **8** | **7** |
 
-Active requirements: 149. **Compliance today: 128/149 = 86 %** (rev 1.3 stated
+Active requirements: 149. **Compliance today: 129/149 = 87 %** (rev 1.3 stated
 83 %; B7 closed FR-PROV-03 and NFR-14; the A7 ruling closed FR-DB-01 and
-FR-DATA-01 without a code change). Rev 1.1's 72 % was measured against a
+FR-DATA-01 without a code change; B9 closed FR-MODE-01). Rev 1.1's 72 % was measured against a
 summary table whose FR-STATE row summed to 10 of 12 and whose FR-DATA row
 contradicted its own detail section; both were corrected in rev 1.2.
 
@@ -76,9 +76,9 @@ contradicted its own detail section; both were corrected in rev 1.2.
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-MODE-01](SOFTWARE_REQUIREMENTS.md#fr-mode-01) | ⚠️ | **Device half done (rev 1.5).** `config.DEVICE_MODE` selects all four modes, validated at import, with `mode_uses_card_reader()` / `mode_uses_tap_to_wake()` derived; `DEMO_FACE_ONLY` / `REQUIRE_CARD_TO_START_SESSION` deleted. Still **not server-provisioned**: `device_mode` / `face_policy` have zero hits in `provisioning/` and `server/`, absent from `server/models.py` `RegisterResponse` and `provisioning/identity.py` `DeviceIdentity` → **[T4](#t4)** |
+| [FR-MODE-01](SOFTWARE_REQUIREMENTS.md#fr-mode-01) | ✅ | **T4 done (B9).** The mode is assigned server-side: `device_mode` on `GenerateQRRequest` (a `Literal` excluding `time_registry`) → `tokens` → `devices` → `RegisterResponse` → `DeviceIdentity.device_mode` → `main_web._apply_provisioned_mode()` → `config.set_device_mode()`, applied before the card reader is built. Falls back to `config.py` when unbound or when the identity carries no mode. `face_policy` moved to [T8](#t8) (`time_registry`-only) |
 | [FR-MODE-02](SOFTWARE_REQUIREMENTS.md#fr-mode-02) | ✅ | `face_auth/auth_service.py` `card_is_registered()` — DB-only check, no camera |
-| [FR-MODE-03](SOFTWARE_REQUIREMENTS.md#fr-mode-03) | ✅ | **T7 done.** `controller.on_card_detected()` routes to `_handle_card_only()` when `config.DEVICE_MODE == "card_only"`: DB + `active` check, relay pulse off the UI thread, result hold, no session and no preview. *Consistency nit:* the branch compares `getattr(config, "DEVICE_MODE", …) == "card_only"` directly rather than a `config.mode_*()` helper — fold into **[T4](#t4)** |
+| [FR-MODE-03](SOFTWARE_REQUIREMENTS.md#fr-mode-03) | ✅ | **T7 done.** `controller.on_card_detected()` routes to `_handle_card_only()`: DB + `active` check, relay pulse off the UI thread, result hold, no session and no preview. *Consistency nit closed in [T4](#t4) (B9)* — the branch now calls `config.mode_is_card_only()` rather than reading `DEVICE_MODE` directly |
 | [FR-MODE-04](SOFTWARE_REQUIREMENTS.md#fr-mode-04) | ✅ | `auth_service.py` `authenticate_with_card_and_face()` — 1:1 against the cardholder |
 | [FR-MODE-05](SOFTWARE_REQUIREMENTS.md#fr-mode-05) | ✅ | `auth_service.py` `authenticate_face_only()`, gated by `config.mode_uses_tap_to_wake()` via `controller.py` `on_user_tapped()`; `face_only` is now a first-class `DEVICE_MODE` (rev 1.5) and skips reader init in `main_web.py` / `gui_web/web_window.py` |
 > ⚠️ **`time_registry` refuses to start (T8a, B7).** The mode passes the
@@ -306,10 +306,9 @@ dependencies — everything else has shipped.
 
 | # | Task | Scope | Depends on | Requirements |
 |---|---|---|---|---|
-| [T4](#t4) | `device_mode` / `face_policy` **server plumbing** | device+server | — | FR-MODE-01 |
 | [T9](#t9) | Session edge cases + unavailable screen | device | — | FR-SESS-03, FR-CARD-04, FR-FACE-06, FR-UI-12, BR-04 |
 | [T5b](#t5b) | Durable event queue | device | — | FR-MODE-10 |
-| [T8](#t8) | `time_registry` mode | device+server | T4, T5b | FR-MODE-06..11, FR-API-15 |
+| [T8](#t8) | `time_registry` mode (incl. `face_policy` / `DIRECTION_SELECT_TIMEOUT_SEC`, moved from T4) | device+server | T5b | FR-MODE-06..11, FR-API-15 |
 | [T13](#t13) | HTTP error classification | device | — | FR-API-04 |
 | [T14](#t14) | Server rebinding + door scoping | server | — | FR-API-07/08/13 |
 | [T15](#t15) | Network profile defaults + password handling | device | — | FR-NET-03, FR-LOG-04 |
@@ -374,29 +373,71 @@ mismatch between FR-HB-10 and the code.
 
 ### Phase B — Mode plumbing and data shape
 
-#### <a id="t4"></a>T4. `device_mode` / `face_policy` plumbing (server half)
+#### <a id="t4"></a>T4. `device_mode` plumbing (server half) — **DONE (B9, 2026-09-06)**
 
-**Already done (rev 1.5).** `config.DEVICE_MODE` exists and selects all four
-modes, is validated at import (`DEVICE_MODES`, `ValueError` on a typo), and the
-`DEMO_FACE_ONLY` / `REQUIRE_CARD_TO_START_SESSION` flags are gone; callers use
-`config.mode_uses_card_reader()` / `config.mode_uses_tap_to_wake()`.
+**Scope narrowed at implementation.** `face_policy` and
+`DIRECTION_SELECT_TIMEOUT_SEC` were **dropped from T4** and moved to
+[T8](#t8): both are `time_registry`-only parameters, and `time_registry` is
+itself unimplemented and blocked at boot by [T8a](#t8a). Adding config knobs no
+code reads would be dead weight. T4 therefore covers `device_mode` only.
 
-**Do.** Add `device_mode` and `face_policy` to the register response, the QR
-envelope and the identity file; resolve at runtime as *server value →
-`config.py` fallback*. Add the still-missing `FACE_POLICY` and
-`DIRECTION_SELECT_TIMEOUT_SEC` to `config.py` (specified in
-[SRS §9.4](SOFTWARE_REQUIREMENTS.md#94-configuration-parameters) but absent from
-the module).
+**Was already done (rev 1.5).** `config.DEVICE_MODE` selects all four modes and
+callers use `config.mode_uses_card_reader()` / `config.mode_uses_tap_to_wake()`.
 
-**Files.** `server/models.py` (`RegisterResponse`), `server/main.py`
-(`generate_qr()`, `register_device()`); `provisioning/identity.py`
-(`DeviceIdentity`), `provisioning/client.py`; `config.py`;
-`session/controller.py`.
+**Done.**
+- `config.py`: validation moved out of import-time into
+  `set_device_mode(mode, source)` — the single assignment point, so a
+  server-supplied value cannot bypass the `DEVICE_MODES` / `time_registry`
+  checks the way a plain re-assignment would. The module-level default is
+  routed through it. Added `mode_is_card_only()`.
+- Server: `device_mode TEXT` on `tokens` and `devices`; `device_mode` on
+  `GenerateQRRequest` (a `DeviceMode` `Literal` **excluding `time_registry`**,
+  default `card_and_face`, so a bad mode is a 422 before it reaches the DB),
+  `RegisterResponse` and `DeviceSummary`; persisted in `generate_qr()` and
+  copied token-row → devices-row in `register_device()`, which falls back to
+  `card_and_face` for tokens minted before the column existed.
+- Device: `DeviceIdentity.device_mode`, populated in `provisioning/client.py`;
+  `main_web.py` `_apply_provisioned_mode()` applies it **before** device
+  discovery and card-reader init (the mode decides whether a reader is built at
+  all); `session/controller.py` now calls `config.mode_is_card_only()` instead
+  of reading `DEVICE_MODE` directly (closes the FR-MODE-03 consistency nit).
+- `provisioning/binding.py` reports *"Restart for `<mode>`"* when a re-bind
+  changes the mode.
 
-**Accept.** A device provisioned `card_and_face` runs it regardless of local
-config; with no server value the config fallback applies; the identity file
-round-trips both fields and an older file without them still loads
+**Deliberately not in the signed QR payload.** The mode travels in the
+registration *response*, authenticated by the one-time provisioning token —
+same trust level as `device_token`. Keeping it out of the QR avoids touching
+`signing.py` / `qr_scanner.py` and holds the QR at version 17, which the device
+camera can still read.
+
+**Resolution order.** Identity value → `config.py` fallback. A missing,
+corrupt or malformed identity, or one without the field (an older bound
+device), all fall back with a log line; an *invalid* mode string logs an error
+and keeps the fallback rather than blocking the door; `time_registry` is the
+one case that deliberately refuses to boot, since falling back would silently
+open the door for an attendance-only terminal.
+
+**Applied once at boot.** Per the stakeholder ruling
+([A8](SOFTWARE_REQUIREMENTS.md#a8)) a device keeps the mode it was bound with;
+changing it means revoke + re-bind + restart. No mid-run reader re-init.
+
+**Files.** `config.py`, `main_web.py`, `session/controller.py`,
+`provisioning/identity.py`, `provisioning/client.py`, `provisioning/binding.py`,
+`server/db.py`, `server/models.py`, `server/main.py`,
+`server/tests/test_provisioning.py`, `server/tests/conftest.py`.
+
+**Accept.** ✅ Round-trip covered by `server/tests/test_provisioning.py`
+(all three modes reach the device *and* the dashboard; unknown and
+`time_registry` modes rejected 422; mode absent from the signed payload;
+default applies when the QR omits it). Identity round-trip and tolerance of an
+older file without the field already covered by
+`test_load_tolerates_unknown_fields`
 ([FR-DATA-04](SOFTWARE_REQUIREMENTS.md#fr-data-04)).
+
+**Fixed en route (test isolation).** `server/tests/conftest.py` redirected
+`DB_PATH` to a temp dir but not `USER_STORE_FILE`, so every server test run
+rewrote the live `server/server_user_database.json` (1320 user entries).
+Now redirected to the same temp dir.
 
 ---
 
@@ -663,7 +704,7 @@ every dev box.
 | **B6** | [T3](#delivered) schema v2 (server, then device) | Implemented — awaiting device validation |
 | **B7** | [T19](#t19) nonce removal + [T20](#t20) D21 ruling + [T8a](#t8a) `time_registry` guard | Implemented 2026-09-06 — awaiting device validation |
 | ~~B8~~ | ~~[T3b](#t3b) `faceprints` as a list~~ | **cancelled 2026-09-06** — deferred by [A7](SOFTWARE_REQUIREMENTS.md#a7); [B9](#t4) is the next batch |
-| B9 | [T4](#t4) `device_mode` / `face_policy` | pending |
+| B9 | [T4](#t4) `device_mode` server plumbing | **Implemented 2026-09-06** — awaiting device validation |
 | B10 | [T9](#t9) pre-emption + card-path backoff + unavailable screen | pending |
 | B11 | [T5b](#t5b) durable event queue | pending |
 | B12 | [T8](#t8) server half (attendance intake + journal) | pending |
@@ -795,4 +836,40 @@ Nonce removal (T19), the D21 ruling (T20) and the `time_registry` guard (T8a).
    process **stays up** and returns to init mode in-process. This is now the
    *specified* behaviour, not a deviation.
 
-*(Per-batch checklists for B8+ are added when each batch is implemented.)*
+### B9 device checklist
+
+1. **Recreate the server DB** — `server/data/faceguard.db` gains `device_mode`
+   columns on `tokens` / `devices`. `CREATE TABLE IF NOT EXISTS` will **not**
+   add them to an existing file and no migration is provided: delete the file
+   and let the server recreate it. *(At implementation time `server/data/` was
+   empty, so nothing had to be deleted.)*
+2. **Dashboard selector** — open **Add a device**: the form shows an
+   **Operating mode** block with *Card + face* pre-selected, plus *Card only*
+   and *Face only*. `time_registry` is deliberately absent (it is rejected
+   server-side and blocked at boot by [T8a](#t8a)). Pick a mode and generate:
+   the result panel echoes it in the **Mode** row.
+3. **`card_and_face` (default)** — generate a QR leaving the default selected,
+   bind → `device_identity.json` shows `"device_mode": "card_and_face"`; the
+   device page **Mode** row shows the same. Restart: log line
+   `Device mode: card_and_face (provisioned by server)`. Card tap → face step.
+4. **`card_only`** — revoke, generate a QR with **Card only** selected,
+   re-bind. The bind screen shows **"Restart for card_only"**. Restart → a
+   registered card pulses the relay with **no camera and no session**.
+5. **`face_only`** — revoke, re-bind with **Face only** selected,
+   restart → **no card reader is initialised** (no `initialize_card_reader()`
+   line) and a screen tap starts a 1:N session.
+6. **Unbound fallback** — delete `device_identity.json`, restart → log shows
+   `Device mode: card_and_face (config.py fallback)` and the device boots into
+   init mode.
+7. **Older identity file** — add a `device_mode`-less identity (or edit the key
+   out) → boots on the `config.py` fallback, no crash. Confirms an
+   already-bound device is not bricked by the upgrade.
+8. **Corrupt identity** — truncate the file mid-JSON → boots on the fallback
+   with `Could not read device identity for mode (ignored)`, not a traceback.
+9. **Bad mode string** — hand-edit `"device_mode": "card-only"` → error logged,
+   device keeps `card_and_face` and still opens the door (a typo must not
+   disable the terminal).
+10. **Server rejects bad modes** — `POST /devices/generate-qr` with
+    `"device_mode": "time_registry"` or `"card-only"` → **422**, no token minted.
+
+*(Per-batch checklists for B10+ are added when each batch is implemented.)*

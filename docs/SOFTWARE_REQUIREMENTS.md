@@ -5,7 +5,7 @@
 | Item | Detail |
 |---|---|
 | Document ID | SRS-FG-001 |
-| Revision | 1.6 |
+| Revision | 1.8 |
 | Product | RSID Face Guard kiosk application |
 | Target platform | Raspberry Pi 5, 720×720 round touch display |
 | Biometric device | Intel RealSense ID F45x (`rsid_py` SDK) |
@@ -231,8 +231,12 @@ The terminal supports four mutually exclusive **device modes**.
 
 <a id="fr-mode-01"></a>**FR-MODE-01** The mode shall be provisioned **per door by the server**,
 returned in the registration response. `config.py` shall hold only an
-install-time fallback default. Retuning via the heartbeat response is future
-work ([§12.3](#123-out-of-scope-for-this-release)). *(Assumption [A1](#a1).)*
+install-time fallback default, used when the device is unbound or the stored
+identity carries no mode. The mode is applied **once at boot**, before the card
+reader is constructed, and is fixed for the process lifetime; changing a door's
+mode requires revoke → re-bind → restart. Retuning via the heartbeat response is
+future work ([§12.3](#123-out-of-scope-for-this-release)).
+*(Assumptions [A1](#a1), [A8](#a8).)*
 
 <a id="fr-mode-02"></a>**FR-MODE-02** In every mode, a card that is not present in the local door DB
 shall be rejected **before the camera is started** ([BR-02](#br-02)).
@@ -917,7 +921,7 @@ No auth: the provisioning token *is* the credential.
 // response
 { "device_id": "uuid", "device_token": "...", "heartbeat_interval_sec": 30,
   "customer_id": "acme", "site_id": "hq", "door_id": "main-entrance",
-  "device_mode": "card_and_face",          // NEW (FR-MODE-01)
+  "device_mode": "card_and_face",          // per-door mode (FR-MODE-01)
   "registered_at": "2026-07-27T15:02:00Z" }
 ```
 
@@ -1069,14 +1073,14 @@ suspend a user without deleting their enrolment.
 
 | Parameter | Purpose |
 |---|---|
-| `DEVICE_MODE` | Operating mode ([§4](#4-device-operating-modes)): `card_only` / `card_and_face` / `face_only` / `time_registry`. Validated at import — an unknown value raises `ValueError`. Fallback until the server provisions one ([FR-MODE-01](#fr-mode-01)) |
+| `DEVICE_MODE` | Operating mode ([§4](#4-device-operating-modes)): `card_only` / `card_and_face` / `face_only` / `time_registry`. **Install-time fallback only** — the server-provisioned value from the device identity overrides it at boot ([FR-MODE-01](#fr-mode-01), [A8](#a8)). Assigned exclusively through `set_device_mode(mode, source)`, which validates both this default and any server value: an unknown mode raises `ValueError`, `time_registry` raises `NotImplementedError` (T8a) |
 | `FACE_POLICY` **[NEW]** | `none` / `verify` — fallback time-registry face policy ([§4.3](#43-time-registry-mode-new)) |
 | `DIRECTION_SELECT_TIMEOUT_SEC` **[NEW]** | IN/OUT selection latch timeout |
 | `DB_MODE` | `local` (file only) or `remote` (periodic server sync) |
 | `USER_DB_FILE` | Local user/faceprint cache path |
 | `CARD_READER_BACKEND` | `gwiot_hid` / `wiegand_gpio` / `simulated` |
 | `SIMULATE_CARD_READER` | Derived from `CARD_READER_BACKEND`; selects the dev simulator |
-| `mode_uses_card_reader()`, `mode_uses_tap_to_wake()` | Derived from `DEVICE_MODE`: the reader is used in every mode except `face_only`; a screen tap wakes only in `face_only` ([FR-UI-08](#fr-ui-08)) |
+| `mode_uses_card_reader()`, `mode_uses_tap_to_wake()`, `mode_is_card_only()` | Derived from `DEVICE_MODE` **at call time**, so a mode applied at boot reaches every consumer: the reader is used in every mode except `face_only`; a screen tap wakes only in `face_only` ([FR-UI-08](#fr-ui-08)); `card_only` opens the relay with no face step ([FR-MODE-03](#fr-mode-03)) |
 | `AUTH_RETRY_INTERVAL_SEC`, `AUTH_SESSION_TIMEOUT_SEC` | Session cadence and bound |
 | `PREVIEW_LEAD_IN_MS` | Live-preview lead-in before the first match attempt ([NFR-03](#nfr-03)) |
 | `CUSTOM_THRESHOLD` | Score fallback acceptance threshold |
@@ -1252,6 +1256,17 @@ Verification methods: **T** = Test, **D** = Demonstration, **I** = Inspection,
   with no faceprints" is consequently **not** a supported configuration, and no
   device- or server-side capability is required to represent one.
 
+- <a id="a8"></a>**A8** *(Stakeholder ruling 2026-09-06.)* **A device does not
+  change operating mode while bound.** The mode is assigned once, at
+  provisioning, and the device keeps it for the life of the binding; changing a
+  door's mode means revoke → re-bind → restart. The mode is therefore resolved
+  **once at boot**, before the card reader is constructed, and is fixed for the
+  process lifetime — there is no mid-run reader re-initialisation. The mode is
+  delivered in the registration *response* rather than the signed QR payload:
+  it is authenticated by the one-time provisioning token (the same trust level
+  as `device_token`), and keeping it out of the QR holds the code at version 17,
+  which the device camera can reliably read.
+
 ### 12.2 Known deviations (specification vs. current build)
 
 Established by static code audit 2026-08-26; **re-verified against the working
@@ -1267,7 +1282,7 @@ list.
 | <a id="d1"></a>D1 | [FR-HB-10](#fr-hb-10) revocation is fail-secure | *Was:* `binding.py` cleared the identity only; the local DB was retained and the door kept opening; no `device_revoked` event | ✅ **Resolved** (T6/B5) — `provisioning/binding.py` `_handle_revoked` emits + flushes `device_revoked` while still bound, stops the heartbeat, deletes the identity, purges the user DB incl. faceprints (`db/user_database.py` `detach_remote`) and re-enters init mode. Step 6 (self-restart) diverges → [D21](#d21) |
 | <a id="d2"></a>D2 | [FR-MODE-03](#fr-mode-03) `card_only` | *Was:* face always ran when a reader was present | ✅ **Resolved** (T7) — `config.DEVICE_MODE == "card_only"` routes `session/controller.py` `on_card_detected()` into `_handle_card_only()`: relay pulse, result hold, no session and no camera |
 | <a id="d3"></a>D3 | [FR-MODE-06](#fr-mode-06)..[FR-MODE-11](#fr-mode-11) time registry | Not implemented | **Implement** (T8) |
-| <a id="d4"></a>D4 | [FR-MODE-01](#fr-mode-01) server-provisioned mode | **Partly closed (rev 1.5).** `config.DEVICE_MODE` now exists and selects all four modes (`card_only`, `card_and_face`, `face_only`, `time_registry`), validated at import, with `mode_uses_card_reader()` / `mode_uses_tap_to_wake()` derived from it; the obsolete `DEMO_FACE_ONLY` and `REQUIRE_CARD_TO_START_SESSION` flags were deleted. **Still local-only**: `device_mode` / `face_policy` have zero hits across `provisioning/` and `server/`, so nothing is provisioned by the server | **Implement remaining half** (T4) |
+| <a id="d4"></a>D4 | [FR-MODE-01](#fr-mode-01) server-provisioned mode | ✅ **Resolved** (T4/B9, 2026-09-06) — the mode is assigned server-side at provisioning: `device_mode` on the generate-QR request (validated, `time_registry` excluded) → `tokens` → `devices` → registration response → `DeviceIdentity.device_mode` → `config.set_device_mode()`, applied at boot before the card reader is built, with `config.py` as the fallback when unbound. `face_policy` / `DIRECTION_SELECT_TIMEOUT_SEC` deferred to T8 as `time_registry`-only | — |
 | <a id="d5"></a>D5 | [FR-MODE-10](#fr-mode-10) durable attendance queue | Events are in-memory only, capped at 200 | **Implement** (T5) |
 | <a id="d6"></a>D6 | [FR-UI-09](#fr-ui-09) PIN path disabled | ✅ **Resolved (rev 1.5)** — keypad markup, styles, JS state machine and `Bridge.codeSubmitted()` removed outright; no `keypad`/`codeApproved`/`setExpectedCode` references remain in `demo_ui/` or `gui_web/`. The hardcoded `"1234"` is gone from both former sites | Closed (T18) |
 | <a id="d7"></a>D7 | [FR-API-12](#fr-api-12) mode/interval refresh | Heartbeat response is not consumed for config | Deferred — moved to future work ([§12.3](#123-out-of-scope-for-this-release)), rev 1.2 |
@@ -1312,5 +1327,6 @@ list.
 | 1.5 | 2026-09-02 | design change | **`face_only` promoted to a fourth first-class device mode** (§4, FR-MODE-05): `DEVICE_MODE` now selects `card_only` / `card_and_face` / `face_only` / `time_registry`, and the `DEMO_FACE_ONLY` flag plus the derived `REQUIRE_CARD_TO_START_SESSION` were deleted. FR-UI-08, FR-SESS-03 and FR-SESS-04 reworded off "demo face-only". **Keypad/PIN path removed outright** — D6 closed, T18 delivered, FR-UI-09 restated as "shall not exist". §3 state diagram splits the `card_and_face` and `face_only` session triggers; FR-UI-06 reworded off "demo"; §9.4 drops `REQUIRE_CARD_TO_START_SESSION` and documents `DEVICE_MODE` plus the derived `mode_uses_card_reader()` / `mode_uses_tap_to_wake()` helpers; D2 closed (`card_only` shipped as T7), D4 marked half-closed (mode is local-only until T4) |
 | 1.6 | 2026-09-06 | B7 delivery | **D12 and D21 closed.** T19 removed the device-side nonce set (`qr_scanner.py` `QRScanner.__init__()` / `_verify()`), leaving replay protection server-side on the single-use provisioning token; the module docstring and FR-PROV-03 / NFR-14 evidence updated. T20 ruled **spec-follows-code** on revocation restart semantics: FR-HB-10 step 6, the §3 state diagram (`Revoked --> InitMode: in-process reset`), the `revoked` state row and NFR-21 now specify the **in-process** return to `init_mode` rather than a systemd self-restart — no code change. T8a added a `NotImplementedError` guard in `config.py` for the unimplemented `time_registry` mode, which previously validated but silently behaved like `card_and_face` |
 | 1.7 | 2026-09-06 | stakeholder ruling | **A7 added: every enrolled user carries a faceprint in every mode.** `card_only` is a property of a *door*, not of a *person* — site personnel are enrolled once and are the same people at every door — so "a user with no faceprints" is not a supported configuration. FR-DATA-01 and FR-DB-01 reworded from "zero or more" to "one or more" faceprints; §9.1 record comment updated. **D9 downgraded from "Implement (device + server)" to "Accepted for now"**: its `card_only` sync-drop rationale no longer applies, leaving only multi-faceprint re-enrolment, which is deferred. T3b deferred accordingly in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) |
+| 1.8 | 2026-09-06 | B9 delivery | **D4 closed: the operating mode is now server-provisioned (T4).** `device_mode` travels generate-QR request → `tokens` → `devices` → registration response → `DeviceIdentity` → `config.set_device_mode()`, applied at boot before the card reader is constructed, with `config.py` as the fallback when the device is unbound or its identity carries no mode. **A8 added**: a device does not change mode while bound — the mode is fixed for the process lifetime and changing a door's mode means revoke → re-bind → restart; the mode is delivered in the registration *response*, not the signed QR payload, keeping the code at version 17. FR-MODE-01 reworded accordingly; §9.4 documents `set_device_mode(mode, source)` as the sole assignment point (validating the local default and any server value alike) and adds `mode_is_card_only()`. `face_policy` / `DIRECTION_SELECT_TIMEOUT_SEC` **moved from T4 to T8** as `time_registry`-only, and `time_registry` is excluded from the provisionable modes since [T8a](IMPLEMENTATION_PLAN.md#t8a) blocks it at boot |
 
 

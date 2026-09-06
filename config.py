@@ -102,6 +102,11 @@ def mode_is_card_only() -> bool:
 # Set True on RPi5 with the small 720x720 touch screen
 RUN_ON_REAL_SCREEN = True
 
+# Kiosk mode switch:
+#   True  -> fullscreen, no title bar / border on the small display (kiosk).
+#   False -> normal draggable, bordered window (handy for editor-side debugging).
+KIOSK_BORDERLESS = True
+
 # Session-based authentication: the camera preview stays OFF while idle and
 # only turns on for an active auth "session" -- triggered by a valid card tap
 # (card modes) or a screen tap (face_only).
@@ -119,11 +124,6 @@ AUTH_SESSION_TIMEOUT_SEC = 10.0
 # frames reach the screen first. Set to 0 to restore the old fire-immediately
 # behaviour (NFR-03).
 PREVIEW_LEAD_IN_MS = 700
-
-# Kiosk mode switch:
-#   True  -> fullscreen, no title bar / border on the small display (kiosk).
-#   False -> normal draggable, bordered window (handy for editor-side debugging).
-KIOSK_BORDERLESS = False
 
 # Init mode: init mode is the entry state on every start (rev 1.3 / T16). The
 # app always enters init mode first -- a brief live camera preview that scans
