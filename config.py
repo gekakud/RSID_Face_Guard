@@ -105,7 +105,7 @@ RUN_ON_REAL_SCREEN = True
 # Kiosk mode switch:
 #   True  -> fullscreen, no title bar / border on the small display (kiosk).
 #   False -> normal draggable, bordered window (handy for editor-side debugging).
-KIOSK_BORDERLESS = True
+KIOSK_BORDERLESS = False
 
 # Session-based authentication: the camera preview stays OFF while idle and
 # only turns on for an active auth "session" -- triggered by a valid card tap
