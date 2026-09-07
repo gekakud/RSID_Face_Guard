@@ -199,12 +199,14 @@ class AuthService:
 
     @staticmethod
     def _to_rsid_faceprints(fp: dict) -> rsid_py.Faceprints:
+        # adaptive_descriptor_withmask is deliberately not set: it is deprecated
+        # in the SDK and the constructor already zero-fills it, which is what
+        # the matcher needs to fall back to the nomask vector.
         db_faceprints = rsid_py.Faceprints()
         db_faceprints.version = fp['version']
         db_faceprints.features_type = fp['features_type']
         db_faceprints.flags = fp['flags']
         db_faceprints.adaptive_descriptor_nomask = fp['adaptive_descriptor_nomask']
-        db_faceprints.adaptive_descriptor_withmask = fp['adaptive_descriptor_withmask']
         db_faceprints.enroll_descriptor = fp['enroll_descriptor']
         return db_faceprints
 

@@ -22,7 +22,6 @@ SAMPLE_FACEPRINTS = {
     "features_type": 0,
     "flags": 3,
     "adaptive_descriptor_nomask": [1, 2, 3],
-    "adaptive_descriptor_withmask": [0, 0, 0],
     "enroll_descriptor": [1, 2, 3],
 }
 

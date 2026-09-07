@@ -26,11 +26,20 @@ log = get_logger("db")
 # without crashing the whole sync.
 _REQUIRED_FACEPRINTS_KEYS = ("version", "features_type", "flags", "adaptive_descriptor_nomask")
 
+# Keys kept when caching a faceprints object. adaptive_descriptor_withmask is
+# deprecated and unused by matching, so it is dropped here rather than stored;
+# a server still sending it is tolerated, not rejected.
+_KEPT_FACEPRINTS_KEYS = _REQUIRED_FACEPRINTS_KEYS + ("enroll_descriptor",)
+
 
 def _is_valid_faceprints(faceprints) -> bool:
     if not isinstance(faceprints, dict):
         return False
     return all(k in faceprints for k in _REQUIRED_FACEPRINTS_KEYS)
+
+
+def _strip_faceprints(faceprints: dict) -> dict:
+    return {k: v for k, v in faceprints.items() if k in _KEPT_FACEPRINTS_KEYS}
 
 
 class RemoteUserDataProvider:
@@ -155,5 +164,5 @@ class RemoteUserDataProvider:
             "name": user_data.get("name", ""),
             "active": bool(user_data.get("active", True)),
             "permission_level": user_data.get("permission_level", "User"),
-            "faceprints": faceprints,
+            "faceprints": _strip_faceprints(faceprints),
         }
