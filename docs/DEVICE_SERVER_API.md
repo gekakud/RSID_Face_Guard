@@ -3,7 +3,7 @@
 | Item | Detail |
 |---|---|
 | Document ID | API-FG-001 |
-| Revision | 1.1 (2026-09-07) |
+| Revision | 1.2 (2026-09-07) |
 | Audience | Server / dashboard developer |
 | Scope | **Only** the endpoints the terminal and the technician app call |
 | Companion | [SOFTWARE_REQUIREMENTS.md](SOFTWARE_REQUIREMENTS.md) — device-side spec, not required reading |
@@ -395,8 +395,7 @@ A map keyed by **card/badge id**:
       "version": 9,
       "features_type": 0,
       "flags": 3,
-      "adaptive_descriptor_nomask": [ /* exactly 515 ints */ ],
-      "enroll_descriptor":          [ /* exactly 515 ints */ ]
+      "adaptive_descriptor_nomask": [ /* exactly 515 ints */ ]
     }
   }
 }
@@ -439,28 +438,44 @@ opaque JSON.
 | `features_type` | int | **yes** | `0` = W10, `1` = RGB. `0` in practice. |
 | `flags` | int | **yes** | SDK operation flags; `3` (`OpFlagEnrollWithoutMask`) in practice. |
 | `adaptive_descriptor_nomask` | array of int | **yes** | **Exactly 515** elements. The vector every match is scored against. |
-| `enroll_descriptor` | array of int | **yes** | **Exactly 515** elements. The immutable enrolment vector. |
 
 **The 515 length is a hard requirement, not a guideline.** It is 512
 recognition features plus 3 extra slots. Element values are signed and must lie
 within **±1023**; the SDK's matcher rejects any vector outside that range.
 
 **Index 512 is a flag slot, not a feature.** It carries `2`
-(`VecFlagValidWithoutMask`) in both descriptors; indices 513 and 514 are zero.
-A payload that trims the arrays to 512 "real" features destroys this slot and
-breaks matching.
+(`VecFlagValidWithoutMask`); indices 513 and 514 are zero. A payload that trims
+the array to 512 "real" features destroys this slot and breaks matching.
 
-#### `adaptive_descriptor_withmask` — do not send
+#### Two descriptors you should not send
 
-Older data and the vendor's own samples carry a third descriptor,
-`adaptive_descriptor_withmask`. **Do not include it.** It is deprecated in the
-SDK, it is all zeros in every real record, and it never contributes to a match:
-the matcher only consults it when the *live* face is masked **and** the stored
-vector is flagged valid, which zeros never are — so every match, masked or not,
-scores against `adaptive_descriptor_nomask`.
+The SDK structure, older data and the vendor's own samples carry two further
+515-element descriptors. **Omit both.** The terminal ignores them if present —
+so sending them is harmless, just wasteful — but together they are roughly
+**two thirds** of the payload for no information at all.
 
-The terminal ignores the key if it is present, so sending it is harmless but
-pure waste — roughly **18%** of the payload for no information at all.
+`adaptive_descriptor_withmask` is **deprecated in the SDK**. It is all zeros in
+every real record and never contributes to a match: the matcher consults it
+only when the *live* face is masked **and** the stored vector is flagged valid,
+which zeros never are. Every match, masked or not, scores against
+`adaptive_descriptor_nomask`.
+
+`enroll_descriptor` is not deprecated, merely **unused**. It is the immutable
+enrolment vector, and the SDK never reads it on the match path: it serves only
+as an anchor for adaptive learning, consulted *after* the score and verdict are
+decided. Since the terminal does not implement adaptive learning — it discards
+the SDK's updated faceprints — the field has no effect on any decision. It is
+also byte-identical to `adaptive_descriptor_nomask` for every user who has
+never been re-enrolled, which is every user today.
+
+The terminal sets only the fields matching reads, so it neither requires nor
+uses `enroll_descriptor`.
+
+> Should adaptive learning ever be implemented, this field becomes meaningful
+> and would be reinstated as a required key in a future revision of this
+> contract. Until then, do not send it — a value copied from
+> `adaptive_descriptor_nomask` would be a fabricated enrolment vector rather
+> than a real one.
 
 ### 5.3 How a malformed record fails
 
@@ -468,9 +483,8 @@ Worth understanding, because a bad record does not always fail cleanly:
 
 | Fault | What the terminal does |
 |---|---|
-| Missing `user_id`, or `faceprints` missing one of `version` / `features_type` / `flags` / `adaptive_descriptor_nomask` | **Clean skip.** The record is dropped at sync and `db_sync_invalid_record` is emitted. The rest of the payload is unaffected. This is the good outcome. |
-| Missing `enroll_descriptor` | Passes sync, then fails when that user presents their face. The failure is reported as a **`hardware_error`** and **blocks all authentication for 20 s**, recurring on every attempt. One bad record degrades the whole door, and the dashboard names the wrong subsystem. |
-| Descriptor length ≠ 515 | Identical to the above — the SDK setter rejects the array at match time. |
+| Missing `user_id`, or `faceprints` missing any of its four required keys | **Clean skip.** The record is dropped at sync and `db_sync_invalid_record` is emitted. The rest of the payload is unaffected. This is the good outcome. |
+| `adaptive_descriptor_nomask` length ≠ 515 | Passes sync, then fails when that user presents their face — the SDK rejects the array. The failure is reported as a **`hardware_error`** and **blocks all authentication for 20 s**, recurring on every attempt. One bad record degrades the whole door, and the dashboard names the wrong subsystem. |
 | Wrong `version` | No error at all. The matcher silently refuses every comparison, so **every user is denied** with nothing in telemetry naming the cause. |
 
 Only the first row is fail-clean. Treat `db_sync_invalid_record` and
@@ -508,9 +522,11 @@ response is dropped locally**, faceprints and all. Consequences:
   door, or an error. Partial success shall be reported as `5xx`.
 - **API-USR-03** `user_id` and a valid `faceprints` object shall be present on
   every record.
-- **API-USR-06** Every faceprint descriptor shall be an array of **exactly
-  515** integers within ±1023, with all five keys of §5.2 present.
-- **API-USR-07** `adaptive_descriptor_withmask` shall not be sent.
+- **API-USR-06** `adaptive_descriptor_nomask` shall be an array of **exactly
+  515** integers within ±1023, and all four required keys of §5.2 shall be
+  present.
+- **API-USR-07** `adaptive_descriptor_withmask` and `enroll_descriptor` should
+  not be sent (§5.2).
 - **API-USR-04** The bearer token shall be checked to belong to the
   `device_id` in the path (`403` otherwise), so one terminal cannot read
   another's user set.
@@ -858,8 +874,8 @@ Users
 - [ ] Door-scoped — no cross-door leakage
 - [ ] Complete set or `5xx`; never a partial `200`
 - [ ] `user_id` + valid `faceprints` on every record
-- [ ] Every descriptor exactly **515** ints within ±1023
-- [ ] `adaptive_descriptor_withmask` **not** sent
+- [ ] `adaptive_descriptor_nomask` exactly **515** ints within ±1023
+- [ ] `adaptive_descriptor_withmask` and `enroll_descriptor` **not** sent
 - [ ] Bearer token scoped to the path `device_id`
 
 Revocation
@@ -887,3 +903,4 @@ Heartbeat
 |---|---|---|
 | 1.0 | 2026-09-07 | Initial contract, extracted from SRS-FG-001 rev 1.8 and reconciled against the working tree |
 | 1.1 | 2026-09-07 | §5 rewritten against real data: corrected `version` (9), `flags` (3) and `user_id` (opaque scalar), documented the **515**-element descriptor requirement and the ±1023 range, and dropped `adaptive_descriptor_withmask` — deprecated, all-zero and never scored, now removed device-side too. Added §5.3 (how malformed records fail) and **§7 Revocation**, which was previously absent: the state machine, why a hard delete defeats revocation, and `410` on the users endpoint. Sections renumbered from §7 onward |
+| 1.2 | 2026-09-07 | `enroll_descriptor` dropped from the wire: it is never read on the match path and is byte-identical to `adaptive_descriptor_nomask` for every never-re-enrolled user. The faceprints object is down to **four** required keys — about a third of the original payload. The terminal now sets only the fields matching reads, leaving both unused descriptors zero-filled by the SDK constructor. §5.2 documents why each is omitted; §5.3 loses the "missing `enroll_descriptor`" failure row, which no longer exists |
