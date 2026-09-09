@@ -8,24 +8,6 @@
 | Scope | **Only** the endpoints the terminal and the technician app call |
 | Companion | [SOFTWARE_REQUIREMENTS.md](SOFTWARE_REQUIREMENTS.md) — device-side spec, not required reading |
 
-## 0. How to read this document
-
-This is the complete contract between the RSID Face Guard terminal and the
-dashboard server. It is self-contained: implementing exactly what is written
-here is sufficient for a terminal to provision, sync users, open doors and
-report telemetry.
-
-Everything *else* about the dashboard — customers, sites, doors, operator
-accounts, user enrolment UI, reporting, the database schema — is out of scope
-here and entirely yours. The reference implementation in `server/` is a
-throwaway test harness used to develop the device; **do not treat it as a
-design to copy.** Where its behaviour and this document disagree, this
-document wins, and §10 lists the known divergences.
-
-**Shall** = mandatory. **Should** = recommended.
-
----
-
 ## 1. Trust model in one page
 
 Three things establish trust, in this order:
@@ -86,7 +68,7 @@ required part of this contract: see [§7](#7-revocation--removing-a-terminal).
   - `404` / `409` / `400` on register — permanent, actionable failures whose
     `detail` string is shown to the technician on the kiosk screen.
   - **`410` — this device has been removed.** Irreversible and destructive on
-    the terminal. See §6.3.
+    the terminal. See [§6.3](#63-410-gone--device-removal-and-what-it-destroys).
   - `5xx` — transient; the terminal backs off and retries.
 - **Error bodies** — return a JSON object with a human-readable `detail`
   string: `{"detail": "Provisioning token already used"}`. On registration
@@ -189,7 +171,7 @@ exactly these fields.
   value is rejected.
 - `server_url` is your public base URL. The terminal registers against it and
   stores it — get this right or the device binds to an unreachable host.
-- `device_mode` is deliberately **not** in the QR. See §3.3.
+- `device_mode` is deliberately **not** in the QR. See [§3.3](#33-why-devicemode-is-not-in-the-qr).
 
 ### 3.2 Signing — the canonical JSON rule
 
@@ -231,7 +213,7 @@ both once before writing your own.
 ### 3.3 Why `device_mode` is not in the QR
 
 The mode is authenticated by the one-time provisioning token instead, arriving
-in the **registration response** (§4). Two reasons:
+in the **registration response** ([§4](#4-post-devicesregister--redeem-the-token)). Two reasons:
 
 - **QR size.** The signed envelope is ~600 characters, which renders at QR
   version 17 with error-correction level L. That is the largest symbol the
@@ -259,19 +241,6 @@ provisioning QR as safe to email, print, or leave on a screen.
   implementation retries up to 6 times. A QR that a decoder cannot read is
   worse than an error, because the technician discovers it at the door.
 
-### 3.6 Requirements
-
-- **API-QR-01** The envelope shall be Ed25519-signed per §3.2, with a short
-  validity window and a fresh single-use nonce per mint.
-- **API-QR-02** `command` shall be `provision_device`; no other command shall
-  be minted.
-- **API-QR-03** The `key_id` shall identify a key whose public half is
-  deployed to the target terminals' trust stores.
-- **API-QR-04** `device_mode` shall be persisted against the minted token and
-  carried through to the registration response.
-- **API-QR-05** `time_registry` shall be rejected as a `device_mode` until the
-  device half ships.
-
 ---
 
 ## 4. `POST /devices/register` — redeem the token
@@ -279,6 +248,85 @@ provisioning QR as safe to email, print, or leave on a screen.
 The terminal calls this after verifying a QR offline, and after joining the
 Wi-Fi network if the QR carried one. **No bearer auth**: the provisioning
 token *is* the credential.
+
+### Sequence diagram
+
+End-to-end registration, from QR mint ([§3](#3-post-devicesgenerate-qr--mint-a-provisioning-qr)) through token
+redemption ([§4](#4-post-devicesregister--redeem-the-token)). Numbers in brackets point at the rule that governs the step.
+
+```
+   +------------------------------------------------------------------+
+   | 1  OPERATOR  -->  SERVER          POST /devices/generate-qr      |
+   |                                                                  |
+   |    { customer_id, site_id, door_id, device_mode,                 |
+   |      network_profile }                                           |
+   +------------------------------------------------------------------+
+                                     |
+                                     v
+   +------------------------------------------------------------------+
+   | 2  SERVER  (mint + sign)                                         |
+   |                                                                  |
+   |    - mint one-time provisioning token + fresh nonce              |
+   |    - build envelope, sign canonical JSON w/ Ed25519  (3.2)       |
+   |    - render QR, self-decode to verify it reads  (3.5)            |
+   |                                                                  |
+   |    -> { token, nonce, issued_at, expires_at, qr_png }            |
+   +------------------------------------------------------------------+
+                                     |
+                                     v
+   +------------------------------------------------------------------+
+   | 3  TECHNICIAN  -->  TERMINAL      QR held up to the camera       |
+   |                                                                  |
+   |    verified OFFLINE - no network call:                           |
+   |    - Ed25519 signature vs. public key in trust store             |
+   |    - schema + command literals, expires_at                       |
+   |    - joins Wi-Fi if network_profile.mode == "wifi"               |
+   +------------------------------------------------------------------+
+                                     |
+                                     v
+   +------------------------------------------------------------------+
+   | 4  TERMINAL  -->  SERVER          POST /devices/register         |
+   |                                   (no bearer auth)               |
+   |                                                                  |
+   |    { token, nonce, mac, device_type, fw_version,                 |
+   |      app_version }        <- all but token may be null           |
+   +------------------------------------------------------------------+
+                                     |
+                                     v
+   +------------------------------------------------------------------+
+   | 5  SERVER  (redeem)                                              |
+   |                                                                  |
+   |    - token known? unused? not expired?  (4.2)                    |
+   |    - nonce matches the token row?                                |
+   |    - burn token + create-or-replace binding, one txn  (4.1)      |
+   +------------------------------------------------------------------+
+                                     |
+                                     v
+   +------------------------------------------------------------------+
+   | 6  SERVER  -->  TERMINAL          200                            |
+   |                                                                  |
+   |    { device_id, device_token, heartbeat_interval_sec,            |
+   |      customer_id, site_id, door_id, device_mode,                 |
+   |      registered_at }                                             |
+   |                                                                  |
+   |    terminal persists it atomically at 0600, then starts          |
+   |    heartbeating every heartbeat_interval_sec                     |
+   +------------------------------------------------------------------+
+```
+
+On failure at step 5 nothing is bound, and the technician sees why:
+
+```
+   +------------------------------------------------------------------+
+   | x  SERVER  -->  TERMINAL          404 / 409 / 400                |
+   |                                                                  |
+   |    { "detail": "Provisioning token already used -- generate      |
+   |                 a new QR" }                                      |
+   |                                                                  |
+   |    no binding is created; detail is shown verbatim to the        |
+   |    technician on the kiosk screen                                |
+   +------------------------------------------------------------------+
+```
 
 ### Request
 
@@ -347,8 +395,7 @@ the existing row: new `door_id`, new `device_mode`, new `device_token`. The
 old `device_token` shall stop working.
 
 Getting this wrong leaks a stale device row per re-provisioning, each still
-holding a valid token and still counted as a device at its old door. *(The
-reference server currently gets this wrong — see §10.)*
+holding a valid token and still counted as a device at its old door.
 
 ### 4.2 Token expiry is checked twice
 
@@ -357,21 +404,6 @@ you. Check it again anyway. A terminal could be replaying an old capture, and
 the server never delegates that decision — this, plus single-use tokens, is
 the *entire* replay defence. Terminals deliberately keep no nonce history:
 a replayed QR passes local checks and then fails registration.
-
-### 4.3 Requirements
-
-- **API-REG-01** The provisioning token shall be single-use. Burn it in the
-  same transaction that creates or updates the device, so a crash between the
-  two cannot leave a redeemable token pointing at a live device.
-- **API-REG-02** Token expiry shall be re-checked server-side.
-- **API-REG-03** If `nonce` is supplied it shall be cross-checked against the
-  token record.
-- **API-REG-04** Re-registration shall replace the prior binding and
-  invalidate the previous `device_token` (§4.1).
-- **API-REG-05** `device_token` shall be stored hashed, never in plaintext,
-  and never logged.
-- **API-REG-06** Failure responses shall carry a technician-actionable
-  `detail`.
 
 ---
 
@@ -414,7 +446,7 @@ canonical shape** — emit that.
 | `name` | no | Display name, shown on the welcome screen. Defaults to `""`. |
 | `active` | no | `false` = retained but never authorising. Defaults to `true`. |
 | `permission_level` | no | **Informational only.** The device performs no permission check. Defaults to `"User"`. |
-| `faceprints` | **yes** | RealSense ID SDK faceprint object, per §5.2. A record without a valid one is **skipped**. |
+| `faceprints` | **yes** | RealSense ID SDK faceprint object, per [§5.2](#52-the-faceprints-object). A record without a valid one is **skipped**. |
 
 > **Every enrolled person carries a faceprint, in every mode.** `card_only` is
 > a property of a *door*, not of a *person* — the people on a site are the same
@@ -434,7 +466,7 @@ opaque JSON.
 
 | Key | Type | Required | Legal values |
 |---|---|---|---|
-| `version` | int | **yes** | Faceprints schema version, currently **9**. Must match the device firmware's version (§5.3). |
+| `version` | int | **yes** | Faceprints schema version, currently **9**. Must match the device firmware's version ([§5.3](#53-how-a-malformed-record-fails)). |
 | `features_type` | int | **yes** | `0` = W10, `1` = RGB. `0` in practice. |
 | `flags` | int | **yes** | SDK operation flags; `3` (`OpFlagEnrollWithoutMask`) in practice. |
 | `adaptive_descriptor_nomask` | array of int | **yes** | **Exactly 515** elements. The vector every match is scored against. |
@@ -514,25 +546,6 @@ response is dropped locally**, faceprints and all. Consequences:
   clears, expires or invalidates cached users; only a *successful,
   well-formed* response replaces them.
 
-### 5.5 Requirements
-
-- **API-USR-01** The payload shall be door-scoped; a terminal shall never
-  receive users from another door.
-- **API-USR-02** The payload shall be the complete authorised set for that
-  door, or an error. Partial success shall be reported as `5xx`.
-- **API-USR-03** `user_id` and a valid `faceprints` object shall be present on
-  every record.
-- **API-USR-06** `adaptive_descriptor_nomask` shall be an array of **exactly
-  515** integers within ±1023, and all four required keys of §5.2 shall be
-  present.
-- **API-USR-07** `adaptive_descriptor_withmask` and `enroll_descriptor` should
-  not be sent (§5.2).
-- **API-USR-04** The bearer token shall be checked to belong to the
-  `device_id` in the path (`403` otherwise), so one terminal cannot read
-  another's user set.
-- **API-USR-05** Faceprints are biometric data. They shall be transported over
-  HTTPS only and shall never be written to ordinary logs.
-
 ---
 
 ## 6. `POST /devices/{device_id}/status` — heartbeat and events
@@ -571,7 +584,7 @@ open their own.
 `metadata` shall be treated as an **open object**. Its keys are diagnostic and
 will grow between device releases; store it as JSON and do not validate its
 shape or reject unknown keys. `events` is the one key with contractual
-meaning — pull it out and handle it per §6.1.
+meaning — pull it out and handle it per [§6.1](#61-events--acknowledgement-and-idempotency).
 
 ### Response — `200`
 
@@ -616,7 +629,7 @@ this list will grow; an unknown type shall be stored, never rejected.
 | `auth_matched` | Biometric match, before the access decision |
 | `relay_opened` | Relay actuated |
 | `card_unregistered` | Card not in the local set |
-| `attendance_event` | IN/OUT registration: `user_id`, `direction`, `ts` — see §8 |
+| `attendance_event` | IN/OUT registration: `user_id`, `direction`, `ts` — see [§8](#8-attendance--timeregistry-mode-not-yet-active) |
 | `device_boot` / `device_shutdown` | Lifecycle |
 | `device_revoked` | Sent while still bound, immediately before the terminal destroys its credential |
 | `init_mode_entered` | Entered the provisioning scan window |
@@ -660,25 +673,6 @@ Delete a tombstone only after the device has acknowledged (i.e. after you have
 answered `410` at least once and, ideally, received its `device_revoked`
 event). A device that is powered off at removal time will be told on its next
 boot; a device that never comes back keeps its tombstone harmlessly.
-
-### 6.4 Requirements
-
-- **API-HB-01** `2xx` shall be returned only after every listed event is
-  durably persisted.
-- **API-HB-02** Events shall be deduplicated by `event_id` (insert-or-ignore).
-- **API-HB-03** Unknown event types and unknown `metadata` keys shall be
-  stored, never rejected.
-- **API-HB-04** `410` shall be returned **only** to mean "this device has been
-  removed", and the device row shall be retained as a tombstone so the
-  response can be delivered.
-- **API-HB-05** The heartbeat that follows a `410` shall be accepted and its
-  events ingested.
-- **API-HB-06** The bearer token shall be checked to belong to the path
-  `device_id` (`403` otherwise).
-- **API-HB-07** Transient server-side failures shall be reported as `5xx`, not
-  `4xx` — terminals treat `4xx` as permanent.
-- **API-HB-08** Status history should be bounded. A terminal beating every
-  30 s produces ~2,900 rows per day, indefinitely.
 
 ---
 
@@ -739,8 +733,7 @@ off. Consequences:
   an operator knows whether the terminal has actually wiped itself.
 - **`GET /devices/{device_id}/users` should also answer `410`** once a device is
   suspended. Otherwise a revoked terminal can still refresh its full user set
-  in the window before its next heartbeat. The harness does not do this — see
-  [§10](#10-known-divergences-in-the-reference-server).
+  in the window before its next heartbeat.
 
 ### 7.5 What the device does, and what you will see
 
@@ -762,21 +755,6 @@ re-binds it by showing a new QR. It registers fresh and receives a **new**
 There is no un-revoke. Revocation is equivalent to a factory reset of the
 binding; if you want to disable a person rather than a terminal, set their
 record `active: false` ([§5.1](#51-record-fields)) instead.
-
-### 7.7 Requirements
-
-- **API-REV-01** An operator-facing revoke action shall exist, and shall cause
-  the device's next heartbeat to be answered `410`.
-- **API-REV-02** Revocation shall be a **soft delete**: the device row shall be
-  retained as a tombstone so the `410` can be delivered.
-- **API-REV-03** `POST /devices/{device_id}/status` shall answer `410` for a
-  revoked device, in both the pending and acknowledged states.
-- **API-REV-04** `GET /devices/{device_id}/users` should answer `410` for a
-  revoked device.
-- **API-REV-05** The revoke action shall be idempotent — revoking twice shall
-  not error, and shall not resurrect an acknowledged removal.
-- **API-REV-06** A tombstone shall be purged only after the device has
-  acknowledged, and shall be retained indefinitely otherwise.
 
 ---
 
@@ -806,101 +784,3 @@ the device restarts during an outage, but **a lost check-in is a payroll
 error**. The device will queue attendance events on disk. Treat them as
 records, not telemetry.
 
----
-
-## 9. Security requirements
-
-- **API-SEC-01** The Ed25519 **private** key shall exist only on the server.
-  No signing key shall ever reach a terminal.
-- **API-SEC-02** `device_token` shall be stored hashed and never logged.
-  Provisioning tokens likewise.
-- **API-SEC-03** Wi-Fi passwords in QR payloads shall never be written to
-  logs, and QR validity windows shall be kept short (§3.4).
-- **API-SEC-04** Faceprints shall be transported over HTTPS only and never
-  logged.
-- **API-SEC-05** Bearer tokens shall be scoped to their own `device_id`
-  (§5.4a, API-USR-04, API-HB-06).
-- **API-SEC-06** Door-scoped data minimisation shall be enforced server-side
-  (§5.4a). The device performs no permission check of its own.
-- **API-SEC-07** Production shall use HTTPS with certificate validation.
-- **API-SEC-08** `key_id` shall support more than one trusted key
-  concurrently, so keys can be rotated by deploying a new public key to
-  terminals before switching the signer.
-
----
-
-## 10. Known divergences in the reference server
-
-`server/` is a development harness. These are its deliberate or known-wrong
-behaviours — do **not** reproduce them.
-
-| Area | Reference server does | You shall do |
-|---|---|---|
-| Re-registration (§4.1) | Mints a new `device_id` on every redemption, leaving the old binding live | Replace the existing binding and invalidate its token |
-| User seeding | Seeds every new device from one shared default user template | Assign the door's real user set |
-| User payload | Returns the bare badge-keyed map (correct), with no per-record validation | Same shape, but validate `user_id` + `faceprints` before serving |
-| Revoked device sync (§7.4) | `GET /devices/{id}/users` does not check device state, so a revoked terminal can still refresh its user set until its next heartbeat | Answer `410` on the users endpoint too |
-| `device_mode` | Falls back to `card_and_face` for legacy tokens with `NULL` mode | Keep this fallback |
-| Auth | Single shared admin credential for all operator routes | Real operator authn/authz |
-| Storage | SQLite, whole-file user replacement, no migrations | Your own schema |
-| Attendance (§8) | No intake | Implement when the device half ships |
-
-The harness *is* a useful reference for two things: the canonical-JSON signer
-(`other/qr_code_poc/qr_common.py`) and the `410` tombstone lifecycle
-(`server/main.py`, `post_status`). Read those; ignore the rest.
-
----
-
-## 11. Checklist
-
-Provisioning
-- [ ] Ed25519 private key held server-side only; public key deployed to terminals
-- [ ] Canonical JSON exactly as §3.2 — sorted keys, no whitespace, base64url
-- [ ] Envelope fields exactly as §3.1; `schema` and `command` literals correct
-- [ ] `server_url` is the reachable public base URL
-- [ ] QR renders at version 17 / level L and self-decodes before returning
-- [ ] Short `validity_minutes`
-- [ ] `device_mode` persisted against the token; `time_registry` rejected
-
-Registration
-- [ ] Provisioning token single-use, burned in the same transaction
-- [ ] Expiry re-checked server-side; `nonce` cross-checked
-- [ ] Re-registration **replaces** the binding and invalidates the old token
-- [ ] `device_token` stored hashed, returned exactly once
-- [ ] `heartbeat_interval_sec` returned
-- [ ] Failure `detail` strings are technician-actionable
-
-Users
-- [ ] Door-scoped — no cross-door leakage
-- [ ] Complete set or `5xx`; never a partial `200`
-- [ ] `user_id` + valid `faceprints` on every record
-- [ ] `adaptive_descriptor_nomask` exactly **515** ints within ±1023
-- [ ] `adaptive_descriptor_withmask` and `enroll_descriptor` **not** sent
-- [ ] Bearer token scoped to the path `device_id`
-
-Revocation
-- [ ] Operator revoke action exists and is idempotent
-- [ ] **Soft** delete — tombstone retained, never hard-deleted while pending
-- [ ] `410` on `POST /status` for a revoked device
-- [ ] `410` on `GET /users` for a revoked device
-- [ ] Final post-`410` heartbeat accepted, `device_revoked` ingested
-- [ ] Tombstone purged only after acknowledgement
-
-Heartbeat
-- [ ] `2xx` only after events are durably persisted
-- [ ] `event_id` unique index, insert-or-ignore
-- [ ] `metadata` stored as opaque JSON; unknown event types accepted
-- [ ] `410` used **only** for device removal, with a retained tombstone
-- [ ] Post-`410` heartbeat accepted and its events ingested
-- [ ] Transient failures are `5xx`, not `4xx`
-- [ ] Status history bounded
-
----
-
-## 12. Revision history
-
-| Rev | Date | Summary |
-|---|---|---|
-| 1.0 | 2026-09-07 | Initial contract, extracted from SRS-FG-001 rev 1.8 and reconciled against the working tree |
-| 1.1 | 2026-09-07 | §5 rewritten against real data: corrected `version` (9), `flags` (3) and `user_id` (opaque scalar), documented the **515**-element descriptor requirement and the ±1023 range, and dropped `adaptive_descriptor_withmask` — deprecated, all-zero and never scored, now removed device-side too. Added §5.3 (how malformed records fail) and **§7 Revocation**, which was previously absent: the state machine, why a hard delete defeats revocation, and `410` on the users endpoint. Sections renumbered from §7 onward |
-| 1.2 | 2026-09-07 | `enroll_descriptor` dropped from the wire: it is never read on the match path and is byte-identical to `adaptive_descriptor_nomask` for every never-re-enrolled user. The faceprints object is down to **four** required keys — about a third of the original payload. The terminal now sets only the fields matching reads, leaving both unused descriptors zero-filled by the SDK constructor. §5.2 documents why each is omitted; §5.3 loses the "missing `enroll_descriptor`" failure row, which no longer exists |
