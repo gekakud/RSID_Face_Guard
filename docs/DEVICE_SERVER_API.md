@@ -1,25 +1,17 @@
 # RSID Face Guard — Device ↔ Server API Contract
 
-| Item | Detail |
-|---|---|
-| Document ID | API-FG-001 |
-| Revision | 1.2 (2026-09-07) |
-| Audience | Server / dashboard developer |
-| Scope | **Only** the endpoints the terminal and the technician app call |
-| Companion | [SOFTWARE_REQUIREMENTS.md](SOFTWARE_REQUIREMENTS.md) — device-side spec, not required reading |
-
 ## 1. Trust model in one page
 
 Three things establish trust, in this order:
 
-1. **A signed QR code.** An operator mints a provisioning QR from the
+1. **A signed QR code.** An operator creates a provisioning QR from the
    dashboard; a technician holds it up to the terminal's camera. The envelope
    is Ed25519-signed by *you*. The terminal ships with the **public** key only
    and verifies the QR **entirely offline** — no network call. This is how a
    factory-fresh terminal learns which deployment it belongs to: the server URL
    comes from the QR, never from device configuration.
 2. **A one-time provisioning token**, carried inside the QR. The terminal
-   redeems it at `POST /devices/register`. This token is the *only* credential
+   uses it at `POST /devices/register`. This token is the *only* credential
    for that call, and it is single-use — that is what stops someone
    photographing a QR and provisioning their own hardware later.
 3. **A long-lived bearer `device_token`**, issued in the registration response.
@@ -43,7 +35,7 @@ Two consequences that drive most of the design:
 
 Four endpoints. That is the entire device-facing surface.
 
-| # | Endpoint | Caller | Auth | Cadence |
+| # | Endpoint | Caller | Auth | How often |
 |---|---|---|---|---|
 | 1 | `POST /devices/generate-qr` | Technician / dashboard | Your operator auth | On demand |
 | 2 | `POST /devices/register` | Terminal | **None** — the provisioning token is the credential | Once per binding |
@@ -59,7 +51,7 @@ required part of this contract: see [§7](#7-revocation--removing-a-terminal).
 
 - **Transport** — HTTPS with a valid certificate in production. Terminals
   validate certificates.
-- **Timestamps** — every timestamp exchanged in either direction shall be UTC
+- **Timestamps** — every timestamp exchanged in either direction must be UTC
   in exactly `%Y-%m-%dT%H:%M:%SZ` (e.g. `2026-07-27T15:02:00Z`). No offsets,
   no fractional seconds, no local time.
 - **Status codes carry meaning.** Terminals branch on them:
@@ -72,18 +64,18 @@ required part of this contract: see [§7](#7-revocation--removing-a-terminal).
   - `5xx` — transient; the terminal backs off and retries.
 - **Error bodies** — return a JSON object with a human-readable `detail`
   string: `{"detail": "Provisioning token already used"}`. On registration
-  failure this string is displayed verbatim to the technician standing at the
-  door, so write it for them: *"Provisioning token expired — generate a new
+  failure this string is shown exactly as written to the technician standing
+  at the door, so write it for them: *"Provisioning token expired — generate a new
   QR"* beats *"invalid request"*.
-- **Bounded latency.** Terminals apply a request timeout
+- **Response time limits.** Terminals apply a request timeout
   (`REMOTE_TIMEOUT_SEC`). A slow endpoint is a failed endpoint.
 
 ---
 
-## 3. `POST /devices/generate-qr` — mint a provisioning QR
+## 3. `POST /devices/generate-qr` — create a provisioning QR
 
 Called by the technician-facing side of your dashboard, not by the terminal.
-It mints a one-time token, builds the envelope, signs it, and renders a QR.
+It creates a one-time token, builds the envelope, signs it, and renders a QR.
 
 ### Request
 
@@ -105,7 +97,7 @@ It mints a one-time token, builds the envelope, signs it, and renders a QR.
 the dashboard, not numeric primary keys. They are signed into the QR and
 persisted on the device.
 
-`device_mode` shall be one of exactly three values in this release:
+`device_mode` must be one of exactly three values in this release:
 
 | Mode | Behaviour at the door |
 |---|---|
@@ -113,9 +105,9 @@ persisted on the device.
 | `card_and_face` | Valid card starts a session; face verified 1:1 against that cardholder. **Default production mode.** |
 | `face_only` | Screen tap starts a 1:N identify against all enrolled users. For doors with no card reader fitted. |
 
-A fourth mode, `time_registry` (working-hours IN/OUT journalling), is specified
+A fourth mode, `time_registry` (working-hours IN/OUT logging), is specified
 but **not yet implemented on the device** — it raises an error at boot. Your
-enum shall reject it for now; it will be added when the device half ships,
+enum must reject it for now; it will be added when the device half ships,
 together with a `face_policy` field (`none` / `verify`).
 
 `network_profile` tells a terminal with no cable how to reach you:
@@ -164,9 +156,9 @@ exactly these fields.
 }
 ```
 
-- `schema` shall be the literal `acme.provisioning-qr.v1`. A mismatch is
+- `schema` must be the literal `acme.provisioning-qr.v1`. A mismatch is
   rejected.
-- `command` shall be the literal `provision_device`. It is the only command
+- `command` must be the literal `provision_device`. It is the only command
   honoured; no factory-reset or maintenance command exists, and any other
   value is rejected.
 - `server_url` is your public base URL. The terminal registers against it and
@@ -176,7 +168,7 @@ exactly these fields.
 ### 3.2 Signing — the canonical JSON rule
 
 > **This is the single highest-risk part of the integration.** Any deviation
-> and every terminal rejects every QR you mint, logged at *error* level as
+> and every terminal rejects every QR you create, logged at *error* level as
 > suspected forgery. There is no fallback path and no useful error at the
 > dashboard end — the failure is silent on your side and total on theirs.
 
@@ -213,14 +205,14 @@ both once before writing your own.
 ### 3.3 Why `device_mode` is not in the QR
 
 The mode is authenticated by the one-time provisioning token instead, arriving
-in the **registration response** ([§4](#4-post-devicesregister--redeem-the-token)). Two reasons:
+in the **registration response** ([§4](#4-post-devicesregister--use-the-token)). Two reasons:
 
 - **QR size.** The signed envelope is ~600 characters, which renders at QR
   version 17 with error-correction level L. That is the largest symbol the
-  terminal's camera reliably resolves off a phone screen. Adding fields pushes
+  terminal's camera can reliably read from a phone screen. Adding fields pushes
   the version up and read reliability down.
 - **Trust level is identical.** The one-time token is as trustworthy as the
-  `device_token` it mints, so nothing is weakened by moving the mode out of
+  `device_token` it creates, so nothing is weakened by moving the mode out of
   the signed payload.
 
 Keep the envelope at or below its current field set. If you must add a field,
@@ -243,7 +235,7 @@ provisioning QR as safe to email, print, or leave on a screen.
 
 ---
 
-## 4. `POST /devices/register` — redeem the token
+## 4. `POST /devices/register` — use the token
 
 The terminal calls this after verifying a QR offline, and after joining the
 Wi-Fi network if the QR carried one. **No bearer auth**: the provisioning
@@ -251,8 +243,9 @@ token *is* the credential.
 
 ### Sequence diagram
 
-End-to-end registration, from QR mint ([§3](#3-post-devicesgenerate-qr--mint-a-provisioning-qr)) through token
-redemption ([§4](#4-post-devicesregister--redeem-the-token)). Numbers in brackets point at the rule that governs the step.
+End-to-end registration, from creating the QR ([§3](#3-post-devicesgenerate-qr--create-a-provisioning-qr))
+through using the token ([§4](#4-post-devicesregister--use-the-token)).
+Numbers in brackets point at the rule that governs the step.
 
 ```
    +------------------------------------------------------------------+
@@ -264,10 +257,10 @@ redemption ([§4](#4-post-devicesregister--redeem-the-token)). Numbers in bracke
                                      |
                                      v
    +------------------------------------------------------------------+
-   | 2  SERVER  (mint + sign)                                         |
+   | 2  SERVER  (create + sign)                                       |
    |                                                                  |
-   |    - mint one-time provisioning token + fresh nonce              |
-   |    - build envelope, sign canonical JSON w/ Ed25519  (3.2)       |
+   |    - create one-time provisioning token + fresh nonce            |
+   |    - build envelope, sign canonical JSON with Ed25519  (3.2)     |
    |    - render QR, self-decode to verify it reads  (3.5)            |
    |                                                                  |
    |    -> { token, nonce, issued_at, expires_at, qr_png }            |
@@ -294,11 +287,11 @@ redemption ([§4](#4-post-devicesregister--redeem-the-token)). Numbers in bracke
                                      |
                                      v
    +------------------------------------------------------------------+
-   | 5  SERVER  (redeem)                                              |
+   | 5  SERVER  (check + bind)                                        |
    |                                                                  |
    |    - token known? unused? not expired?  (4.2)                    |
    |    - nonce matches the token row?                                |
-   |    - burn token + create-or-replace binding, one txn  (4.1)      |
+   |    - mark token used + bind device, in one transaction  (4.1)    |
    +------------------------------------------------------------------+
                                      |
                                      v
@@ -323,7 +316,7 @@ On failure at step 5 nothing is bound, and the technician sees why:
    |    { "detail": "Provisioning token already used -- generate      |
    |                 a new QR" }                                      |
    |                                                                  |
-   |    no binding is created; detail is shown verbatim to the        |
+   |    no binding is created; detail is shown as written to the      |
    |    technician on the kiosk screen                                |
    +------------------------------------------------------------------+
 ```
@@ -363,22 +356,23 @@ absence.
 The terminal persists all of this atomically, `0600`, as a credential file.
 `device_token` is never retrievable again — store only a hash server-side.
 
-`heartbeat_interval_sec` is **server-authoritative**: whatever you return here
-becomes the terminal's heartbeat cadence for the life of the binding. Use it
+`heartbeat_interval_sec` is **decided by the server**: whatever you return here
+becomes the terminal's heartbeat rate for the life of the binding. Use it
 to manage your own load.
 
-`device_mode` shall be the mode recorded against the redeemed token. If a
+`device_mode` must be the mode recorded for the token that was used. If a
 legacy token carries none, fall back to `card_and_face` rather than returning
 an empty string the terminal would have to interpret.
 
 ### Failure responses
 
-The `detail` string is shown to the technician. Make it actionable.
+The `detail` string is shown to the technician. Make it something they can
+act on.
 
 | Status | Condition | Suggested `detail` |
 |---|---|---|
 | `404` | Token unknown | `Unknown provisioning token` |
-| `409` | Token already redeemed | `Provisioning token already used — generate a new QR` |
+| `409` | Token already used | `Provisioning token already used — generate a new QR` |
 | `400` | Token expired | `Provisioning token expired — generate a new QR` |
 | `400` | `nonce` present but does not match the token row | `Nonce does not match token` |
 
@@ -388,11 +382,11 @@ A terminal being moved to another door is re-provisioned by simply showing it
 a new QR. That is the supported field workflow — there is no separate reset
 step, and being already bound is **not** an error.
 
-**A new token redeemed by an already-bound terminal shall replace that
+**A new token used by an already-bound terminal must replace that
 terminal's prior binding, not create a second device.** Match on a stable
 device identifier (`mac`, or a device identity you already hold) and update
 the existing row: new `door_id`, new `device_mode`, new `device_token`. The
-old `device_token` shall stop working.
+old `device_token` must stop working.
 
 Getting this wrong leaks a stale device row per re-provisioning, each still
 holding a valid token and still counted as a device at its old door.
@@ -523,9 +517,9 @@ Only the first row is fail-clean. Treat `db_sync_invalid_record` and
 `db_sync_skipped_entries` events as build-breakers on your side: they mean the
 terminal received records it could not use.
 
-### 5.4 Two invariants you must not break
+### 5.4 Two rules you must not break
 
-**(a) Door scoping.** The response shall contain **only** the users authorised
+**(a) Door scoping.** The response must contain **only** the users authorised
 for this terminal's door. This is not an optimisation — it is what makes the
 device's authorisation model sound. The terminal treats *presence of a valid,
 `active` record in its local cache as the authorisation itself*, with no
@@ -539,7 +533,7 @@ A user present in the terminal's cache but **absent from a well-formed
 response is dropped locally**, faceprints and all. Consequences:
 
 - Never return a partial set — not on a slow query, not on a partial DB
-  failure, not with pagination. A truncated `200` silently de-authorises
+  failure, not with pagination. A truncated `200` silently removes access for
   everyone missing from it.
 - If you cannot serve the complete set, **fail loudly**: return `5xx`. The
   terminal keeps its previous cache intact and retries. A failed sync never
@@ -551,7 +545,7 @@ response is dropped locally**, faceprints and all. Consequences:
 ## 6. `POST /devices/{device_id}/status` — heartbeat and events
 
 Bearer authenticated. Sent every `heartbeat_interval_sec`. Carries device
-state, and piggybacks telemetry events on the same connection — events never
+state, and sends telemetry events along on the same connection — events never
 open their own.
 
 ### Request
@@ -581,10 +575,10 @@ open their own.
 }
 ```
 
-`metadata` shall be treated as an **open object**. Its keys are diagnostic and
+`metadata` must be treated as an **open object**. Its keys are diagnostic and
 will grow between device releases; store it as JSON and do not validate its
 shape or reject unknown keys. `events` is the one key with contractual
-meaning — pull it out and handle it per [§6.1](#61-events--acknowledgement-and-idempotency).
+meaning — pull it out and handle it per [§6.1](#61-events--acknowledgement-and-duplicates).
 
 ### Response — `200`
 
@@ -598,18 +592,19 @@ retuning `device_mode` or `heartbeat_interval_sec` mid-binding is explicitly
 future work, and a device does not change mode while bound (mode changes mean
 revoke → re-bind → restart).
 
-### 6.1 Events — acknowledgement and idempotency
+### 6.1 Events — acknowledgement and duplicates
 
-Events are buffered on the device in a bounded in-memory ring (200 entries,
-drop-oldest) and are removed **only after a `2xx`**. Therefore:
+Events are held on the device in a fixed-size in-memory buffer (200 entries,
+oldest dropped first) and are removed **only after a `2xx`**. Therefore:
 
 - **`2xx` means "I have durably accepted every event in that array."** Persist
   them before responding. The terminal drops them immediately afterwards, and
   they are gone.
 - **Any non-`2xx` leaves them buffered**, and the terminal resends them on the
-  next beat. Never return `2xx` on partial ingestion.
-- **Deduplicate by `event_id`** — `INSERT OR IGNORE` on a unique index. A beat
-  can be delivered while its response is lost, in which case the terminal
+  next heartbeat. Never return `2xx` on partial ingestion.
+- **Remove duplicates by `event_id`** — `INSERT OR IGNORE` on a unique index.
+  A heartbeat can be delivered while its response is lost, in which case the
+  terminal
   resends the same `event_id`s. Without dedup you get duplicate door records.
 
 Every event carries `event_id` (uuid4), `type` and `ts` (device-supplied UTC),
@@ -618,8 +613,9 @@ plus a small number of type-specific context fields. Record your own
 
 ### 6.2 Event catalogue
 
-Store the `type` as an opaque string. The terminal is permissive at runtime and
-this list will grow; an unknown type shall be stored, never rejected.
+Store the `type` as a plain string you do not interpret. The terminal accepts
+anything at runtime and this list will grow; an unknown type must be stored,
+never rejected.
 
 | Type | Meaning |
 |---|---|
@@ -627,7 +623,7 @@ this list will grow; an unknown type shall be stored, never rejected.
 | `access_denied` | Denied. `user_id` where known, plus a `reason`: `face_mismatch` (a real denial), `no_faceprints_on_file` or `face_extraction_failed` (usually **your data**, not the person) |
 | `access_output_failed` | Approved, but the relay pulse failed |
 | `auth_matched` | Biometric match, before the access decision |
-| `relay_opened` | Relay actuated |
+| `relay_opened` | Relay triggered |
 | `card_unregistered` | Card not in the local set |
 | `attendance_event` | IN/OUT registration: `user_id`, `direction`, `ts` — see [§8](#8-attendance--timeregistry-mode-not-yet-active) |
 | `device_boot` / `device_shutdown` | Lifecycle |
@@ -649,8 +645,8 @@ never used as the subject identifier in telemetry.
 for anything else.** Not for an unknown `device_id`, not for a deleted door,
 not as a generic "gone" from a framework default.
 
-On receiving `410` from this endpoint the terminal performs an irreversible,
-fail-secure teardown, in this order:
+On receiving `410` from this endpoint the terminal performs an irreversible
+shutdown that leaves the door locked, in this order:
 
 1. Emits `device_revoked` and makes one best-effort synchronous flush of its
    buffered events — **while still holding a valid credential**, so the
@@ -660,7 +656,7 @@ fail-secure teardown, in this order:
 3. Deletes its stored identity, so a restart cannot silently rebind.
 4. **Purges the entire local user database, including all faceprints.**
 5. **Denies all access from that point on.**
-6. Returns to the provisioning scan window in-process, so a technician can
+6. Returns to the provisioning scan window on its own, so a technician can
    re-provision it with a new QR without a power cycle.
 
 Revocation is equivalent to a factory reset of the binding, and the biometric
@@ -713,9 +709,9 @@ This is the one implementation choice that looks correct and is not.
 
 If you delete the device row the moment the operator clicks *remove*, the
 terminal's bearer token resolves to nothing, so its heartbeat comes back `401`
-or `404`. The terminal treats that as an ordinary rejected beat: it backs off,
-**retries forever, keeps its cached users and faceprints, and keeps opening
-the door.** Nothing in the device's teardown path is triggered, because only
+or `404`. The terminal treats that as an ordinary rejected heartbeat: it backs
+off, **retries forever, keeps its cached users and faceprints, and keeps opening
+the door.** Nothing in the device's shutdown path is triggered, because only
 `410` triggers it.
 
 Deleting the row is the most natural way to implement "remove a device", and it
@@ -737,7 +733,7 @@ off. Consequences:
 
 ### 7.5 What the device does, and what you will see
 
-The six-step teardown is in [§6.3](#63-410-gone--device-removal-and-what-it-destroys).
+The six-step shutdown is in [§6.3](#63-410-gone--device-removal-and-what-it-destroys).
 The one part that concerns your implementation: **expect one final heartbeat
 after you answer `410`**, carrying a `device_revoked` event, sent while the
 terminal still holds a valid credential. Accept it and ingest its events — it
@@ -766,14 +762,14 @@ required for the current release.
 In `time_registry` mode the terminal shows an IN/OUT selection screen instead
 of a screensaver. The user picks a direction, then taps a card; the terminal
 optionally verifies their face (per-door `face_policy`: `none` or `verify`)
-and registers the direction. **No relay is actuated** — this mode is
+and registers the direction. **No relay is triggered** — this mode is
 attendance-only.
 
 Server obligations when it lands:
 
 - **API-ATT-01** Accept `attendance_event` events (`user_id`, `direction` of
   `in`/`out`, `ts`) on the normal heartbeat channel, with the same
-  `event_id` idempotency.
+  `event_id` duplicate check.
 - **API-ATT-02** Persist them and expose a per-person working-hours journal.
 - **API-ATT-03** Accept `time_registry` as a provisionable `device_mode`, and
   carry a `face_policy` field alongside it from generate-QR through to the
