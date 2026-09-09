@@ -195,6 +195,35 @@ ls -la /dev/ttyACM0
 ls /dev/video*
 ```
 
+### 6.1 udev rule for the RealSense camera (required for non-root runs)
+
+Group membership alone is **not** enough for the camera preview.
+`rsid_py`/libuvc opens the **raw USB node** (`/dev/bus/usb/BBB/DDD`), not
+`/dev/video*`. The video nodes get an ACL for the seat-local user
+automatically, but the raw node defaults to `root:root 0644`, so any non-root
+run (notably `face-guard.service` with `User=geka`) fails with:
+
+```
+[Preview] Streaming ERROR : uvc_open(...) failed with: Access denied
+```
+
+Running under `sudo` masks the problem, which is why it only shows up once the
+app runs as a service. Install the rule shipped in `deploy/`:
+
+```bash
+sudo cp deploy/99-realsense-id.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=usb --attr-match=idVendor=2aad
+```
+
+Verify the raw node is now group-owned by `plugdev` (bus/device numbers vary —
+find them with `lsusb | grep 2aad`):
+
+```bash
+ls -l /dev/bus/usb/003/002
+# crw-rw---- 1 root plugdev 189, 257 ... 	<- root:plugdev 0660, not root:root 0644
+```
+
 ## 7. Run the app
 
 > Complete [step 9](#9-qtwebengine-system-dependencies-required) first — the
@@ -229,21 +258,30 @@ expected/normal when no one is in front of the camera.
 
 ## 8. Enable the systemd service (auto-start on boot)
 
-`face-guard.service` in the repo root is already set up for this user/path:
+`face-guard.service` in the repo root is already set up for this user/path.
+Complete [step 6.1](#61-udev-rule-for-the-realsense-camera-required-for-non-root-runs)
+first, or the preview will fail with `uvc_open(...) Access denied`.
 
-```ini
-[Service]
-User=geka
-Group=geka
-WorkingDirectory=/home/geka/RSID_Face_Guard
-Environment=DISPLAY=:0
-Environment=XAUTHORITY=/home/geka/.Xauthority
-Environment=XDG_RUNTIME_DIR=/run/user/1000
-Environment=LD_LIBRARY_PATH=/home/geka/RSID_Face_Guard/rpi_py_build_lib
-ExecStart=/home/geka/RSID_Face_Guard/.venv/bin/python /home/geka/RSID_Face_Guard/main_web.py
-Restart=always
-SupplementaryGroups=dialout gpio video plugdev
-```
+The unit runs `run_service.sh` rather than `main_web.py` directly. Two reasons:
+
+- **`run_main_web.sh` must not be used here** — it ends with a blocking
+  `read -p "Press Enter..."`, which would hang systemd forever.
+- **The display race.** lightdm autologs into labwc, which spawns Xwayland
+  *on demand*, so `graphical.target` is reached before `:0` exists.
+  `run_service.sh` waits up to 60 s for the X display, then exits non-zero so
+  `Restart=always` retries cleanly instead of Qt aborting with
+  "cannot connect to X server". It `exec`s Python so `SIGTERM` reaches
+  `main_web.py`'s orderly-shutdown handler directly.
+
+Key settings and why they matter:
+
+| Setting | Why |
+|---|---|
+| `SupplementaryGroups=... input render` | `input` is required for the GWIOT HID card reader (`/dev/input/event*`, `root:input 0660`) |
+| `Environment=QT_QPA_PLATFORM=xcb` | on a Wayland session Qt would otherwise pick the wayland plugin and ignore `DISPLAY` |
+| `StartLimitIntervalSec=0` | early-boot display-wait retries must not trip the start limit and permanently disable the unit |
+| `TimeoutStopSec=15` | matches `main_web.py`'s ~6 s shutdown watchdog |
+| `After=graphical.target` (no `network-online`) | the app is offline-tolerant (local JSON cache + buffered events); waiting on the network only delays boot |
 
 Install and enable it:
 
@@ -254,6 +292,23 @@ sudo systemctl enable face-guard.service
 sudo systemctl start face-guard.service
 sudo systemctl status face-guard.service
 journalctl -u face-guard.service -f   # follow logs
+```
+
+> **File ownership:** the service runs as `geka`, so nothing in the project may
+> be left `root`-owned by earlier `sudo` runs. `face_guard.log` is the usual
+> culprit — `setup_logging()` opens it at *import* time, so an unwritable log
+> raises `PermissionError` before `main()` and crash-loops the unit. Fix with:
+>
+> ```bash
+> sudo chown -R geka:geka /home/geka/RSID_Face_Guard
+> sudo rm -f /home/geka/RSID_Face_Guard/.lgd-nfy0   # stale lgpio FIFO
+> ```
+
+Check the display-wait behaviour after a reboot, and disable if needed:
+
+```bash
+journalctl -b -u face-guard | grep -E 'Display .* is up|not available'
+sudo systemctl disable --now face-guard   # revert
 ```
 
 ## 9. QtWebEngine system dependencies (required)
@@ -307,9 +362,21 @@ sudo apt install -y libzbar0
 # 4. Permissions
 sudo usermod -aG dialout,gpio,video,plugdev,input geka   # then re-login
 
+# 4b. udev rule: raw USB access for the camera (step 6.1)
+#     Without it, non-root runs fail with "uvc_open(...) Access denied".
+sudo cp deploy/99-realsense-id.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger --subsystem-match=usb --attr-match=idVendor=2aad
+
 # 5. QtWebEngine library symlinks (step 9)
 sudo ln -sf /usr/lib/aarch64-linux-gnu/libwebp.so.7 /usr/lib/aarch64-linux-gnu/libwebp.so.6
 sudo ln -sf /usr/lib/aarch64-linux-gnu/libtiff.so.6 /usr/lib/aarch64-linux-gnu/libtiff.so.5
 
 # 6. Run
 DISPLAY=:0 .venv/bin/python main_web.py
+
+# 7. Auto-start on boot (step 8)
+sudo cp face-guard.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now face-guard.service
+```

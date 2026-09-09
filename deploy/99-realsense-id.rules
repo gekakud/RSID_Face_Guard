@@ -1,0 +1,14 @@
+# Intel RealSense ID F45x (VID 2aad, PID 6373) -- raw USB access.
+#
+# rsid_py/libuvc opens the RAW USB node (/dev/bus/usb/BBB/DDD), NOT /dev/video*.
+# The video nodes get an ACL for the seat-local user automatically, so they are
+# not the problem; the raw node defaults to root:root 0644, which makes the
+# preview fail with:
+#
+#     [Preview] Streaming ERROR : uvc_open(...) failed with: Access denied
+#
+# This only bites when the app runs as a non-root user (e.g. face-guard.service
+# as User=geka) -- running under sudo masks it.
+#
+# Install: see docs/SETUP_RPI5.md step 6.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="2aad", ATTRS{idProduct}=="6373", MODE="0660", GROUP="plugdev"

@@ -1,7 +1,12 @@
 [Unit]
 Description=Face Guard - RealSense ID Host Mode GUI (Web UI)
-After=network-online.target graphical.target
-Wants=network-online.target
+# The app is offline-tolerant (local JSON cache + buffered events), so it does
+# not wait for the network. graphical.target only guarantees lightdm started --
+# Xwayland comes up later, so run_service.sh waits for :0 itself.
+After=graphical.target
+# Early boot attempts may fail while the display is still coming up; retries
+# must never trip the start limit and disable the unit permanently.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -9,24 +14,38 @@ User=geka
 Group=geka
 WorkingDirectory=/home/geka/RSID_Face_Guard
 
-# Display access for the QtWebEngine kiosk window (XWayland/X11)
+# Display access for the QtWebEngine window (Xwayland, spawned by labwc)
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/geka/.Xauthority
 Environment=XDG_RUNTIME_DIR=/run/user/1000
+# Pin the X path: on a Wayland session Qt would otherwise pick the wayland
+# plugin and ignore DISPLAY. The QtWebEngine software-GL flags set in
+# main_web.py are tuned for this path.
+Environment=QT_QPA_PLATFORM=xcb
 
 # rsid_py's native libraries live in rpi_py_build_lib/ (mirrors run_main_web.sh)
 Environment=LD_LIBRARY_PATH=/home/geka/RSID_Face_Guard/rpi_py_build_lib
+# Unbuffered so log lines reach the journal immediately, not in lumps.
+Environment=PYTHONUNBUFFERED=1
 
-ExecStart=/home/geka/RSID_Face_Guard/.venv/bin/python /home/geka/RSID_Face_Guard/main_web.py
+ExecStart=/home/geka/RSID_Face_Guard/run_service.sh
 
 Restart=always
 RestartSec=5
+# main_web.py's SIGTERM handler shuts down in ~6s (watchdog force-exit), so a
+# long default stop timeout is pointless.
+TimeoutStopSec=15
 
 StandardOutput=journal
 StandardError=journal
 
-# Hardware access
-SupplementaryGroups=dialout gpio video plugdev
+# Hardware access:
+#   dialout -> /dev/ttyACM0      (RealSense ID serial)
+#   gpio    -> /dev/gpiochip0    (relay via lgpio)
+#   video   -> /dev/video*       (UVC camera preview)
+#   input   -> /dev/input/event* (GWIOT HID card reader via evdev)
+#   plugdev, render -> USB / GL stack
+SupplementaryGroups=dialout gpio video plugdev input render
 
 [Install]
 WantedBy=graphical.target
