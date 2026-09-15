@@ -137,6 +137,22 @@ user-sync calls keep firing on their normal schedule regardless.
    +----------------------------------------------------------------------+
 ```
 
+**Mermaid view of the same flow:**
+
+```mermaid
+sequenceDiagram
+    participant QR as Signed QR (provisioning_token)
+    participant Dev as Terminal (unbound)
+    participant Srv as Server
+
+    Dev->>Dev: scan + verify signature/expiry offline
+    Dev->>Srv: POST /devices/register {token, nonce, mac, ...}
+    Srv->>Srv: check token is valid & unused, then invalidate it
+    Srv-->>Dev: 200 {device_id, device_token, customer_id, site_id, door_id, ...}
+    Dev->>Dev: save as device_identity.json (0600)
+    Dev->>Srv: every heartbeat: Authorization: Bearer device_token
+```
+
 If step 5 fails, nothing is bound and the technician generates a new QR:
 
 ```
@@ -392,6 +408,32 @@ reject on that.
 - The terminal writes this whole object to a local credential file and starts
   calling endpoints 3 and 4.
 
+### 6.1 `device_id` generation and uniqueness
+
+`device_id` is minted server-side as a fresh random UUID4 at the moment the
+token is redeemed -- never derived from `mac`, `door_id`, or anything the
+terminal supplies, and never reused across terminals:
+
+```python
+device_id = str(uuid.uuid4())
+```
+
+122 bits of randomness plus a unique/primary-key constraint on the `devices`
+table together make a collision a non-concern in practice.
+
+```mermaid
+sequenceDiagram
+    participant Dev as Terminal
+    participant Srv as Server
+
+    Dev->>Srv: POST /devices/register {provisioning_token, mac, nonce, ...}
+    Srv->>Srv: validate + consume the single-use token
+    Srv->>Srv: device_id = str(uuid.uuid4())
+    Srv->>Srv: INSERT devices (device_id, mac, door_id, ...)
+    Srv-->>Dev: 200 {device_id, device_token, ...}
+    Dev->>Dev: save to device_identity.json
+```
+
 ### Failures
 
 | Status | Condition | `detail` to return |
@@ -401,7 +443,7 @@ reject on that.
 | `400` | Token expired | `Provisioning token expired — generate a new QR` |
 | `400` | `nonce` does not match the token | `Nonce does not match token` |
 
-### 6.1 A terminal registering again replaces its old binding
+### 6.2 A terminal registering again replaces its old binding
 
 Moving a terminal to another door is done by simply showing it a new QR. Being
 already bound is **not** an error.
