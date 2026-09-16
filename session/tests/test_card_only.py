@@ -50,6 +50,20 @@ def test_reader_suppressed_across_pulse_and_hold(make_controller, host, sched):
     assert host.session_done_marks == 1
 
 
+def test_init_mode_card_does_not_actuate(make_controller, host, sched):
+    # card_only already guarded this path; locked in so it stays that way
+    # (FR-SESS-03, FR-PROV-01).
+    from session.tests.conftest import FakeRelay
+    relay = FakeRelay(opens=True)
+    ctl = _ctl(make_controller, relay)
+    ctl.start_init_mode()
+
+    ctl.on_card_detected("12345")
+
+    assert relay.pulses == 0
+    assert host.session_active_marks == 0
+
+
 def test_inactive_user_is_denied_without_actuation(make_controller, view, host, sched):
     from session.tests.conftest import FakeRelay
     relay = FakeRelay(opens=True)

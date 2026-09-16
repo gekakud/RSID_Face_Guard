@@ -187,6 +187,18 @@ def test_init_mode_tap_does_not_start_session(make_controller, host):
     assert host.face_only_calls == 0
 
 
+def test_init_mode_card_does_not_start_session(make_controller, host):
+    # Init mode owns the camera for the QR scan window: a card tap must not
+    # steal it, or the technician's QR never decodes (FR-SESS-03, FR-PROV-01).
+    c = make_controller()
+    c.start_init_mode()
+
+    c.on_card_detected("card-1")
+
+    assert c.session_active is False
+    assert host.card_calls == []
+
+
 def test_init_mode_qr_detected_invokes_binding_once(make_controller, sched):
     seen = []
     payload = {"door_id": "d1", "site_id": "s1", "customer_id": "c1"}

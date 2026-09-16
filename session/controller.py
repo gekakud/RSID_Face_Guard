@@ -113,7 +113,13 @@ class SessionController:
             self.start_session()
 
     def on_card_detected(self, card_id) -> None:
-        """A registered card was tapped (monitor already filtered unknowns)."""
+        """A registered card was tapped (monitor already filtered unknowns).
+
+        Init mode owns the camera for the QR scan window, so a card tap must
+        not steal it (FR-SESS-03, FR-PROV-01).
+        """
+        if self._init_mode_active:
+            return
         if config.mode_is_card_only():
             self._handle_card_only(card_id)
             return
