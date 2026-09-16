@@ -111,6 +111,16 @@
         els.secondary.hidden = false;
         break;
       }
+      /* Device fault, not a rejected credential (FR-UI-12). Deliberately
+         worded and coloured apart from "failed" so the user doesn't think
+         their badge was refused. */
+      case "unavailable": {
+        els.icon.innerHTML = ICONS.failed;
+        els.primary.textContent = "Temporarily Unavailable";
+        els.secondary.textContent = "Please try again shortly";
+        els.secondary.hidden = false;
+        break;
+      }
       /* ---- New states (existing success/failed above are unchanged) ---- */
       case "screensaver":
       case "screensaver-basic": {
@@ -170,6 +180,8 @@
     screensaverBasic: () => setState("screensaver-basic"),
     success: (name, hold) => setState("success", { name, hold }),
     failed: (hold) => setState("failed", { hold }),
+    // Face device in its error backoff — credential was fine (FR-UI-12).
+    unavailable: (hold) => setState("unavailable", { hold }),
     setLogo: (src) => setLogo(src),
     setHintText: (text) => { if (els.hint) els.hint.textContent = text; },
     // Employee attendance — controlled by the admin/device-management system.

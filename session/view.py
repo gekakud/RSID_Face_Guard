@@ -28,9 +28,8 @@ class SessionView(Protocol):
     def show_unavailable(self, hold_ms: int) -> None:
         """Show the distinct "temporarily unavailable" screen (FR-UI-12).
 
-        Default front-ends may alias this to ``show_failure`` until the
-        dedicated screen lands (T9); it is defined here so the controller can
-        already distinguish the biometric-backoff outcome from a face mismatch.
+        Used when a valid credential could not be checked because the face
+        device is in its error backoff -- not a rejection of the credential.
         """
 
     def show_scanning(self) -> None:

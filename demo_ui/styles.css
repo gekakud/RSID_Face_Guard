@@ -13,6 +13,11 @@
   --rose-dark:  122  28  52;  /* rgb #7a1c34 — rich deep rose-red (top)    */
   --rose-light: 228  80 104;  /* rgb #e45068 — vibrant rosy red (bottom)   */
 
+  /* Unavailable (device fault, not a refused credential) — neutral slate,
+     deliberately not red so it doesn't read as a rejection. */
+  --slate-dark:   31  41  55;  /* rgb #1f2937 — graphite (top)             */
+  --slate-light: 100 116 139;  /* rgb #64748b — cool grey-blue (bottom)    */
+
   /* Soft two-tone overlay: darker at the top, lighter toward the bottom.
      Semi-transparent so the live camera still reads through it, but opaque
      enough to give the icon and text strong, focused contrast. */
@@ -87,7 +92,8 @@ html, body {
 
 /* Show overlay on any result state */
 body[data-state="success"] .overlay,
-body[data-state="failed"]  .overlay {
+body[data-state="failed"]  .overlay,
+body[data-state="unavailable"] .overlay {
   opacity: 1;
   visibility: visible;
 }
@@ -98,6 +104,12 @@ body[data-state="failed"]  .overlay {
 body[data-state="failed"] .overlay {
   --grad-top: var(--rose-dark);
   --grad-bottom: var(--rose-light);
+}
+
+/* Unavailable: neutral slate, not red — a device fault is not a rejection. */
+body[data-state="unavailable"] .overlay {
+  --grad-top: var(--slate-dark);
+  --grad-bottom: var(--slate-light);
 }
 
 .overlay__content {
@@ -112,7 +124,8 @@ body[data-state="failed"] .overlay {
 }
 
 body[data-state="success"] .overlay__content,
-body[data-state="failed"]  .overlay__content {
+body[data-state="failed"]  .overlay__content,
+body[data-state="unavailable"] .overlay__content {
   transform: translateY(0) scale(1);
   opacity: 1;
 }
@@ -176,14 +189,19 @@ body[data-state="success"] .smile-draw {
   animation: itsu-mouth-draw 1050ms var(--ease) 900ms both;
 }
 
-/* Icon 02 · Failed — left dot → right dot → frown is drawn L→R. */
-body[data-state="failed"] .dot--left {
+/* Icon 02 · Failed — left dot → right dot → frown is drawn L→R.
+   The unavailable state reuses the same frown artwork and timing; only the
+   gradient and wording differ. */
+body[data-state="failed"] .dot--left,
+body[data-state="unavailable"] .dot--left {
   animation: itsu-dot-in 420ms var(--ease) 0ms both;
 }
-body[data-state="failed"] .dot--right {
+body[data-state="failed"] .dot--right,
+body[data-state="unavailable"] .dot--right {
   animation: itsu-dot-in 450ms var(--ease) 420ms both;
 }
-body[data-state="failed"] .frown-draw {
+body[data-state="failed"] .frown-draw,
+body[data-state="unavailable"] .frown-draw {
   animation: itsu-mouth-draw 1050ms var(--ease) 900ms both;
 }
 

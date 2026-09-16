@@ -42,10 +42,6 @@ def test_card_grant_stops_retrying_during_the_hold(make_controller, sched, view,
     assert host.card_calls == ["card-1"]  # exactly one attempt
 
 
-# --------------------------------------------------------------------------- #
-# Card session -- mismatch (BR-05: a card is yours or it isn't)
-# --------------------------------------------------------------------------- #
-
 def test_card_mismatch_fails_once_then_idle(make_controller, sched, view, preview):
     host = FakeHost(result=(False, None, "no_match"))
     c = make_controller(host_service=host, FAIL_DURATION_MS=3000, AUTH_RETRY_INTERVAL_SEC=1.0)
@@ -61,6 +57,42 @@ def test_card_mismatch_fails_once_then_idle(make_controller, sched, view, previe
     assert view.calls[-1] == ("idle",)
     assert c.session_active is False
     assert host.session_done_marks == 1
+
+def test_card_during_biometric_backoff_shows_unavailable_not_failure(
+    make_controller, sched, view
+):
+    # FR-UI-12: the badge was fine -- the face device is in its error backoff.
+    # The user must not be told their credential was refused.
+    host = FakeHost(result=(False, None, "Device recovering"), unavailable=True)
+    relay = FakeRelay()
+    c = make_controller(host_service=host, relay=relay, FAIL_DURATION_MS=3000)
+
+    c.on_card_detected("card-9")
+
+    assert ("unavailable", config.FAIL_DURATION_MS) in view.calls
+    assert ("failure", config.FAIL_DURATION_MS) not in view.calls
+    # Fail-secure: a device fault never opens the door.
+    assert relay.pulses == 0
+
+    sched.advance(3000)  # hold elapses -> back to idle
+    assert view.calls[-1] == ("idle",)
+    assert c.session_active is False
+
+
+def test_card_mismatch_still_shows_failure_when_device_healthy(make_controller, view):
+    # Guards the branch above from over-reaching: an ordinary non-matching
+    # face is still a plain denial (BR-05).
+    host = FakeHost(result=(False, None, "no_match"), unavailable=False)
+    relay = FakeRelay()
+    c = make_controller(host_service=host, relay=relay, FAIL_DURATION_MS=3000)
+
+    c.on_card_detected("card-9")
+
+    assert ("failure", config.FAIL_DURATION_MS) in view.calls
+    assert ("unavailable", config.FAIL_DURATION_MS) not in view.calls
+    assert relay.pulses == 0
+
+
 
 
 # --------------------------------------------------------------------------- #

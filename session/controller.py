@@ -395,6 +395,20 @@ class SessionController:
                 self._sched.cancel(handle)
         self._welcome_handles = []
 
+    def _biometric_unavailable(self) -> bool:
+        """True when the face device is in its FR-FACE-06 error backoff.
+
+        Optional on the host: a service without the hook is treated as
+        available, so the outcome stays a plain failure (FR-UI-12).
+        """
+        probe = getattr(self._host, "biometric_unavailable", None)
+        if probe is None:
+            return False
+        try:
+            return bool(probe())
+        except Exception:
+            return False
+
     def _on_auth_complete(self, success: bool, pulsed: bool, name, method) -> None:
         self._auth_in_progress = False
         if success and pulsed:
@@ -425,7 +439,13 @@ class SessionController:
             # Card session, non-matching face: show denial once, return to idle
             # -- a card is either yours or it isn't (BR-05).
             self._cancel_session_timers()
-            self._view.show_failure(hold_ms=config.FAIL_DURATION_MS)
+            if self._biometric_unavailable():
+                # The credential was fine; the camera is in its error backoff.
+                # Distinct screen so the user isn't told their badge was
+                # refused (FR-UI-12). Still fail-secure: no door, same hold.
+                self._view.show_unavailable(hold_ms=config.FAIL_DURATION_MS)
+            else:
+                self._view.show_failure(hold_ms=config.FAIL_DURATION_MS)
             self._sched.call_later(config.FAIL_DURATION_MS, self._end_session)
             self._sched.call_later(config.FAIL_DURATION_MS, self._view.show_idle)
         # Face-only (demo) mismatch: keep retrying until session timeout

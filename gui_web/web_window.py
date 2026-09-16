@@ -189,6 +189,9 @@ class DeviceUI:
     def failed(self, hold=None):
         self._call("failed", hold)
 
+    def unavailable(self, hold=None):
+        self._call("unavailable", hold)
+
     def idle(self):
         self._call("idle")
 
@@ -281,9 +284,9 @@ class WebSessionView:
         self._device_ui.failed(hold=hold_ms)
 
     def show_unavailable(self, hold_ms):
-        # No dedicated screen yet (arrives with T9/FR-UI-12); alias to failure
-        # so behaviour is unchanged in B1.
-        self._device_ui.failed(hold=hold_ms)
+        # Distinct from a mismatch: the credential was fine, the face device is
+        # in its error backoff (FR-UI-12 / T9).
+        self._device_ui.unavailable(hold=hold_ms)
 
     def show_scanning(self):
         # Preview is paused for the SDK call; the stream serves a neutral

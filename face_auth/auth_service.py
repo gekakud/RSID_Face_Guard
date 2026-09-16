@@ -233,6 +233,14 @@ class AuthService:
             "active": bool(user_info.get("active", True)),
         }
 
+    def biometric_unavailable(self) -> bool:
+        """True while the FR-FACE-06 error backoff is blocking authentication.
+
+        Lets the caller tell "the camera is down" apart from "the face did not
+        match" without parsing the returned message (FR-UI-12).
+        """
+        return (self._error_backoff_until - time.monotonic()) > 0
+
     def authenticate_with_card_and_face(self, card_id: int) -> Tuple[bool, Optional[str], Optional[str]]:
         """Authenticate using a Wiegand card ID combined with a live face scan.
 
@@ -244,6 +252,14 @@ class AuthService:
             (success, user_name, permission_level_or_error_message)
         """
         self.last_user_id = None
+        # Same gate as the face-only path: after an SDK fault, don't hammer a
+        # device that is still reconnecting (FR-FACE-06). Fail-secure -- the
+        # door stays shut; the caller shows the "unavailable" screen.
+        remaining = self._error_backoff_until - time.monotonic()
+        if remaining > 0:
+            log.debug("Serial backoff active -- skipping card auth (%.0fs remaining)", remaining)
+            return False, None, "Device recovering"
+
         user_info = self.user_db.get_user(str(card_id))
         if not user_info:
             events.emit(EventType.CARD_UNREGISTERED)

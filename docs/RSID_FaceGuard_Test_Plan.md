@@ -25,7 +25,8 @@ coverage.
 | Config | `APPLY_NETWORK_PROFILE=False` unless a network-specific flow states otherwise ([T15](#)) |
 | Test cards | ≥3 registered cards (different users), ≥1 unregistered card |
 | Test users | ≥1 user with 0 faceprints (for `card_only`), ≥1 with 2 faceprints, ≥1 `active:false` |
-| Regression gate | `server/tests/` (66), `session/tests/` (27), `db/test_remote_sync.py` (7), `provisioning/tests/test_revocation.py` (4), `db/tests/test_revocation_wipe.py` (2) — all green before device testing starts |
+| Regression gate | `server/tests/` (73), `session/tests/` (41), `face_auth/tests/` (8), `db/test_remote_sync.py` (7), `provisioning/tests/test_revocation.py` (4), `db/tests/test_revocation_wipe.py` (2) — **135 total**, all green before device testing starts |
+| Test deps | Device suites need only `pytest`. `server/tests/` additionally needs `server/requirements.txt` installed (`fastapi`, `httpx` et al) — without it the suite errors at import and is silently skipped. |
 
 Unless stated otherwise, every flow is run twice: once with the server
 reachable, once with the terminal offline (network cable/Wi-Fi pulled),
@@ -112,16 +113,44 @@ per **FR-STATE-04/05**: the access decision must be identical in both cases.
 ### 3.5 `card_and_face` — different-card pre-emption
 **Pre:** Card A fails a session and is in its result-screen hold.
 **Steps:** During the hold, tap Card B (a different, registered card).
-**Expected:** Card B's tap pre-empts the hold and starts a new session immediately; Card A within its 2 s cooldown is still ignored if tapped again; no session can start while `init_mode` is active.
-**Verifies:** FR-SESS-03, FR-CARD-04, BR-04, T9(1)(2).
+**Expected:** Card B's tap pre-empts the hold and starts a new session immediately; Card A within its 2 s cooldown is still ignored if tapped again.
+**Verifies:** FR-SESS-03, FR-CARD-04, BR-04, T9(1).
 **Pass/Fail:** Pass if Card B's session starts without waiting for A's hold to finish naturally.
+**Status:** ⚠️ Not yet implemented — T9 item 1 is still open. Expected to fail on the current build.
+
+### 3.5a Card tap during init mode is ignored
+**Pre:** `INIT_MODE_ENABLED=True`, `card_and_face` mode; fresh boot with the init-mode overlay on screen and the QR scan window open.
+**Steps:** During the scan window, tap a **registered** card. Then present a valid QR. After the window ends, tap the same card again.
+**Expected:** The tap starts **no** session and does not steal the camera — the preview keeps scanning and the overlay stays up; no `access_granted`/`access_denied`, no relay pulse. The QR still binds normally. After the window closes, the same card starts a session as usual.
+**Verifies:** FR-SESS-03, FR-PROV-01, T9(2).
+**Pass/Fail:** Pass if the card tap has **zero** visible and zero telemetry effect while init mode is active, and the card works normally once it ends.
+**Automated cover:** `session/tests/test_controller.py::test_init_mode_card_does_not_start_session`, `session/tests/test_card_only.py::test_init_mode_card_does_not_actuate`.
+**Note:** The guard sits on `controller.on_card_detected()`, matching the three sibling handlers. The gap was on the `card_and_face` path only — `card_only` was already guarded, and its test is a regression lock rather than a bug catcher.
 
 ### 3.6 Biometric backoff — "temporarily unavailable"
-**Pre:** Force an SDK/hardware exception (disconnect the RealSense device or trigger a fault).
+**Pre:** Force an SDK/hardware exception (disconnect the RealSense device or trigger a fault) so the 20 s backoff window arms.
 **Steps:** Tap a registered card in `card_and_face` during the 20 s backoff window.
-**Expected:** A visually distinct "temporarily unavailable, try again shortly" screen for `FAIL_DURATION_MS`; **no relay pulse**; `hardware_error` event emitted; background reconnect attempted; internal cause never shown to the user.
+**Expected:** A visually distinct "Temporarily Unavailable / Please try again shortly" screen for `FAIL_DURATION_MS`; **no relay pulse**; `hardware_error` event emitted; background reconnect attempted; internal cause never shown to the user. The card path must **fail fast on the gate** — it must not re-enter the broken SDK (confirm no second `hardware_error` burst per tap).
 **Verifies:** FR-FACE-06, FR-UI-12, FR-OUT-06 (fail-secure), T9(3)(4).
 **Pass/Fail:** Pass if this screen is distinguishable from a mismatch screen (different message/visual) in a side-by-side comparison.
+**Automated cover:** `face_auth/tests/test_backoff_gate.py` (gate on both auth paths), `session/tests/test_controller.py::test_card_during_biometric_backoff_shows_unavailable_not_failure`.
+**Note:** The controller distinguishes the two outcomes via `AuthService.biometric_unavailable()`, **not** by matching the `"Device recovering"` message string — so rewording that message must not change which screen appears. Worth re-checking if the message is ever edited.
+
+### 3.6a Backoff must not over-reach — ordinary mismatch still denies
+**Pre:** `card_and_face`, RealSense **healthy** (no backoff active).
+**Steps:** Tap a registered card and present a non-matching face.
+**Expected:** The normal red "Verification Failed" screen (per 3.4) — **not** the unavailable screen. A healthy-device mismatch must still read as a rejected credential.
+**Verifies:** FR-UI-05, FR-UI-12, BR-05.
+**Pass/Fail:** Pass if the two failure classes remain visually distinct in both directions — mismatch never shows "unavailable", and backoff never shows "Verification Failed".
+**Automated cover:** `session/tests/test_controller.py::test_card_mismatch_still_shows_failure_when_device_healthy`.
+
+### 3.6b Backoff window expiry
+**Pre:** Backoff armed as in 3.6; RealSense reconnected.
+**Steps:** Wait out the 20 s window, then tap a registered card and present a matching face.
+**Expected:** The gate is open again — a normal session runs and grants. The backoff must not latch permanently after a recovered fault.
+**Verifies:** FR-FACE-06.
+**Pass/Fail:** Pass if normal service resumes without a restart.
+**Automated cover:** `face_auth/tests/test_backoff_gate.py::test_card_path_proceeds_once_backoff_expired`.
 
 ### 3.7 `time_registry` — IN/OUT with face policy `none`
 **Pre:** Door provisioned `device_mode: time_registry`, `face_policy: none`.
@@ -326,7 +355,7 @@ Whichever was chosen, verify the *other* is **not** silently occurring (no orpha
 | Session / live camera | Session start | Live MJPEG preview | — |
 | Success ("Welcome, `<name>`") | Grant | User's name if known | Internal decision detail (score, SDK status) |
 | Failure ("not authorized") | Denial | Generic denial | Internal reason (FR-UI-07) |
-| Unavailable | Biometric backoff (3.6) | Distinct "try again shortly" message | Anything resembling the mismatch screen |
+| Unavailable | Biometric backoff (3.6) | Neutral slate gradient, "Temporarily Unavailable" / "Please try again shortly" | Red/rose gradient or anything resembling the mismatch screen |
 | Provisioning/status overlay | Init mode / binding | Progress or result, ≥3 s ok / ≥6 s fail | Bare HTTP status codes |
 
 **Test:** Walk every trigger in the table above and confirm the corresponding screen renders with the correct content, and that after a hold the UI returns to the correct *idle* screen for the active mode (screensaver vs. IN/OUT) — never to the live-camera state.

@@ -148,9 +148,13 @@ class FakeHost:
     which auth entry point was used.
     """
 
-    def __init__(self, result=(True, "Alice", "employee"), raises=False, user_id=42):
+    def __init__(self, result=(True, "Alice", "employee"), raises=False, user_id=42,
+                 unavailable=False):
         self.result = result
         self.raises = raises
+        # Mirrors AuthenticationService.biometric_unavailable(): True while the
+        # face device sits in its FR-FACE-06 error backoff.
+        self.unavailable = unavailable
         self.card_calls = []
         self.face_only_calls = 0
         self.session_active_marks = 0
@@ -184,6 +188,9 @@ class FakeHost:
         if self.result[0]:
             self.last_user_id = self._user_id
         return self.result
+
+    def biometric_unavailable(self):
+        return self.unavailable
 
     def mark_card_session_active(self):
         self.session_active_marks += 1
