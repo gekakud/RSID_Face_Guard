@@ -103,7 +103,7 @@ holds only the `WebSessionView` adapter, `QtScheduler` and platform glue.
 |---|---|---|
 | [FR-SESS-01](SOFTWARE_REQUIREMENTS.md#fr-sess-01) | ✅ | `gui_web/frame_server.py` `WebServer` + `CameraStreamer` serve page and MJPEG from one loopback origin |
 | [FR-SESS-02](SOFTWARE_REQUIREMENTS.md#fr-sess-02) | ✅ | Preview paused at construction (`GUIWeb.__init__`), resumed per session in `controller.start_session()` |
-| [FR-SESS-03](SOFTWARE_REQUIREMENTS.md#fr-sess-03) | ⚠️ | Two gaps. (a) No different-card pre-emption: the card flag clears in `controller._end_session()`, which the result hold schedules, so reads stay suppressed through the hold. (b) `on_card_detected()` → `start_session()` guards only on `_session_active` / `_is_page_ready()` — the **init-mode guard present on `on_user_tapped()` and `on_card_rejected()` is missing on the registered-card path**, so a card tap during init mode starts a session. *Verified narrower than rev 1.3 stated:* the hole is on the **`card_and_face` path only** — `_handle_card_only()` does guard on `_init_mode_active` → **[T9](#t9)** |
+| [FR-SESS-03](SOFTWARE_REQUIREMENTS.md#fr-sess-03) | ⚠️ | **Half done (B10).** (b) ✅ closed by T9(2): `on_card_detected()` now returns early on `_init_mode_active`, so a card tap during the QR window no longer starts a session (`test_init_mode_card_does_not_start_session`). (a) ⚠️ **still open** — no different-card pre-emption: the card flag clears in `controller._end_session()`, which the result hold schedules, so reads stay suppressed through the hold → **[T9a](#t9a) (deferred)** |
 | [FR-SESS-04](SOFTWARE_REQUIREMENTS.md#fr-sess-04) | ✅ | `controller.py` retry/timeout handles; card session ends on first mismatch in `_on_auth_complete()` (BR-05) |
 | [FR-SESS-05](SOFTWARE_REQUIREMENTS.md#fr-sess-05) | ✅ | `controller._authenticate()` skips a tick while `_auth_in_progress` |
 | [FR-SESS-06](SOFTWARE_REQUIREMENTS.md#fr-sess-06) | ✅ | `_cancel_session_timers()` runs before every result render in `_on_auth_complete()` |
@@ -119,7 +119,7 @@ holds only the `WebSessionView` adapter, `QtScheduler` and platform glue.
 | [FR-FACE-03](SOFTWARE_REQUIREMENTS.md#fr-face-03) | ✅ | **T12 done.** One decision line per path: `1:1 decision: card=… sdk_success=… score=… threshold=… -> GRANT/DENY`, and the 1:N equivalent |
 | [FR-FACE-04](SOFTWARE_REQUIREMENTS.md#fr-face-04) | ✅ | **T2 done.** `auth_service.py` emits `auth_matched` only and imports just `disconnect_relay`; `controller._open_access_point()` actuates |
 | [FR-FACE-05](SOFTWARE_REQUIREMENTS.md#fr-face-05) | ✅ | Distinct denial reasons: `face_extraction_failed`, `no_faceprints_on_file`, `face_mismatch`, `no_match`, `user_inactive` |
-| [FR-FACE-06](SOFTWARE_REQUIREMENTS.md#fr-face-06) | ⚠️ | Backoff + background reconnect + `hardware_error` all exist (`_reconnect()`, `_error_backoff_until`), but the **gate sits inside `authenticate_face_only()` only** — `authenticate_with_card_and_face()` has none, and nothing surfaces the condition to the UI → **[T9](#t9)** |
+| [FR-FACE-06](SOFTWARE_REQUIREMENTS.md#fr-face-06) | ✅ | **T9(3) done (B10).** The backoff gate now also fronts `authenticate_with_card_and_face()`, mirroring the face-only path, and the new `AuthService.biometric_unavailable()` helper surfaces the condition to the UI. Tests: `face_auth/tests/test_backoff_gate.py` (4) |
 | [FR-FACE-07](SOFTWARE_REQUIREMENTS.md#fr-face-07) | ✅ | Every exception path returns a deny tuple |
 
 ### 1.6 Card reader — FR-CARD
@@ -129,7 +129,7 @@ holds only the `WebSessionView` adapter, `QtScheduler` and platform glue.
 | [FR-CARD-01](SOFTWARE_REQUIREMENTS.md#fr-card-01) | ✅ | `hardware/card_reader_api.py` selects the backend from `config.CARD_READER_BACKEND` |
 | [FR-CARD-02](SOFTWARE_REQUIREMENTS.md#fr-card-02) | ✅ | `auth_service.start_card_monitoring()` daemon loop; never touches the UI thread |
 | [FR-CARD-03](SOFTWARE_REQUIREMENTS.md#fr-card-03) | ✅ | 2 s per-card cooldown inside the monitor loop |
-| [FR-CARD-04](SOFTWARE_REQUIREMENTS.md#fr-card-04) | ⚠️ | ✅ *as coded*, but the SRS requires reads to resume **during** the result hold so a different card can pre-empt it. `mark_card_session_done()` is only called from `controller._end_session()`, which the hold schedules → **[T9](#t9)**, with [FR-SESS-03](SOFTWARE_REQUIREMENTS.md#fr-sess-03). *(Rev 1.1 marked this ✅ while documenting the same gap two lines later.)* |
+| [FR-CARD-04](SOFTWARE_REQUIREMENTS.md#fr-card-04) | ⚠️ | ✅ *as coded*, but the SRS requires reads to resume **during** the result hold so a different card can pre-empt it. `mark_card_session_done()` is only called from `controller._end_session()`, which the hold schedules → **[T9a](#t9a) (deferred)**, with [FR-SESS-03](SOFTWARE_REQUIREMENTS.md#fr-sess-03)(a). *(Rev 1.1 marked this ✅ while documenting the same gap two lines later.)* |
 | [FR-CARD-05](SOFTWARE_REQUIREMENTS.md#fr-card-05) | ✅ | `card_is_registered()` gate; separate `on_card_detected` / `on_card_rejected` callbacks |
 | [FR-CARD-06](SOFTWARE_REQUIREMENTS.md#fr-card-06) | ✅ | Monitor loop logs, emits `hardware_error` (`where="card_monitor"`), sleeps and continues |
 
@@ -220,7 +220,7 @@ the process list → **[T15](#t15)**.
 | [FR-UI-09](SOFTWARE_REQUIREMENTS.md#fr-ui-09) | ✅ | Keypad path **removed outright** (rev 1.5): markup, styles, JS state machine and `Bridge.codeSubmitted()` all deleted; no hardcoded code constant remains → **[T18](#t18)** done |
 | FR-UI-10 | ➖ | Deprecated rev 1.2 |
 | [FR-UI-11](SOFTWARE_REQUIREMENTS.md#fr-ui-11) | ✅ | `config.KIOSK_BORDERLESS` / `RUN_ON_REAL_SCREEN`; `GUIWeb._place_on_small_display()` |
-| [FR-UI-12](SOFTWARE_REQUIREMENTS.md#fr-ui-12) | ❌ | **Seam built, deliberately stubbed.** `session/view.py` `show_unavailable()` documents "front-ends may alias this to `show_failure` until T9", and `WebSessionView.show_unavailable()` does exactly that. `controller.py` never calls it, and there is no dedicated screen → **[T9](#t9)** (smaller than it looks) |
+| [FR-UI-12](SOFTWARE_REQUIREMENTS.md#fr-ui-12) | ✅ | **T9(4) done (B10).** Real slate screen, no longer a stub: `controller._biometric_unavailable()` drives a `show_unavailable` branch in `_on_auth_complete()`; `demo_ui/app.js` renders an `"unavailable"` case with `--slate-dark/--slate-light` tokens; `WebSessionView.show_unavailable()` no longer aliases `failed()` |
 
 ### 1.15 Server contract — FR-API
 
@@ -257,7 +257,7 @@ so BR-04's gap was visible only inside the FR-SESS row.*
 | [BR-01](SOFTWARE_REQUIREMENTS.md#br-01) | ✅ | Local membership = authorisation; sound because the server door-scopes ([FR-API-13](SOFTWARE_REQUIREMENTS.md#fr-api-13)) |
 | [BR-02](SOFTWARE_REQUIREMENTS.md#br-02) | ✅ | `card_is_registered()` gate before any preview |
 | [BR-03](SOFTWARE_REQUIREMENTS.md#br-03) | ✅ | SDK success **or** score ≥ `CUSTOM_THRESHOLD`, logged per decision (T12) |
-| [BR-04](SOFTWARE_REQUIREMENTS.md#br-04) | ⚠️ | Same-card cooldown ✅, but a **different** card during a result hold is swallowed rather than pre-empting → **[T9](#t9)** |
+| [BR-04](SOFTWARE_REQUIREMENTS.md#br-04) | ⚠️ | Same-card cooldown ✅, but a **different** card during a result hold is swallowed rather than pre-empting → **[T9a](#t9a) (deferred)**. Not a safety defect: a swallowed tap is a retry, never an unintended unlock |
 | [BR-05](SOFTWARE_REQUIREMENTS.md#br-05) | ✅ | Card session shows the denial once and returns to idle (`_on_auth_complete()`) |
 | [BR-06](SOFTWARE_REQUIREMENTS.md#br-06) | ✅ | All error paths deny; a failed pulse yields `access_output_failed`, not a grant |
 | [BR-07](SOFTWARE_REQUIREMENTS.md#br-07) | ✅ | Revocation purges user data and denies all (T6) |
@@ -306,7 +306,8 @@ dependencies — everything else has shipped.
 
 | # | Task | Scope | Depends on | Requirements |
 |---|---|---|---|---|
-| [T9](#t9) | Session edge cases + unavailable screen | device | — | FR-SESS-03, FR-CARD-04, FR-FACE-06, FR-UI-12, BR-04 |
+| [T9](#t9) | Session edge cases + unavailable screen | device | ✅ **DONE (B10)** | FR-SESS-03(b), FR-FACE-06, FR-UI-12 |
+| [T9a](#t9a) | Different-card pre-emption | device | **DEFERRED** | FR-SESS-03(a), FR-CARD-04, BR-04 |
 | [T5b](#t5b) | Durable event queue | device | — | FR-MODE-10 |
 | [T8](#t8) | `time_registry` mode (incl. `face_policy` / `DIRECTION_SELECT_TIMEOUT_SEC`, moved from T4) | device+server | T5b | FR-MODE-06..11, FR-API-15 |
 | [T13](#t13) | HTTP error classification | device | — | FR-API-04 |
@@ -491,14 +492,12 @@ Covered off-device by `session/tests/test_card_only.py`.
 
 ---
 
-#### <a id="t9"></a>T9. Session edge cases and the unavailable screen
+#### <a id="t9"></a>T9. Session edge cases and the unavailable screen — ✅ **DONE (B10, 2026-09-16)** *(item 1 split to [T9a](#t9a))*
 
-**Do.** Four related corrections, all in the controller except the new screen:
+**Do.** Three corrections, all in the controller except the new screen. *(A
+fourth — different-card pre-emption — was carved out as [T9a](#t9a) and is
+**not** part of B10.)*
 
-1. A *different* valid card during a result hold pre-empts it and starts a new
-   session; the cooldown stays a per-card debounce, not a global input lock
-   ([BR-04](SOFTWARE_REQUIREMENTS.md#br-04)). Requires releasing the card flag
-   when the *session* ends rather than when the *hold* ends.
 2. `on_card_detected()` must respect the init-mode guard that
    `on_user_tapped()` and `on_card_rejected()` already apply. Scope is the
    `card_and_face` branch only — the `card_only` branch already guards.
@@ -513,10 +512,44 @@ Covered off-device by `session/tests/test_card_only.py`.
 the card path); `demo_ui/` (new screen); `gui_web/web_window.py`
 (`WebSessionView.show_unavailable()` — drop the alias).
 
+**Accept.** A card tap during backoff shows the unavailable screen — visually
+distinct from a mismatch — and never opens the door; no session can start during
+init mode. *(The card-B-during-card-A clause moved to [T9a](#t9a).)*
+
+**Delivered.** Init-mode guard on `on_card_detected()`; the FR-FACE-06 backoff
+gate on `authenticate_with_card_and_face()` plus `AuthService.biometric_unavailable()`;
+the slate unavailable screen end-to-end (`demo_ui/app.js` render case, CSS
+tokens, `DeviceUI.unavailable()`, alias dropped). Tests:
+`face_auth/tests/test_backoff_gate.py` (4), `test_init_mode_card_does_not_start_session`,
+`test_init_mode_card_does_not_actuate`,
+`test_card_during_biometric_backoff_shows_unavailable_not_failure`,
+`test_card_mismatch_still_shows_failure_when_device_healthy`.
+
+---
+
+#### <a id="t9a"></a>T9a. Different-card pre-emption — **DEFERRED (2026-09-16)**
+
+> **Deferred by stakeholder ruling.** Implemented and reviewed during B10, then
+> withdrawn: the change is large relative to its value and the current behaviour
+> is not a safety defect — a swallowed tap is a retry, never an unintended
+> unlock. Kept as a nice-to-have, **out of scope for B10**.
+
+**Do.** A *different* valid card during a result hold pre-empts it and starts a
+new session; the cooldown stays a per-card debounce, not a global input lock
+([BR-04](SOFTWARE_REQUIREMENTS.md#br-04)). Requires releasing the card flag when
+the decision is known rather than when the hold expires, **and** tearing down the
+in-flight hold — `start_session()` returns early while `_session_active` is set,
+so releasing the flag alone is not sufficient.
+
+**Files.** `session/controller.py` (result-hold lifecycle); `session/tests/test_controller.py`.
+
 **Accept.** Card B during card A's failure hold starts a session for B; the same
-card within 2 s is still ignored; a card tap during backoff shows the unavailable
-screen — visually distinct from a mismatch — and never opens the door; no session
-can start during init mode.
+card within 2 s is still ignored; the pre-empted session never pulses the relay.
+
+**Note.** The per-card 2 s debounce in `auth_service.py` `start_card_monitoring()`
+is checked *before* and independently of the `_card_auth_in_progress` gate, so
+releasing the session flag early does not weaken it. `test_second_card_ignored_while_session_active`
+currently locks in the **old** behaviour and must be rewritten when this lands.
 
 ---
 
@@ -705,7 +738,7 @@ every dev box.
 | **B7** | [T19](#t19) nonce removal + [T20](#t20) D21 ruling + [T8a](#t8a) `time_registry` guard | Implemented 2026-09-06 — awaiting device validation |
 | ~~B8~~ | ~~[T3b](#t3b) `faceprints` as a list~~ | **cancelled 2026-09-06** — deferred by [A7](SOFTWARE_REQUIREMENTS.md#a7); [B9](#t4) is the next batch |
 | B9 | [T4](#t4) `device_mode` server plumbing | **Implemented 2026-09-06** — awaiting device validation |
-| B10 | [T9](#t9) pre-emption + card-path backoff + unavailable screen | pending |
+| B10 | [T9](#t9) init-mode guard + card-path backoff + unavailable screen | **Implemented 2026-09-16** — awaiting device validation. Pre-emption split out as [T9a](#t9a) and **deferred** |
 | B11 | [T5b](#t5b) durable event queue | pending |
 | B12 | [T8](#t8) server half (attendance intake + journal) | pending |
 | B13 | [T8](#t8) device half (IN/OUT flow) | pending |
@@ -872,4 +905,25 @@ Nonce removal (T19), the D21 ruling (T20) and the `time_registry` guard (T8a).
 10. **Server rejects bad modes** — `POST /devices/generate-qr` with
     `"device_mode": "time_registry"` or `"card-only"` → **422**, no token minted.
 
-*(Per-batch checklists for B10+ are added when each batch is implemented.)*
+### B10 device checklist
+
+1. **Init-mode guard** — during the startup QR window, tap a **registered** card
+   → no session starts, the camera stays on the QR scan, no relay pulse. A valid
+   QR still binds; after the window closes the same card works normally.
+2. **Card-path backoff** — force the RealSense into its 20 s error backoff, then
+   tap a registered card → the **slate "temporarily unavailable" screen** appears
+   and the door stays shut. Confirm the card path fails fast on the gate (no
+   second `hardware_error` burst per tap).
+3. **Unavailable vs mismatch** — with the device **healthy**, present a
+   non-matching face → the normal red failure screen, *not* the slate one. The
+   two must be distinguishable in both directions.
+4. **Backoff expiry** — wait out the 20 s window, then tap a registered card with
+   a matching face → normal grant. The backoff must not latch permanently.
+5. **Slate screen in a browser** — verify the unavailable screen actually renders
+   (colours, copy, hold duration). It has only been checked via the Python call
+   path; `node` is not installed, so the JS was never executed in a browser.
+6. **Not in scope** — different-card pre-emption ([T9a](#t9a)) is deferred: a
+   second card during a result hold is still swallowed. Do **not** raise it as a
+   B10 defect.
+
+*(Per-batch checklists for B11+ are added when each batch is implemented.)*

@@ -25,7 +25,7 @@ coverage.
 | Config | `APPLY_NETWORK_PROFILE=False` unless a network-specific flow states otherwise ([T15](#)) |
 | Test cards | ≥3 registered cards (different users), ≥1 unregistered card |
 | Test users | ≥1 user with 0 faceprints (for `card_only`), ≥1 with 2 faceprints, ≥1 `active:false` |
-| Regression gate | `server/tests/` (73), `session/tests/` (41), `face_auth/tests/` (8), `db/test_remote_sync.py` (7), `provisioning/tests/test_revocation.py` (4), `db/tests/test_revocation_wipe.py` (2) — **135 total**, all green before device testing starts |
+| Regression gate | `server/tests/` (73), `session/tests/` (41), `gui_web/` (9), `face_auth/tests/` (8), `db/test_remote_sync.py` (7), `provisioning/tests/test_revocation.py` (4), `db/tests/test_revocation_wipe.py` (2) — **144 total**, all green before device testing starts |
 | Test deps | Device suites need only `pytest`. `server/tests/` additionally needs `server/requirements.txt` installed (`fastapi`, `httpx` et al) — without it the suite errors at import and is silently skipped. |
 
 Unless stated otherwise, every flow is run twice: once with the server
@@ -114,9 +114,9 @@ per **FR-STATE-04/05**: the access decision must be identical in both cases.
 **Pre:** Card A fails a session and is in its result-screen hold.
 **Steps:** During the hold, tap Card B (a different, registered card).
 **Expected:** Card B's tap pre-empts the hold and starts a new session immediately; Card A within its 2 s cooldown is still ignored if tapped again.
-**Verifies:** FR-SESS-03, FR-CARD-04, BR-04, T9(1).
+**Verifies:** FR-SESS-03(a), FR-CARD-04, BR-04, [T9a](IMPLEMENTATION_PLAN.md#t9a).
 **Pass/Fail:** Pass if Card B's session starts without waiting for A's hold to finish naturally.
-**Status:** ⚠️ Not yet implemented — T9 item 1 is still open. Expected to fail on the current build.
+**Status:** ⏸️ **Deferred — do not run against B10.** Split out of T9 as [T9a](IMPLEMENTATION_PLAN.md#t9a) and deferred by stakeholder ruling (2026-09-16): the fix was implemented, reviewed and withdrawn as large relative to its value. Current behaviour swallows Card B until A's hold expires. Not a safety defect — a swallowed tap is a retry, never an unintended unlock. Expected to fail; re-enable this flow when T9a lands.
 
 ### 3.5a Card tap during init mode is ignored
 **Pre:** `INIT_MODE_ENABLED=True`, `card_and_face` mode; fresh boot with the init-mode overlay on screen and the QR scan window open.
