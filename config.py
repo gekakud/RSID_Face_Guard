@@ -99,6 +99,15 @@ def mode_is_card_only() -> bool:
     return DEVICE_MODE == "card_only"
 
 
+def mode_is_time_registry() -> bool:
+    """True when the user picks IN/OUT before presenting a card (FR-MODE-06).
+
+    The only mode that shows the direction control; every other mode rests on
+    the plain idle screen. Always False until T8 lifts the boot guard above.
+    """
+    return DEVICE_MODE == "time_registry"
+
+
 # Set True on RPi5 with the small 720x720 touch screen
 RUN_ON_REAL_SCREEN = True
 

@@ -198,6 +198,10 @@ class DeviceUI:
     def screensaver(self):
         self._call("screensaver")
 
+    def screensaver_basic(self):
+        # Same idle screen minus the IN/OUT control.
+        self._call("screensaverBasic")
+
     def camera(self):
         self._call("camera")
 
@@ -295,7 +299,13 @@ class WebSessionView:
         self._device_ui.camera()
 
     def show_idle(self):
-        self._device_ui.screensaver()
+        # The IN/OUT toggle belongs to time_registry only (FR-MODE-06); every
+        # other mode rests on the same screen without it. Both states are
+        # tap-to-wake aware, so face_only keeps working.
+        if config.mode_is_time_registry():
+            self._device_ui.screensaver()
+        else:
+            self._device_ui.screensaver_basic()
 
     def show_overlay(self, text):
         self._page.runJavaScript(_status_overlay_show_js(text))
