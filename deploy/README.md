@@ -6,6 +6,7 @@ fresh `git clone` can reproduce them instead of rediscovering them the hard way.
 | File | Installs to | Purpose |
 |---|---|---|
 | `99-realsense-id.rules` | `/etc/udev/rules.d/` | raw USB access for the RealSense ID camera (non-root preview) |
+| `50-faceguard-nm.rules` | `/etc/polkit-1/rules.d/` | lets the service (no logind session) join Wi-Fi from a provisioning QR via nmcli |
 
 The systemd unit (`face-guard.service`) and its launcher (`run_service.sh`)
 stay in the repo root. See `docs/SETUP_RPI5.md` steps 6 and 8.

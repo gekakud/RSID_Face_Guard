@@ -8,22 +8,24 @@ Only does anything when:
 
 A "local" profile (device already on a LAN cable) is always a no-op.
 
-The profile is created with a system-owned passphrase (psk-flags=0) written
-straight into the NetworkManager keyfile, so it survives a reboot and can be
-re-supplied on a roam/re-auth with no secret agent running -- exactly like a
-network a desktop user saved. A profile whose secret did not persist is
-rejected at bind time rather than dropping the link an hour later.
+The profile is created with a system-owned passphrase (psk-flags=0), and the
+passphrase itself is set via `nmcli connection edit` fed on stdin -- never on
+the argv (FR-LOG-04), and never by writing NM's keyfile directly (that file is
+root:root 0600, unreadable to the non-root kiosk service). NetworkManager
+persists it, so it survives a reboot and can be re-supplied on a roam/re-auth
+with no secret agent running -- exactly like a network a desktop user saved. A
+profile whose secret did not persist is rejected at bind time rather than
+dropping the link an hour later.
 
 Networking on Raspberry Pi OS Bookworm is managed by NetworkManager, so this
 drives `nmcli`. If nmcli isn't present (a non-NetworkManager host), it logs and
-returns without touching anything. Joining Wi-Fi typically needs root/polkit --
-see server/README.md for the polkit rule; failures are logged, not raised, so a
-network hiccup never crashes the kiosk (registration will simply fail next and
-surface a clear message).
+returns without touching anything. Joining Wi-Fi needs polkit authorisation --
+a systemd service has no logind session, so the stock NM rule does not cover it;
+install deploy/50-faceguard-nm.rules (see docs/SETUP_RPI5.md 6.2). Failures are
+logged, not raised, so a network hiccup never crashes the kiosk (registration
+will simply fail next and surface a clear message).
 """
 
-import configparser
-import os
 import shutil
 import subprocess
 import time
@@ -55,57 +57,34 @@ def _run(args, timeout=None):
     )
 
 
-def _keyfile_path(con_name):
-    """Absolute path of the keyfile backing a connection, or None."""
-    result = _run(["-t", "-f", "NAME,FILENAME", "connection", "show"], timeout=10)
-    if result.returncode != 0:
-        return None
-    for line in result.stdout.splitlines():
-        # FILENAME is absolute, so split off the name at the first colon only.
-        name, _, filename = line.partition(":")
-        if name == con_name and filename:
-            return filename
-    return None
-
-
 def _store_psk(con_name, password):
-    """Write the passphrase straight into the keyfile, owner-only.
+    """Set the passphrase via `nmcli connection edit`, fed on stdin.
 
     Deliberately not `nmcli connection modify wifi-sec.psk <pw>`: that puts the
     secret on the argv, where any user can read it out of the process list
-    (FR-LOG-04). Writing the keyfile is also what makes the secret system-owned
-    and durable, so NetworkManager can re-authenticate after a roam or a reboot
-    with no secret agent running.
+    (FR-LOG-04). Equally deliberately not a direct write of NM's keyfile: that
+    file is root:root 0600, so the kiosk service (User=geka) cannot open it --
+    polkit authorises D-Bus actions to NetworkManager, never raw file access.
+
+    Letting NM itself persist the secret keeps it off the argv AND makes it
+    system-owned (psk-flags=0 was set at `connection add`), so NetworkManager
+    can re-authenticate after a roam or a reboot with no secret agent running.
     """
-    path = _keyfile_path(con_name)
-    if not path:
-        raise NetworkApplyError(f"could not locate keyfile for {con_name!r}")
-
-    parser = configparser.RawConfigParser()
-    # Keep NM's key casing (psk-flags, key-mgmt) intact.
-    parser.optionxform = str
+    script = f"set 802-11-wireless-security.psk {password}\nsave\nquit\n"
     try:
-        with open(path, "r", encoding="utf-8") as handle:
-            parser.read_file(handle)
-    except OSError as exc:
-        raise NetworkApplyError(f"could not read {path}: {exc}") from exc
+        result = subprocess.run(
+            ["nmcli", "connection", "edit", con_name],
+            input=script,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.SubprocessError as exc:
+        raise NetworkApplyError(f"nmcli connection edit failed: {exc}") from exc
 
-    if not parser.has_section("wifi-security"):
-        parser.add_section("wifi-security")
-    parser.set("wifi-security", "psk", password)
-    parser.set("wifi-security", "psk-flags", "0")
-
-    try:
-        with open(path, "w", encoding="utf-8") as handle:
-            parser.write(handle, space_around_delimiters=False)
-        os.chmod(path, 0o600)
-    except OSError as exc:
-        raise NetworkApplyError(f"could not write {path}: {exc}") from exc
-
-    reload_result = _run(["connection", "reload"], timeout=10)
-    if reload_result.returncode != 0:
+    if result.returncode != 0:
         raise NetworkApplyError(
-            f"nmcli connection reload failed: {reload_result.stderr.strip()}"
+            f"could not store passphrase for {con_name!r}: {result.stderr.strip()}"
         )
 
 

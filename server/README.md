@@ -92,17 +92,25 @@ that network via NetworkManager (`nmcli`) *before* it registers — so a device
 with no LAN cable can come online from the QR alone. It is `False` by default so
 a dev machine is never reconfigured; a `local` profile is always a no-op.
 
-`nmcli`-based joining needs permission. Either run the service as root, or add a
-polkit rule so the `geka` user may manage Wi-Fi, e.g.
-`/etc/polkit-1/rules.d/50-faceguard-nm.rules`:
+`nmcli`-based joining needs polkit authorisation. The rule NetworkManager ships
+grants it only to a subject with `subject.local && subject.active` — a real
+logind session — so a device app running as a **systemd service** (no session)
+fails with `Insufficient privileges` even though its user is in `sudo`/`netdev`.
+Install a scoped rule instead of running the app as root; the repo ships one at
+`deploy/50-faceguard-nm.rules` → `/etc/polkit-1/rules.d/`:
 ```javascript
 polkit.addRule(function (action, subject) {
-  if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 &&
-      subject.user === "geka") {
-    return polkit.Result.YES;
-  }
+    if (subject.user !== "geka") {
+        return null;
+    }
+    if (action.id == "org.freedesktop.NetworkManager.settings.modify.system" ||
+        action.id == "org.freedesktop.NetworkManager.network-control" ||
+        action.id == "org.freedesktop.NetworkManager.enable-disable-wifi") {
+        return polkit.Result.YES;
+    }
 });
 ```
+See `docs/SETUP_RPI5.md` §6.2 for the full rationale.
 If the Pi is joining the *new* Wi-Fi it will drop its current connection, so
 don't provision over the same Wi-Fi you're SSH'd in on.
 

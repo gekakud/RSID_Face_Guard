@@ -529,12 +529,15 @@ def test_network_apply_wifi_enabled_calls_nmcli(monkeypatch):
     assert any("add" in c for c in calls)
     assert any("up" in c for c in calls)
 
-def test_network_apply_persists_psk_system_owned(monkeypatch, tmp_path):
-    """The passphrase must land in the keyfile, system-owned, off the argv.
+def test_network_apply_persists_psk_system_owned(monkeypatch):
+    """The passphrase must be persisted by NM, system-owned, off the argv.
 
-    Regression: the profile used to be created with `wifi-sec.psk <pw>` inline
-    and no psk-flags, so the secret was not durably stored -- the device joined
-    at bind time and then failed to re-authenticate on the next roam/reboot.
+    Two regressions guarded here:
+    - the profile used to be created with `wifi-sec.psk <pw>` inline and no
+      psk-flags, so the secret was not durably stored -- the device joined at
+      bind time and then failed to re-authenticate on the next roam/reboot;
+    - the fix then wrote NM's keyfile directly, which works only as root and
+      broke the moment the app ran as a service (keyfile is root:root 0600).
     """
     import config
     from provisioning import network
@@ -543,13 +546,8 @@ def test_network_apply_persists_psk_system_owned(monkeypatch, tmp_path):
     monkeypatch.setattr(network, "_have_nmcli", lambda: True)
     monkeypatch.setattr(network, "_is_connected", lambda: True)
 
-    keyfile = tmp_path / "faceguard-wifi.nmconnection"
-    keyfile.write_text(
-        "[connection]\nid=faceguard-wifi\n\n[wifi-security]\nkey-mgmt=wpa-psk\n",
-        encoding="utf-8",
-    )
-
     calls = []
+    edits = []
 
     class _Result:
         returncode = 0
@@ -560,8 +558,6 @@ def test_network_apply_persists_psk_system_owned(monkeypatch, tmp_path):
 
     def fake_run(args, timeout=None):
         calls.append(args)
-        if any("FILENAME" in arg for arg in args):
-            return _Result(f"faceguard-wifi:{keyfile}\n")
         if "--show-secrets" in args:
             return _Result(
                 "802-11-wireless-security.psk:hunter2\n"
@@ -569,7 +565,12 @@ def test_network_apply_persists_psk_system_owned(monkeypatch, tmp_path):
             )
         return _Result()
 
+    def fake_subprocess_run(args, input=None, **kwargs):
+        edits.append((args, input))
+        return _Result()
+
     monkeypatch.setattr(network, "_run", fake_run)
+    monkeypatch.setattr(network.subprocess, "run", fake_subprocess_run)
 
     assert network.apply(
         {"mode": "wifi", "wifi": {"ssid": "acme", "password": "hunter2"}}
@@ -580,12 +581,46 @@ def test_network_apply_persists_psk_system_owned(monkeypatch, tmp_path):
     # any leftover hand-made profile for the same SSID.
     assert "wifi-sec.psk-flags" in add and add[add.index("wifi-sec.psk-flags") + 1] == "0"
     assert add[add.index("connection.autoconnect") + 1] == "yes"
-    # The passphrase must never reach the process list (FR-LOG-04).
-    assert not any("hunter2" in arg for c in calls for arg in c)
 
-    written = keyfile.read_text(encoding="utf-8")
-    assert "psk=hunter2" in written
-    assert "psk-flags=0" in written
+    # The secret is handed to `nmcli connection edit` on stdin...
+    edit_args, edit_input = next(
+        (a, i) for a, i in edits if "edit" in a
+    )
+    assert edit_args == ["nmcli", "connection", "edit", network.CONNECTION_NAME]
+    assert "set 802-11-wireless-security.psk hunter2" in edit_input
+    assert "save" in edit_input
+
+    # ...and must never reach the process list, on either call path (FR-LOG-04).
+    assert not any("hunter2" in arg for c in calls for arg in c)
+    assert not any("hunter2" in arg for a, _ in edits for arg in a)
+
+
+def test_network_apply_raises_when_psk_cannot_be_stored(monkeypatch):
+    """A failed `nmcli connection edit` must abort the bind, not proceed."""
+    import config
+    from provisioning import network
+
+    monkeypatch.setattr(config, "APPLY_NETWORK_PROFILE", True)
+    monkeypatch.setattr(network, "_have_nmcli", lambda: True)
+    monkeypatch.setattr(network, "_is_connected", lambda: True)
+
+    class _Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    class _Failed:
+        returncode = 1
+        stdout = ""
+        stderr = "Error: Connection 'faceguard-wifi' does not exist."
+
+    monkeypatch.setattr(network, "_run", lambda *a, **k: _Result())
+    monkeypatch.setattr(
+        network.subprocess, "run", lambda *a, **k: _Failed()
+    )
+
+    with pytest.raises(network.NetworkApplyError, match="could not store passphrase"):
+        network.apply({"mode": "wifi", "wifi": {"ssid": "acme", "password": "pw"}})
 
 
 def test_network_apply_raises_when_psk_not_persisted(monkeypatch, tmp_path):

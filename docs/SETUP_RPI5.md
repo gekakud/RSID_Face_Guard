@@ -224,6 +224,48 @@ ls -l /dev/bus/usb/003/002
 # crw-rw---- 1 root plugdev 189, 257 ... 	<- root:plugdev 0660, not root:root 0644
 ```
 
+## 6.2 polkit rule for Wi-Fi provisioning (required if `APPLY_NETWORK_PROFILE=True`)
+
+Only needed when the device joins Wi-Fi from a provisioning QR
+(`config.APPLY_NETWORK_PROFILE = True`). Skip it on a LAN-cabled device.
+
+`provisioning/network.py` drives `nmcli` to create and bring up the
+`faceguard-wifi` profile. That needs polkit authorisation, and the rule Pi OS
+ships (`/usr/share/polkit-1/rules.d/org.freedesktop.NetworkManager.rules`) only
+grants it to a subject with `subject.local && subject.active` — a real logind
+session on a seat. **A systemd system service has no logind session**, so it
+falls through to the action's `auth_admin_keep` default, nobody is there to
+answer the prompt, and the bind fails with:
+
+```
+Registration failed: Could not join network: nmcli connection add failed: Error: Failed to add 'faceguard-wifi' connection: Insufficient privileges
+```
+
+Group membership is not the issue — `geka` is already in `sudo` and `netdev`.
+This is also why provisioning works when you run `main_web.py` by hand from a
+desktop/SSH shell but fails under `face-guard.service`: same user, different
+session context.
+
+Install the rule shipped in `deploy/`:
+
+```bash
+sudo cp deploy/50-faceguard-nm.rules /etc/polkit-1/rules.d/
+sudo systemctl restart polkit
+```
+
+Verify it took (a JS syntax error makes polkit silently ignore the whole file):
+
+```bash
+journalctl -u polkit -b | tail -5      # no "Error compiling script" lines
+```
+
+> **Why not just run the service as root?** It would work, but it defeats
+> [step 6.1](#61-udev-rule-for-the-realsense-camera-required-for-non-root-runs)
+> (the udev rule exists precisely so the camera works unprivileged), breaks the
+> geka-scoped `XAUTHORITY`/`XDG_RUNTIME_DIR` the kiosk needs, and leaves
+> `face_guard.log` and the local user DB root-owned — which crash-loops the unit
+> the next time it runs as `geka` (see the file-ownership note in step 8).
+
 ## 7. Run the app
 
 > Complete [step 9](#9-qtwebengine-system-dependencies-required) first — the

@@ -198,8 +198,8 @@ reconfigured.
 `storage_monitor.check_storage()` / `get_storage_metadata()`.
 
 [FR-LOG-04](SOFTWARE_REQUIREMENTS.md#fr-log-04) ✅ — **T15 done.**
-`network.apply()` writes the Wi-Fi passphrase straight into the NM keyfile
-(`_store_psk()`) instead of passing it on the `nmcli` argv, so it never
+`network.apply()` sets the Wi-Fi passphrase via `nmcli connection edit` fed on
+stdin (`_store_psk()`) instead of passing it on the `nmcli` argv, so it never
 appears in the process list; `psk-flags 0` also makes the secret
 system-owned and durable across reboot/reauth.
 
@@ -629,10 +629,12 @@ users to the door.
 a new device starts with the users of *its* door, not a template.
 
 #### <a id="t15"></a>T15. Network profile defaults and password handling — ✅ **DONE** *(see [Delivered](#delivered))*
-Shipped `APPLY_NETWORK_PROFILE = False`; `network.apply()` writes the Wi-Fi
-passphrase into the NM keyfile (`_store_psk()`) with `psk-flags 0` instead of
-passing it on the `nmcli` argv, and verifies persistence (`_psk_is_stored()`),
-raising `NetworkApplyError` if the secret didn't stick.
+Shipped `APPLY_NETWORK_PROFILE = False`; `network.apply()` sets the Wi-Fi
+passphrase via `nmcli connection edit` on stdin (`_store_psk()`) with
+`psk-flags 0` instead of passing it on the `nmcli` argv, and verifies
+persistence (`_psk_is_stored()`), raising `NetworkApplyError` if the secret
+didn't stick. Joining as a non-root service also needs
+`deploy/50-faceguard-nm.rules` (polkit); see `docs/SETUP_RPI5.md` §6.2.
 **Accept.** A dev machine is never reconfigured by default; the password is
 absent from the process list; the connection is system-owned so it survives
 reboot/reauth.
@@ -676,7 +678,7 @@ see [§3](#3-batches-and-device-validation).
 | 16 | **T19** Device nonce set removed | `_seen_nonces` and its rejection branch deleted from `QRScanner.__init__()` / `_verify()`; docstring no longer lists "replayed nonce" as a SECURITY rejection. Replay protection is server-side on the single-use token ([FR-API-07](SOFTWARE_REQUIREMENTS.md#fr-api-07)); `nonce` still parsed and forwarded. Closes SRS [D12](SOFTWARE_REQUIREMENTS.md#d12). *(B7)* |
 | 17 | **T20** D21 ruled — spec follows code | Revocation's **in-process** return to `init_mode` is now the specified behaviour: SRS rev 1.6 reworded FR-HB-10 step 6, the §3 state diagram (`Revoked --> InitMode: in-process reset`), the `revoked` state row and NFR-21. **No code change.** Rationale: deny-all is already satisfied without a restart, and a revoked device left powered on cannot enter a restart loop. Closes SRS [D21](SOFTWARE_REQUIREMENTS.md#d21). *(B7)* |
 | 18 | **T8a** `time_registry` fails loud | `config.py` raises `NotImplementedError` for the unimplemented mode, which previously passed validation and silently ran as `card_and_face` — pulsing the door and journalling nothing. Guard is deleted as step 1 of [T8](#t8). *(B7)* |
-| 19 | **T15** Network profile defaults + password handling | `config.APPLY_NETWORK_PROFILE = False` by default; `network.apply()` creates the wifi connection without inline PSK, writes the passphrase into the NM keyfile (`_store_psk()`, chmod `0600`, `nmcli connection reload`), sets `wifi-sec.psk-flags 0` + `connection.autoconnect yes`, and verifies persistence (`_psk_is_stored()`), raising `NetworkApplyError` if the secret didn't stick system-owned. Password never touches the `nmcli` argv/process list; the profile survives reboot/reauth without a secret agent. Closes SRS [D17](SOFTWARE_REQUIREMENTS.md#d17). `server/tests/conftest.py` pins `APPLY_NETWORK_PROFILE = False` so the suite never touches host networking. |
+| 19 | **T15** Network profile defaults + password handling | `config.APPLY_NETWORK_PROFILE = False` by default; `network.apply()` creates the wifi connection without inline PSK, sets the passphrase via `nmcli connection edit` fed on stdin (`_store_psk()` — never a direct keyfile write, which is root-only and breaks under the service), sets `wifi-sec.psk-flags 0` + `connection.autoconnect yes`, and verifies persistence (`_psk_is_stored()`), raising `NetworkApplyError` if the secret didn't stick system-owned. Password never touches the `nmcli` argv/process list; the profile survives reboot/reauth without a secret agent. Non-root joining needs `deploy/50-faceguard-nm.rules` (polkit, see `docs/SETUP_RPI5.md` §6.2). Closes SRS [D17](SOFTWARE_REQUIREMENTS.md#d17). `server/tests/conftest.py` pins `APPLY_NETWORK_PROFILE = False` so the suite never touches host networking. |
 
 **T6 — server-authoritative revocation lifecycle** *(kept in full: T14 and T20
 both depend on it).* Revocation is a server-side tombstone handshake, so the
