@@ -29,8 +29,15 @@ os.environ.pop("ADMIN_PASSWORD", None)
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+import config as device_config  # noqa: E402
 from server import db  # noqa: E402
 from server.main import app  # noqa: E402
+
+# Never let a test touch host networking. test_device_binding.py provisions with
+# a wifi profile, so with this flag on, network.apply() really shells out to
+# nmcli and deletes/recreates the live faceguard-wifi connection (FR-NET-03).
+# Tests that exercise the wifi path monkeypatch it back on with _run stubbed.
+device_config.APPLY_NETWORK_PROFILE = False
 
 
 @pytest.fixture()

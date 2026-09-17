@@ -519,11 +519,97 @@ def test_network_apply_wifi_enabled_calls_nmcli(monkeypatch):
 
     monkeypatch.setattr(network, "_run", fake_run)
     monkeypatch.setattr(network, "_is_connected", lambda: True)
+    # Secret persistence has its own dedicated tests below; stub it out here so
+    # this one stays focused on "does it shell out to nmcli at all".
+    monkeypatch.setattr(network, "_store_psk", lambda *a, **k: None)
+    monkeypatch.setattr(network, "_psk_is_stored", lambda *a, **k: True)
 
     assert network.apply({"mode": "wifi", "wifi": {"ssid": "acme", "password": "pw"}}) is True
     # delete (cleanup) + add + up
     assert any("add" in c for c in calls)
     assert any("up" in c for c in calls)
+
+def test_network_apply_persists_psk_system_owned(monkeypatch, tmp_path):
+    """The passphrase must land in the keyfile, system-owned, off the argv.
+
+    Regression: the profile used to be created with `wifi-sec.psk <pw>` inline
+    and no psk-flags, so the secret was not durably stored -- the device joined
+    at bind time and then failed to re-authenticate on the next roam/reboot.
+    """
+    import config
+    from provisioning import network
+
+    monkeypatch.setattr(config, "APPLY_NETWORK_PROFILE", True)
+    monkeypatch.setattr(network, "_have_nmcli", lambda: True)
+    monkeypatch.setattr(network, "_is_connected", lambda: True)
+
+    keyfile = tmp_path / "faceguard-wifi.nmconnection"
+    keyfile.write_text(
+        "[connection]\nid=faceguard-wifi\n\n[wifi-security]\nkey-mgmt=wpa-psk\n",
+        encoding="utf-8",
+    )
+
+    calls = []
+
+    class _Result:
+        returncode = 0
+        stderr = ""
+
+        def __init__(self, stdout=""):
+            self.stdout = stdout
+
+    def fake_run(args, timeout=None):
+        calls.append(args)
+        if any("FILENAME" in arg for arg in args):
+            return _Result(f"faceguard-wifi:{keyfile}\n")
+        if "--show-secrets" in args:
+            return _Result(
+                "802-11-wireless-security.psk:hunter2\n"
+                "802-11-wireless-security.psk-flags:0\n"
+            )
+        return _Result()
+
+    monkeypatch.setattr(network, "_run", fake_run)
+
+    assert network.apply(
+        {"mode": "wifi", "wifi": {"ssid": "acme", "password": "hunter2"}}
+    ) is True
+
+    add = next(c for c in calls if "add" in c)
+    # System-owned secret + autoconnect, so it survives a reboot and outranks
+    # any leftover hand-made profile for the same SSID.
+    assert "wifi-sec.psk-flags" in add and add[add.index("wifi-sec.psk-flags") + 1] == "0"
+    assert add[add.index("connection.autoconnect") + 1] == "yes"
+    # The passphrase must never reach the process list (FR-LOG-04).
+    assert not any("hunter2" in arg for c in calls for arg in c)
+
+    written = keyfile.read_text(encoding="utf-8")
+    assert "psk=hunter2" in written
+    assert "psk-flags=0" in written
+
+
+def test_network_apply_raises_when_psk_not_persisted(monkeypatch, tmp_path):
+    """A profile that cannot re-authenticate later must fail at bind time."""
+    import config
+    from provisioning import network
+
+    monkeypatch.setattr(config, "APPLY_NETWORK_PROFILE", True)
+    monkeypatch.setattr(network, "_have_nmcli", lambda: True)
+    monkeypatch.setattr(network, "_is_connected", lambda: True)
+    monkeypatch.setattr(network, "_store_psk", lambda *a, **k: None)
+    # nmcli reports the secret as absent / agent-owned.
+    monkeypatch.setattr(network, "_psk_is_stored", lambda *a, **k: False)
+
+    class _Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(network, "_run", lambda *a, **k: _Result())
+
+    with pytest.raises(network.NetworkApplyError, match="not persisted"):
+        network.apply({"mode": "wifi", "wifi": {"ssid": "acme", "password": "pw"}})
+
 
 def test_network_apply_wifi_raises_on_missing_nmcli(monkeypatch):
     import config
