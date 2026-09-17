@@ -67,7 +67,7 @@ per **FR-STATE-04/05**: the access decision must be identical in both cases.
 ### 2.5 Wi-Fi network profile
 **Pre:** `APPLY_NETWORK_PROFILE=True`; unbound device with no Ethernet.
 **Steps:** Present a QR carrying `network_profile: {mode: wifi, ssid, password}`.
-**Expected:** Terminal joins via NetworkManager before registering, within a bounded timeout; on failure, registration fails with a clear join-failure message. The Wi-Fi password never appears in the process list (`ps aux` during join) — passed via stdin/file, not argv.
+**Expected:** Terminal joins via NetworkManager before registering, within a bounded timeout; on failure, registration fails with a clear join-failure message. The Wi-Fi password never appears in the process list (`ps aux` during join) — it is written straight into the NM keyfile (`psk-flags 0`), not passed on the `nmcli` argv.
 **Verifies:** FR-NET-01/02/04/05, T15.
 **Pass/Fail:** Pass if `ps aux | grep nmcli` never shows the plaintext password.
 

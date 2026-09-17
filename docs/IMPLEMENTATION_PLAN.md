@@ -178,8 +178,9 @@ holds only the `WebSessionView` adapter, `QtScheduler` and platform glue.
 [FR-NET-01](SOFTWARE_REQUIREMENTS.md#fr-net-01)/[02](SOFTWARE_REQUIREMENTS.md#fr-net-02)/[04](SOFTWARE_REQUIREMENTS.md#fr-net-04)/[05](SOFTWARE_REQUIREMENTS.md#fr-net-05)
 ✅ — `provisioning/network.py` `apply()`, `_have_nmcli()`, `_is_connected()`, bounded timeouts throughout.
 
-[FR-NET-03](SOFTWARE_REQUIREMENTS.md#fr-net-03) ⚠️ — `config.APPLY_NETWORK_PROFILE = True`
-is checked in; the SRS requires default-disabled → **[T15](#t15)**.
+[FR-NET-03](SOFTWARE_REQUIREMENTS.md#fr-net-03) ✅ — **T15 done.**
+`config.APPLY_NETWORK_PROFILE = False` by default; a dev machine is never
+reconfigured.
 
 ### 1.11 Heartbeat & telemetry — FR-HB
 
@@ -196,9 +197,11 @@ is checked in; the SRS requires default-disabled → **[T15](#t15)**.
 ✅ — `observability/logging_setup.py` `setup_logging()` + `install_native_log_bridge()`;
 `storage_monitor.check_storage()` / `get_storage_metadata()`.
 
-[FR-LOG-04](SOFTWARE_REQUIREMENTS.md#fr-log-04) ⚠️ — no secret is *logged*, but
-`network.apply()` passes the Wi-Fi password on the `nmcli` argv, exposing it in
-the process list → **[T15](#t15)**.
+[FR-LOG-04](SOFTWARE_REQUIREMENTS.md#fr-log-04) ✅ — **T15 done.**
+`network.apply()` writes the Wi-Fi passphrase straight into the NM keyfile
+(`_store_psk()`) instead of passing it on the `nmcli` argv, so it never
+appears in the process list; `psk-flags 0` also makes the secret
+system-owned and durable across reboot/reauth.
 
 ### 1.13 Camera — FR-CAM
 
@@ -300,7 +303,7 @@ baseline every remaining task builds on:
 
 ## 2. Task list
 
-Live queue: **8 open tasks**. Delivered work is rolled up in
+Live queue: **7 open tasks**. Delivered work is rolled up in
 [Delivered](#delivered). The `Depends on` column lists only *open*
 dependencies — everything else has shipped.
 
@@ -312,11 +315,10 @@ dependencies — everything else has shipped.
 | [T8](#t8) | `time_registry` mode (incl. `face_policy` / `DIRECTION_SELECT_TIMEOUT_SEC`, moved from T4) | device+server | T5b | FR-MODE-06..11, FR-API-15 |
 | [T13](#t13) | HTTP error classification | device | — | FR-API-04 |
 | [T14](#t14) | Server rebinding + door scoping | server | — | FR-API-07/08/13 |
-| [T15](#t15) | Network profile defaults + password handling | device | — | FR-NET-03, FR-LOG-04 |
 
-Delivered since rev 1.2: [T7](#t7) `card_only`, [T18](#t18) keypad removal, and
-the B7 trio [T19](#t19) / [T20](#t20) / [T8a](#t8a) — see
-[Delivered](#delivered).
+Delivered since rev 1.2: [T7](#t7) `card_only`, [T18](#t18) keypad removal,
+[T15](#t15) network profile defaults + password handling, and the B7 trio
+[T19](#t19) / [T20](#t20) / [T8a](#t8a) — see [Delivered](#delivered).
 
 ### Phase A — Hygiene and open decisions
 
@@ -626,11 +628,14 @@ users to the door.
 **Accept.** Rebinding the same physical terminal leaves exactly one active row;
 a new device starts with the users of *its* door, not a template.
 
-#### <a id="t15"></a>T15. Network profile defaults and password handling
-Ship `APPLY_NETWORK_PROFILE = False`; pass the Wi-Fi password to `nmcli` via
-stdin/file instead of argv (`network.apply()`).
+#### <a id="t15"></a>T15. Network profile defaults and password handling — ✅ **DONE** *(see [Delivered](#delivered))*
+Shipped `APPLY_NETWORK_PROFILE = False`; `network.apply()` writes the Wi-Fi
+passphrase into the NM keyfile (`_store_psk()`) with `psk-flags 0` instead of
+passing it on the `nmcli` argv, and verifies persistence (`_psk_is_stored()`),
+raising `NetworkApplyError` if the secret didn't stick.
 **Accept.** A dev machine is never reconfigured by default; the password is
-absent from the process list.
+absent from the process list; the connection is system-owned so it survives
+reboot/reauth.
 
 #### <a id="t18"></a>T18. Retire the keypad demo path — ✅ **DONE (rev 1.5)** *(see [Delivered](#delivered))*
 Removed outright rather than flag-gated: the `#keypad` markup and dev-panel
@@ -671,6 +676,7 @@ see [§3](#3-batches-and-device-validation).
 | 16 | **T19** Device nonce set removed | `_seen_nonces` and its rejection branch deleted from `QRScanner.__init__()` / `_verify()`; docstring no longer lists "replayed nonce" as a SECURITY rejection. Replay protection is server-side on the single-use token ([FR-API-07](SOFTWARE_REQUIREMENTS.md#fr-api-07)); `nonce` still parsed and forwarded. Closes SRS [D12](SOFTWARE_REQUIREMENTS.md#d12). *(B7)* |
 | 17 | **T20** D21 ruled — spec follows code | Revocation's **in-process** return to `init_mode` is now the specified behaviour: SRS rev 1.6 reworded FR-HB-10 step 6, the §3 state diagram (`Revoked --> InitMode: in-process reset`), the `revoked` state row and NFR-21. **No code change.** Rationale: deny-all is already satisfied without a restart, and a revoked device left powered on cannot enter a restart loop. Closes SRS [D21](SOFTWARE_REQUIREMENTS.md#d21). *(B7)* |
 | 18 | **T8a** `time_registry` fails loud | `config.py` raises `NotImplementedError` for the unimplemented mode, which previously passed validation and silently ran as `card_and_face` — pulsing the door and journalling nothing. Guard is deleted as step 1 of [T8](#t8). *(B7)* |
+| 19 | **T15** Network profile defaults + password handling | `config.APPLY_NETWORK_PROFILE = False` by default; `network.apply()` creates the wifi connection without inline PSK, writes the passphrase into the NM keyfile (`_store_psk()`, chmod `0600`, `nmcli connection reload`), sets `wifi-sec.psk-flags 0` + `connection.autoconnect yes`, and verifies persistence (`_psk_is_stored()`), raising `NetworkApplyError` if the secret didn't stick system-owned. Password never touches the `nmcli` argv/process list; the profile survives reboot/reauth without a secret agent. Closes SRS [D17](SOFTWARE_REQUIREMENTS.md#d17). `server/tests/conftest.py` pins `APPLY_NETWORK_PROFILE = False` so the suite never touches host networking. |
 
 **T6 — server-authoritative revocation lifecycle** *(kept in full: T14 and T20
 both depend on it).* Revocation is a server-side tombstone handshake, so the
@@ -720,8 +726,9 @@ by collection on 2026-09-06, **120 tests total**):
 | `observability/test_events.py` | 4 |
 | `provisioning/tests/test_revocation.py` | 4 |
 
-Run with `APPLY_NETWORK_PROFILE = False` on dev machines without `nmcli`
-([D17](SOFTWARE_REQUIREMENTS.md#d17)). The reference environment is the project
+`APPLY_NETWORK_PROFILE` defaults to `False`, so dev machines without `nmcli`
+are safe out of the box ([D17](SOFTWARE_REQUIREMENTS.md#d17)); `server/tests/conftest.py`
+also pins it off for the whole test run. The reference environment is the project
 venv — **`.venv/`** in the repo root (rev 1.3 said `.env`, which does not exist);
 invoke as `.venv/bin/python -m pytest`. `pytest` is not on the system Python of
 every dev box.
