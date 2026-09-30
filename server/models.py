@@ -36,10 +36,7 @@ NetworkProfile = Union[WifiNetworkProfile, LocalNetworkProfile]
 # ---------------------------------------------------------- device mode
 
 # The per-door operating mode handed to the device at registration (FR-MODE-01).
-# "time_registry" is deliberately absent: the device raises NotImplementedError
-# for it (T8a), so minting a QR for it would only produce a terminal that
-# refuses to boot. Add it here as part of T8.
-DeviceMode = Literal["card_only", "card_and_face", "face_only"]
+DeviceMode = Literal["card_only", "card_and_face", "face_only", "time_registry"]
 
 DEFAULT_DEVICE_MODE = "card_and_face"
 

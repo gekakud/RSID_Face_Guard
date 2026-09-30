@@ -209,7 +209,7 @@ def test_register_defaults_to_card_and_face(client, qr):
     assert body["device_mode"] == "card_and_face"
 
 
-@pytest.mark.parametrize("mode", ["card_only", "card_and_face", "face_only"])
+@pytest.mark.parametrize("mode", ["card_only", "card_and_face", "face_only", "time_registry"])
 def test_device_mode_round_trips_to_the_device(client, qr, mode):
     """The mode chosen at QR time reaches the device and the dashboard."""
     body = _register(client, qr(device_mode=mode)).json()
@@ -232,8 +232,8 @@ def test_generate_qr_rejects_an_unknown_mode(client):
     assert response.status_code == 422
 
 
-def test_generate_qr_rejects_time_registry(client):
-    """T8a: the device refuses to boot in this mode, so never mint one."""
+def test_generate_qr_accepts_time_registry(client):
+    """T8: attendance terminals are provisionable now that the mode is built."""
     response = client.post(
         "/devices/generate-qr",
         json={
@@ -243,7 +243,7 @@ def test_generate_qr_rejects_time_registry(client):
             "device_mode": "time_registry",
         },
     )
-    assert response.status_code == 422
+    assert response.status_code == 200
 
 
 def test_device_mode_is_not_in_the_signed_payload(client, qr):

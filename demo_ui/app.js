@@ -240,6 +240,10 @@
       // Switching Check In / Check Out must not wake the device.
       e.stopPropagation();
       setAttendanceMode(opt.dataset.mode);
+      // Python owns the value that gets journalled (time_registry).
+      if (window.pyBridge && window.pyBridge.directionChanged) {
+        window.pyBridge.directionChanged(opt.dataset.mode);
+      }
     });
   }
 

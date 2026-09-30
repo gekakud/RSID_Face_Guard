@@ -202,6 +202,9 @@ class DeviceUI:
         # Same idle screen minus the IN/OUT control.
         self._call("screensaverBasic")
 
+    def set_attendance_enabled(self, on):
+        self._call("setAttendanceEnabled", on)
+
     def camera(self):
         self._call("camera")
 
@@ -209,12 +212,13 @@ class DeviceUI:
         self._call("setHintText", text)
 
 class Bridge(QObject):
-    """JS -> Python. Tap-to-wake from the web UI."""
+    """JS -> Python. Tap-to-wake and IN/OUT direction from the web UI."""
 
     # Note: named differently from the userTapped() slot below (JS calls
     # pyBridge.userTapped()) to avoid the slot definition shadowing this
     # Signal class attribute.
     tap_detected = Signal()
+    direction_changed = Signal(str)  # "in" | "out" (time_registry)
 
     def __init__(self, device_ui: DeviceUI):
         super().__init__()
@@ -223,6 +227,13 @@ class Bridge(QObject):
     @Slot()
     def userTapped(self):
         self.tap_detected.emit()
+
+    @Slot(str)
+    def directionChanged(self, direction):
+        # The page owns the toggle's appearance; Python owns the value that
+        # actually gets journalled, so it can be read synchronously at card-tap
+        # time (runJavaScript is async and cannot be queried inline).
+        self.direction_changed.emit(direction)
 
 class _SignalBridge(QObject):
     """Marshals background-thread callbacks onto the Qt main thread."""
@@ -303,6 +314,10 @@ class WebSessionView:
         # other mode rests on the same screen without it. Both states are
         # tap-to-wake aware, so face_only keeps working.
         if config.mode_is_time_registry():
+            # index.html ships the control hidden (data-attendance="disabled"),
+            # so it has to be switched on explicitly or the screensaver renders
+            # without the buttons this mode depends on.
+            self._device_ui.set_attendance_enabled(True)
             self._device_ui.screensaver()
         else:
             self._device_ui.screensaver_basic()
@@ -381,13 +396,16 @@ class GUIWeb(QMainWindow):
             view=self._session_view,
             scheduler=self._scheduler,
             run_in_thread=lambda fn: threading.Thread(target=fn, daemon=True).start(),
-            relay=self._pulse_door if config.RUN_WITH_RELAY else None,
+            relay=None if config.mode_is_time_registry() else (
+                self._pulse_door if config.RUN_WITH_RELAY else None
+            ),
             qr_scanner=self._qr_scanner,
             latest_frame=self._latest_frame,
             on_qr_payload=self._begin_binding,
             is_page_ready=lambda: self._page_ready,
         )
         self.js_bridge.tap_detected.connect(self.controller.on_user_tapped)
+        self.js_bridge.direction_changed.connect(self.controller.set_direction)
 
         # Window placement.
         if config.RUN_ON_REAL_SCREEN:

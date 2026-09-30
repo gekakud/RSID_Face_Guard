@@ -5,8 +5,8 @@
 | Item | Detail |
 |---|---|
 | Document ID | PLAN-FG-001 |
-| Revision | 1.5 |
-| Date | 2026-09-06 |
+| Revision | 1.6 |
+| Date | 2026-09-30 |
 | Specification | [`SOFTWARE_REQUIREMENTS.md`](SOFTWARE_REQUIREMENTS.md) rev 1.6 |
 | Basis | Static audit of the working tree. Evidence cites **file + symbol**, never line numbers — rev 1.1 used `file:line` and every reference rotted the moment [T1](#delivered) moved the session machine |
 | Scope | Device application **and** the reference server (`server/`) |
@@ -31,7 +31,7 @@ Status legend: **✅ IMPLEMENTED** · **⚠️ PARTIAL** · **❌ MISSING** ·
 | Area | ✅ | ⚠️ | ❌ | ➖ |
 |---|---|---|---|---|
 | FR-STATE (12) | 8 | 0 | 0 | 4 *(06/08/10/12)* |
-| FR-MODE (11) | 5 | 0 | 6 | 0 |
+| FR-MODE (11) | 9 | 0 | 2 | 0 |
 | FR-SESS (8) | 7 | 1 | 0 | 0 |
 | FR-FACE (7) | 6 | 1 | 0 | 0 |
 | FR-CARD (6) | 5 | 1 | 0 | 0 |
@@ -42,16 +42,17 @@ Status legend: **✅ IMPLEMENTED** · **⚠️ PARTIAL** · **❌ MISSING** ·
 | FR-HB (10) | 10 | 0 | 0 | 0 |
 | FR-LOG (5) | 4 | 1 | 0 | 0 |
 | FR-CAM (4) | 4 | 0 | 0 | 0 |
-| FR-UI (12) | 7 | 2 | 1 | 2 *(02/10)* |
+| FR-UI (12) | 8 | 1 | 1 | 2 *(02/10)* |
 | FR-API (15) | 9 | 4 | 1 | 1 *(12)* |
 | FR-DATA (7) | 7 | 0 | 0 | 0 |
 | BR (7) | 6 | 1 | 0 | 0 |
 | NFR (22) | 22 | 0 | 0 | 0 |
-| **Total (156)** | **129** | **12** | **8** | **7** |
+| **Total (156)** | **134** | **11** | **4** | **7** |
 
-Active requirements: 149. **Compliance today: 129/149 = 87 %** (rev 1.3 stated
+Active requirements: 149. **Compliance today: 134/149 = 90 %** (rev 1.5 stated
+87 %; B13 closed FR-MODE-06/07/08/09 and FR-UI-01). Rev 1.3 stated
 83 %; B7 closed FR-PROV-03 and NFR-14; the A7 ruling closed FR-DB-01 and
-FR-DATA-01 without a code change; B9 closed FR-MODE-01). Rev 1.1's 72 % was measured against a
+FR-DATA-01 without a code change; B9 closed FR-MODE-01. Rev 1.1's 72 % was measured against a
 summary table whose FR-STATE row summed to 10 of 12 and whose FR-DATA row
 contradicted its own detail section; both were corrected in rev 1.2.
 
@@ -81,18 +82,17 @@ contradicted its own detail section; both were corrected in rev 1.2.
 | [FR-MODE-03](SOFTWARE_REQUIREMENTS.md#fr-mode-03) | ✅ | **T7 done.** `controller.on_card_detected()` routes to `_handle_card_only()`: DB + `active` check, relay pulse off the UI thread, result hold, no session and no preview. *Consistency nit closed in [T4](#t4) (B9)* — the branch now calls `config.mode_is_card_only()` rather than reading `DEVICE_MODE` directly |
 | [FR-MODE-04](SOFTWARE_REQUIREMENTS.md#fr-mode-04) | ✅ | `auth_service.py` `authenticate_with_card_and_face()` — 1:1 against the cardholder |
 | [FR-MODE-05](SOFTWARE_REQUIREMENTS.md#fr-mode-05) | ✅ | `auth_service.py` `authenticate_face_only()`, gated by `config.mode_uses_tap_to_wake()` via `controller.py` `on_user_tapped()`; `face_only` is now a first-class `DEVICE_MODE` (rev 1.5) and skips reader init in `main_web.py` / `gui_web/web_window.py` |
-> ⚠️ **`time_registry` refuses to start (T8a, B7).** The mode passes the
-> `DEVICE_MODES` validation but **no code branches on it**, so it would silently
-> run as `card_and_face` — pulsing the door and journalling nothing. `config.py`
-> now raises `NotImplementedError` for it; delete that guard as the first step of
-> [T8](#t8).
+> ✅ **`time_registry` boots (T8a retired, B13).** The `NotImplementedError`
+> guard in `config.py` is **deleted** — the mode now has a real branch
+> (`controller._handle_time_registry()`), is selectable in the dashboard
+> **Add a device** form, and is accepted by `POST /devices/generate-qr`.
 
-| [FR-MODE-06](SOFTWARE_REQUIREMENTS.md#fr-mode-06) | ❌ | No IN/OUT screen or latch. The `demo_ui/app.js` `setAttendanceMode()` toggle is cosmetic — never read by Python → **[T8](#t8)** |
-| [FR-MODE-07](SOFTWARE_REQUIREMENTS.md#fr-mode-07) | ❌ | No `attendance_event` emission anywhere → **[T8](#t8)** |
-| [FR-MODE-08](SOFTWARE_REQUIREMENTS.md#fr-mode-08) | ❌ | No relay-suppressed mode → **[T8](#t8)** |
-| [FR-MODE-09](SOFTWARE_REQUIREMENTS.md#fr-mode-09) | ❌ | Depends on T8 → **[T8](#t8)** |
-| [FR-MODE-10](SOFTWARE_REQUIREMENTS.md#fr-mode-10) | ❌ | No durable disk queue — `observability/durable_queue.py` does not exist; only the bounded `deque` in `observability/events.py` → **[T5b](#t5b)** |
-| [FR-MODE-11](SOFTWARE_REQUIREMENTS.md#fr-mode-11) | ❌ | Pointer to [FR-API-15](#fr-api-15-row) → **[T8](#t8)** |
+| [FR-MODE-06](SOFTWARE_REQUIREMENTS.md#fr-mode-06) | ✅ | **T8 done (B13).** The `demo_ui/app.js` IN/OUT toggle is **functional**: each press pushes `pyBridge.directionChanged(...)` and `controller.set_direction()` stores it. `WebSessionView.show_idle()` enables the control in this mode only. *Deviation:* the selection is **sticky**, not latched-with-timeout — `DIRECTION_SELECT_TIMEOUT_SEC` is not implemented, see [D22](SOFTWARE_REQUIREMENTS.md#d22) |
+| [FR-MODE-07](SOFTWARE_REQUIREMENTS.md#fr-mode-07) | ✅ | **T8 done (B13).** `_handle_time_registry()` emits `attendance_event {user_id, direction, ts, method="card"}` via `observability/events.py` (`ATTENDANCE_EVENT`). *Deviation:* only the `none` face policy exists; `verify` is not implemented → [D22](SOFTWARE_REQUIREMENTS.md#d22) |
+| [FR-MODE-08](SOFTWARE_REQUIREMENTS.md#fr-mode-08) | ✅ | **T8 done (B13).** Blocked at two levels: the handler never calls the relay, **and** `gui_web/web_window.py` passes `relay=None` to the controller in this mode. `test_card_records_attendance_without_relay_or_camera` asserts `relay.pulses == 0` with a live relay attached |
+| [FR-MODE-09](SOFTWARE_REQUIREMENTS.md#fr-mode-09) | ✅ | Attendance rides the same `events.emit()` ring and `event_id` idempotency as every other event |
+| [FR-MODE-10](SOFTWARE_REQUIREMENTS.md#fr-mode-10) | ❌ | No durable disk queue — `observability/durable_queue.py` does not exist; attendance rides the bounded `deque` in `observability/events.py`, so a check-in is lost on a power-cut and evictable under a long outage → **[T5b](#t5b)** |
+| [FR-MODE-11](SOFTWARE_REQUIREMENTS.md#fr-mode-11) | ❌ | Pointer to [FR-API-15](#fr-api-15-row) — the server still has no attendance journal → **[T8s](#t8s)** |
 
 ### 1.4 Session orchestration — FR-SESS
 
@@ -178,9 +178,13 @@ holds only the `WebSessionView` adapter, `QtScheduler` and platform glue.
 [FR-NET-01](SOFTWARE_REQUIREMENTS.md#fr-net-01)/[02](SOFTWARE_REQUIREMENTS.md#fr-net-02)/[04](SOFTWARE_REQUIREMENTS.md#fr-net-04)/[05](SOFTWARE_REQUIREMENTS.md#fr-net-05)
 ✅ — `provisioning/network.py` `apply()`, `_have_nmcli()`, `_is_connected()`, bounded timeouts throughout.
 
-[FR-NET-03](SOFTWARE_REQUIREMENTS.md#fr-net-03) ✅ — **T15 done.**
-`config.APPLY_NETWORK_PROFILE = False` by default; a dev machine is never
-reconfigured.
+[FR-NET-03](SOFTWARE_REQUIREMENTS.md#fr-net-03) ⚠️ — **T15 shipped, but the
+tree has drifted.** The default is specified as
+`config.APPLY_NETWORK_PROFILE = False` so a dev machine is never reconfigured;
+the working tree currently has **`True`** (`config.py`). `server/tests/conftest.py`
+pins it off for the test run, so the suite is unaffected, but a dev laptop
+running `main_web.py` with a `wifi` QR *would* be reconfigured. **Restore
+`False`** → see [D17](SOFTWARE_REQUIREMENTS.md#d17).
 
 ### 1.11 Heartbeat & telemetry — FR-HB
 
@@ -216,7 +220,7 @@ system-owned and durable across reboot/reauth.
 
 | ID | Status | Evidence / gap |
 |---|---|---|
-| [FR-UI-01](SOFTWARE_REQUIREMENTS.md#fr-ui-01) | ⚠️ | All screens exist except the **IN/OUT selection screen**; `demo_ui/index.html` `#attendance` is a cosmetic toggle → **[T8](#t8)** |
+| [FR-UI-01](SOFTWARE_REQUIREMENTS.md#fr-ui-01) | ✅ | **T8 done (B13).** All screens exist, including the IN/OUT selection: `demo_ui/index.html` `#attendance` is a **functional** toggle wired through `Bridge.directionChanged()` to `controller.set_direction()`, shown only in `time_registry` via `DeviceUI.set_attendance_enabled()` |
 | FR-UI-02 | ➖ | Deprecated rev 1.2 |
 | [FR-UI-03](SOFTWARE_REQUIREMENTS.md#fr-ui-03) | ✅ | `WebSessionView.show_idle()` returns to the screensaver, overriding the JS default |
 | [FR-UI-04](SOFTWARE_REQUIREMENTS.md#fr-ui-04)..[08](SOFTWARE_REQUIREMENTS.md#fr-ui-08) | ✅ | `controller.on_card_rejected()` (no camera), `_on_auth_complete()` denial branches, `on_user_tapped()` gated on `config.mode_uses_tap_to_wake()` (`face_only` only); generic failure text in `demo_ui/app.js` |
@@ -236,7 +240,7 @@ system-owned and durable across reboot/reauth.
 | [FR-API-09](SOFTWARE_REQUIREMENTS.md#fr-api-09)/[10](SOFTWARE_REQUIREMENTS.md#fr-api-10)/[11](SOFTWARE_REQUIREMENTS.md#fr-api-11)/[14](SOFTWARE_REQUIREMENTS.md#fr-api-14) | ✅ | `heartbeat._run()` acks on 2xx only; `server/main.py` `_ingest_events()` insert-or-ignore, `post_status()` 410 tombstone; `remote_provider._add_if_valid()` skips-and-counts |
 | FR-API-12 | ➖ | Deprecated rev 1.2 |
 | [FR-API-13](SOFTWARE_REQUIREMENTS.md#fr-api-13) | ⚠️ | Per-device scoping exists (`get_device_users()`, `user_store.get_for_device()`), but every new device is seeded from the **same default template** (`user_store.load_default_template()`) — not real door scoping → **[T14](#t14)** |
-| [FR-API-15](SOFTWARE_REQUIREMENTS.md#fr-api-15) <a id="fr-api-15-row"></a> | ❌ | No attendance concept server-side — `attendance` has zero hits under `server/`. The generic events table would accept it, but nothing emits or journals it → **[T8](#t8)** |
+| [FR-API-15](SOFTWARE_REQUIREMENTS.md#fr-api-15) <a id="fr-api-15-row"></a> | ❌ | **Device half done (B13), server half open.** The device now emits `attendance_event` and the generic `_ingest_events()` path will store it in the events table, but there is no attendance-specific persistence and no per-user working-hours journal — `attendance` has no dedicated hits under `server/` → **[T8s](#t8s)** |
 
 ### 1.16 Data model — FR-DATA
 
@@ -303,7 +307,7 @@ baseline every remaining task builds on:
 
 ## 2. Task list
 
-Live queue: **7 open tasks**. Delivered work is rolled up in
+Live queue: **6 open tasks**. Delivered work is rolled up in
 [Delivered](#delivered). The `Depends on` column lists only *open*
 dependencies — everything else has shipped.
 
@@ -312,13 +316,14 @@ dependencies — everything else has shipped.
 | [T9](#t9) | Session edge cases + unavailable screen | device | ✅ **DONE (B10)** | FR-SESS-03(b), FR-FACE-06, FR-UI-12 |
 | [T9a](#t9a) | Different-card pre-emption | device | **DEFERRED** | FR-SESS-03(a), FR-CARD-04, BR-04 |
 | [T5b](#t5b) | Durable event queue | device | — | FR-MODE-10 |
-| [T8](#t8) | `time_registry` mode (incl. `face_policy` / `DIRECTION_SELECT_TIMEOUT_SEC`, moved from T4) | device+server | T5b | FR-MODE-06..11, FR-API-15 |
+| [T8](#t8) | `time_registry` mode (device half) | device | ✅ **DONE (B13)** | FR-MODE-06..09, FR-UI-01 |
+| [T8b](#t8b) | `face_policy` + `DIRECTION_SELECT_TIMEOUT_SEC` | device | — | FR-MODE-06/07 (D22) |
+| [T8s](#t8s) | Attendance intake + journal (server half) | server | — | FR-MODE-11, FR-API-15 |
 | [T13](#t13) | HTTP error classification | device | — | FR-API-04 |
 | [T14](#t14) | Server rebinding + door scoping | server | — | FR-API-07/08/13 |
 
-Delivered since rev 1.2: [T7](#t7) `card_only`, [T18](#t18) keypad removal,
-[T15](#t15) network profile defaults + password handling, and the B7 trio
-[T19](#t19) / [T20](#t20) / [T8a](#t8a) — see [Delivered](#delivered).
+Delivered since rev 1.5: [T8](#t8) `time_registry` device half — which also
+**retires [T8a](#t8a)**, the boot guard it was blocked behind.
 
 ### Phase A — Hygiene and open decisions
 
@@ -557,7 +562,11 @@ currently locks in the **old** behaviour and must be rewritten when this lands.
 
 ### Phase C — Attendance
 
-#### <a id="t5b"></a>T5b. Durable event queue
+#### <a id="t5b"></a>T5b. Durable event queue — **now the blocker for FR-MODE-10**
+
+**Why now.** [T8](#t8) shipped attendance on the **in-memory** ring by agreed
+scope, so a check-in is lost on a power-cut and evictable under a long outage.
+Attendance is live in the product but not yet durable; this task closes that.
 
 **Do.** Add an on-disk queue for durable events; attendance uses it, telemetry
 keeps the bounded ring ([FR-MODE-10](SOFTWARE_REQUIREMENTS.md#fr-mode-10): losing
@@ -566,7 +575,8 @@ already in place from T5a, so the queue plugs into an interface that cannot drop
 undelivered entries.
 
 **Files.** new `observability/durable_queue.py`; `observability/events.py`;
-`provisioning/heartbeat.py`.
+`provisioning/heartbeat.py`; `session/controller.py` (`_handle_time_registry()`
+routes its emit to the durable path).
 
 **Accept.** Attendance events survive a process kill and are delivered after
 restart; telemetry stays capped at 200 drop-oldest; events emitted *during* an
@@ -574,43 +584,108 @@ in-flight heartbeat are still never acked.
 
 ---
 
-#### <a id="t8"></a>T8. `time_registry` mode
+#### <a id="t8"></a>T8. `time_registry` mode (device half) — ✅ **DONE (B13, 2026-09-30)**
 
-**Do.** *Device:* IN/OUT selection screen replacing the screensaver; direction
-latched until the card tap completes or `DIRECTION_SELECT_TIMEOUT_SEC` elapses;
-face policy `none` | `verify`; emit `attendance_event {user_id, direction, ts}`
-through the durable queue ([T5b](#t5b)); **relay never actuated**.
-*Server:* accept and persist attendance events, expose a per-user journal.
+**Delivered.** The user picks IN or OUT on the idle screen, taps a card, and an
+`attendance_event` is journalled. The relay is never actuated.
 
-**Files.** `demo_ui/index.html` + `demo_ui/app.js` (the existing `#attendance`
-toggle becomes functional); `session/controller.py`;
-`observability/durable_queue.py`; `server/main.py`, `server/db.py`,
-`server/models.py`.
+- `config.py` — the [T8a](#t8a) `NotImplementedError` boot guard is **deleted**;
+  `mode_is_time_registry()` is the branch predicate.
+- `observability/events.py` — `ATTENDANCE_EVENT = "attendance_event"`.
+- `session/controller.py` — `_direction` (default `"in"`), a `direction`
+  property, `set_direction()` (unknown values logged and ignored) and
+  `_handle_time_registry()`, routed from `on_card_detected()`. Same shape as
+  `_handle_card_only()`: no session, no preview, no biometric call — and **no
+  relay**.
+- `gui_web/web_window.py` — `Bridge.direction_changed` Signal +
+  `directionChanged(str)` Slot, `DeviceUI.set_attendance_enabled()`,
+  `show_idle()` enables the toggle in this mode only, the signal is connected to
+  `controller.set_direction`, and `relay=None` is passed to the controller when
+  the mode is `time_registry`.
+- `demo_ui/app.js` — the IN/OUT toggle pushes to `pyBridge.directionChanged(...)`.
+- `server/models.py` + `server/templates/new.html` — `time_registry` added to the
+  `DeviceMode` literal, the **Add a device** radio group and `MODE_LABELS`.
 
-**Accept.** Selecting IN then tapping a registered card records exactly one
-attendance event with the right direction and **no relay pulse**; a selection
-timeout returns to idle recording nothing; a mismatch under `verify` records
-nothing; events survive a restart and appear in the server journal.
+**Direction is Python-owned.** `runJavaScript()` is asynchronous, so the toggle
+state cannot be read at card-tap time. JS therefore *pushes* every change over
+the bridge and the controller keeps its own synchronous copy — the value is
+already in Python when the card arrives.
+
+**Relay blocked at two levels.** The handler never calls it, *and* the view
+adapter passes `relay=None`. `test_card_records_attendance_without_relay_or_camera`
+attaches a live `FakeRelay` and asserts `relay.pulses == 0`.
+
+**Accept.** ✅ Selecting IN then tapping a registered card records exactly one
+attendance event with the right direction and no relay pulse; an unregistered
+card records nothing; the direction survives consecutive taps. Covered by
+`session/tests/test_time_registry.py` (10 cases) plus the extended
+provisioning round-trip in `server/tests/test_provisioning.py`
+(`test_generate_qr_accepts_time_registry`, all four modes parametrised).
+**Green gate: 157 tests.**
+
+**Carved out, still open.**
+- **[T8b](#t8b)** — `face_policy` and `DIRECTION_SELECT_TIMEOUT_SEC`. The build
+  implements the `none` policy only and the direction is **sticky** rather than
+  latched-with-timeout. Recorded as [D22](SOFTWARE_REQUIREMENTS.md#d22).
+- **[T5b](#t5b)** — durability. Attendance currently rides the in-memory
+  bounded `deque`, so records are lost on a power-cut and evictable under a long
+  outage. This was the agreed scope for B13; **[FR-MODE-10](SOFTWARE_REQUIREMENTS.md#fr-mode-10)
+  is not met until T5b lands.**
+- **[T8s](#t8s)** — the server journal ([FR-API-15](SOFTWARE_REQUIREMENTS.md#fr-api-15)).
+
+---
+
+#### <a id="t8b"></a>T8b. Time-registry face policy and selection timeout
+
+**Do.** Add the two `time_registry`-only parameters deferred out of T4 and then
+out of T8. `FACE_POLICY` (`none` | `verify`): under `verify`, a card tap starts a
+normal 1:1 session and only a match records the event. `DIRECTION_SELECT_TIMEOUT_SEC`
+(15 s): the direction latches on press and reverts to the idle screen with
+nothing recorded when the window elapses, replacing today's sticky selection.
+Provision both per door alongside `device_mode`.
+
+**Files.** `config.py`; `session/controller.py`; `gui_web/web_window.py`;
+`demo_ui/app.js`; `provisioning/identity.py`, `provisioning/client.py`;
+`server/models.py`, `server/main.py`, `server/db.py`.
+
+**Accept.** Under `verify` a mismatch records nothing; a selection left idle past
+the timeout returns to the IN/OUT screen recording nothing. Closes
+[D22](SOFTWARE_REQUIREMENTS.md#d22).
+
+---
+
+#### <a id="t8s"></a>T8s. Attendance intake and journal (server half)
+
+**Do.** Persist `attendance_event` rows distinctly rather than only as generic
+telemetry, and expose a per-end-user working-hours journal
+([FR-API-15](SOFTWARE_REQUIREMENTS.md#fr-api-15),
+[FR-MODE-11](SOFTWARE_REQUIREMENTS.md#fr-mode-11)). Dedup by `event_id` as
+everywhere else.
+
+**Files.** `server/main.py` (`_ingest_events()`), `server/db.py`,
+`server/models.py`, `server/tests/`.
+
+**Accept.** An IN and an OUT from a device appear once each in the journal for
+the right `user_id`; a replayed beat does not double-count.
 
 ---
 
 ### Phase D — Isolated fixes (no refactoring)
 
-#### <a id="t8a"></a>T8a. Fail loud on `time_registry` until T8 lands — ✅ **DONE (B7)**
+#### <a id="t8a"></a>T8a. Fail loud on `time_registry` until T8 lands — ➖ **RETIRED (B13)**
 
-**Why.** `time_registry` passes `DEVICE_MODES` validation but nothing branches on
-it, so a terminal configured for attendance silently runs `card_and_face` — it
-pulses the door and records nothing. A misconfiguration that opens a door is
-worse than a boot failure.
+> **No longer applicable.** The guard existed only to stop an unimplemented mode
+> from silently running as `card_and_face`. [T8](#t8) implemented the mode, so
+> the `NotImplementedError` was **deleted from `config.py`** as its first step
+> and `time_registry` is now a selectable, bootable mode. Kept here as an audit
+> trail; nothing to do.
 
-**Do.** In `config.py`, after the existing `DEVICE_MODES` check, raise
-`NotImplementedError` when `DEVICE_MODE == "time_registry"`, naming T8 in the
-message. Delete the guard as the first step of [T8](#t8).
+**Why it existed.** `time_registry` passed `DEVICE_MODES` validation but nothing
+branched on it, so a terminal configured for attendance pulsed the door and
+recorded nothing. A misconfiguration that opens a door is worse than a boot
+failure.
 
 **Files.** `config.py`.
-
-**Accept.** `DEVICE_MODE = "time_registry"` refuses to start with an actionable
-message; the other three modes are unaffected.
 
 ---
 
@@ -677,8 +752,9 @@ see [§3](#3-batches-and-device-validation).
 | 15 | **`face_only` promotion** | Fourth first-class `DEVICE_MODE`; `DEMO_FACE_ONLY` / `REQUIRE_CARD_TO_START_SESSION` deleted, `DEVICE_MODES` validated at import, `mode_uses_card_reader()` / `mode_uses_tap_to_wake()` derived. No new session logic — `on_user_tapped()` → `start_session()` → `authenticate_face_only()` already existed. Device half of [T4](#t4). *(rev 1.5)* |
 | 16 | **T19** Device nonce set removed | `_seen_nonces` and its rejection branch deleted from `QRScanner.__init__()` / `_verify()`; docstring no longer lists "replayed nonce" as a SECURITY rejection. Replay protection is server-side on the single-use token ([FR-API-07](SOFTWARE_REQUIREMENTS.md#fr-api-07)); `nonce` still parsed and forwarded. Closes SRS [D12](SOFTWARE_REQUIREMENTS.md#d12). *(B7)* |
 | 17 | **T20** D21 ruled — spec follows code | Revocation's **in-process** return to `init_mode` is now the specified behaviour: SRS rev 1.6 reworded FR-HB-10 step 6, the §3 state diagram (`Revoked --> InitMode: in-process reset`), the `revoked` state row and NFR-21. **No code change.** Rationale: deny-all is already satisfied without a restart, and a revoked device left powered on cannot enter a restart loop. Closes SRS [D21](SOFTWARE_REQUIREMENTS.md#d21). *(B7)* |
-| 18 | **T8a** `time_registry` fails loud | `config.py` raises `NotImplementedError` for the unimplemented mode, which previously passed validation and silently ran as `card_and_face` — pulsing the door and journalling nothing. Guard is deleted as step 1 of [T8](#t8). *(B7)* |
+| 18 | **T8a** `time_registry` fails loud — **since retired** | `config.py` raised `NotImplementedError` for the then-unimplemented mode, which previously passed validation and silently ran as `card_and_face` — pulsing the door and journalling nothing. The guard was **deleted** as step 1 of [T8](#t8); the artefact no longer exists. *(B7, retired B13)* |
 | 19 | **T15** Network profile defaults + password handling | `config.APPLY_NETWORK_PROFILE = False` by default; `network.apply()` creates the wifi connection without inline PSK, sets the passphrase via `nmcli connection edit` fed on stdin (`_store_psk()` — never a direct keyfile write, which is root-only and breaks under the service), sets `wifi-sec.psk-flags 0` + `connection.autoconnect yes`, and verifies persistence (`_psk_is_stored()`), raising `NetworkApplyError` if the secret didn't stick system-owned. Password never touches the `nmcli` argv/process list; the profile survives reboot/reauth without a secret agent. Non-root joining needs `deploy/50-faceguard-nm.rules` (polkit, see `docs/SETUP_RPI5.md` §6.2). Closes SRS [D17](SOFTWARE_REQUIREMENTS.md#d17). `server/tests/conftest.py` pins `APPLY_NETWORK_PROFILE = False` so the suite never touches host networking. |
+| 20 | **T8** `time_registry` device half | IN/OUT toggle made functional end-to-end: JS pushes each press over `Bridge.directionChanged()` (a `runJavaScript()` read is async and therefore useless at card-tap time), `SessionController` keeps a synchronous `_direction`, and `_handle_time_registry()` emits `attendance_event {user_id, direction, ts}` with **no session, no camera and no relay** — the relay is blocked both by the handler and by `relay=None` from the view adapter. Retires [T8a](#t8a) (guard deleted) and adds `time_registry` to the dashboard selector. Durability ([T5b](#t5b)), `face_policy`/timeout ([T8b](#t8b)) and the server journal ([T8s](#t8s)) remain open. Closes SRS [D3](SOFTWARE_REQUIREMENTS.md#d3) for FR-MODE-06..09. *(B13)* |
 
 **T6 — server-authoritative revocation lifecycle** *(kept in full: T14 and T20
 both depend on it).* Revocation is a server-side tombstone handshake, so the
@@ -718,22 +794,21 @@ every batch the owner validates on the real device using the checklist below; th
 next batch starts only after sign-off.
 
 **Green gate.** After every batch these suites must stay green (counts verified
-by collection on 2026-09-06, **120 tests total**):
+by collection on 2026-09-30, **157 tests total**):
 
 | Suite | Tests |
 |---|---|
-| `server/tests/` | 66 |
-| `session/tests/` (`test_controller.py` + `test_card_only.py`) | 37 |
-| `db/` (`test_remote_sync.py` + `tests/test_revocation_wipe.py`) | 9 |
-| `observability/test_events.py` | 4 |
-| `provisioning/tests/test_revocation.py` | 4 |
+| `server/tests/` | 77 |
+| `session/tests/` (`test_controller.py` + `test_card_only.py` + `test_time_registry.py`) | 51 |
+| `gui_web/`, `face_auth/tests/`, `db/`, `observability/`, `provisioning/tests/` | 29 |
 
-`APPLY_NETWORK_PROFILE` defaults to `False`, so dev machines without `nmcli`
-are safe out of the box ([D17](SOFTWARE_REQUIREMENTS.md#d17)); `server/tests/conftest.py`
-also pins it off for the whole test run. The reference environment is the project
-venv — **`.venv/`** in the repo root (rev 1.3 said `.env`, which does not exist);
-invoke as `.venv/bin/python -m pytest`. `pytest` is not on the system Python of
-every dev box.
+`server/tests/conftest.py` pins `APPLY_NETWORK_PROFILE = False` for the whole
+test run, so the suite never touches host networking — but note the in-tree
+default has **drifted back to `True`** ([FR-NET-03](#110-network-profile--fr-net),
+[D17](SOFTWARE_REQUIREMENTS.md#d17)) and should be restored. The reference
+environment is the project venv — **`.venv/`** in the repo root (rev 1.3 said
+`.env`, which does not exist); invoke as `.venv/bin/python -m pytest`. `pytest`
+is not on the system Python of every dev box.
 
 | Batch | Content | Status |
 |---|---|---|
@@ -748,10 +823,11 @@ every dev box.
 | ~~B8~~ | ~~[T3b](#t3b) `faceprints` as a list~~ | **cancelled 2026-09-06** — deferred by [A7](SOFTWARE_REQUIREMENTS.md#a7); [B9](#t4) is the next batch |
 | B9 | [T4](#t4) `device_mode` server plumbing | **Implemented 2026-09-06** — awaiting device validation |
 | B10 | [T9](#t9) init-mode guard + card-path backoff + unavailable screen | **Implemented 2026-09-16** — awaiting device validation. Pre-emption split out as [T9a](#t9a) and **deferred** |
-| B11 | [T5b](#t5b) durable event queue | pending |
-| B12 | [T8](#t8) server half (attendance intake + journal) | pending |
-| B13 | [T8](#t8) device half (IN/OUT flow) | pending |
-| B14 | [T13](#t13) + [T14](#t14) + [T15](#t15) | pending |
+| B11 | [T5b](#t5b) durable event queue | pending — now also carries [FR-MODE-10](SOFTWARE_REQUIREMENTS.md#fr-mode-10) for the **shipped** attendance flow |
+| B12 | [T8s](#t8s) server half (attendance intake + journal) | pending |
+| B13 | [T8](#t8) device half (IN/OUT flow) | **Implemented 2026-09-30** — awaiting device validation. `face_policy` / `DIRECTION_SELECT_TIMEOUT_SEC` split out as [T8b](#t8b); durability stays with [T5b](#t5b) |
+| B14 | [T13](#t13) + [T14](#t14) + restore the [T15](#t15) `APPLY_NETWORK_PROFILE` default | pending |
+| B15 | [T8b](#t8b) face policy + selection timeout | pending |
 
 ### B0 device checklist
 
@@ -935,4 +1011,40 @@ Nonce removal (T19), the D21 ruling (T20) and the `time_registry` guard (T8a).
    second card during a result hold is still swallowed. Do **not** raise it as a
    B10 defect.
 
-*(Per-batch checklists for B11+ are added when each batch is implemented.)*
+### B13 device checklist
+
+`time_registry` is now bootable and selectable in the dashboard. Provision a
+spare terminal with **Time registry** and validate:
+
+1. **Mode reaches the device** — in **Add a device**, pick *Time registry*,
+   generate, bind. `device_identity.json` shows `"device_mode": "time_registry"`;
+   the bind screen shows **"Restart for time_registry"**. Restart → log line
+   `Device mode: time_registry (provisioned by server)`. No `NotImplementedError`
+   — the [T8a](#t8a) guard is gone.
+2. **IN/OUT toggle is visible and live** — the idle screen shows the Check In /
+   Check Out control (it stays hidden in the other three modes). Pressing an
+   option moves the highlight *and* produces a Python-side log line; the JS is no
+   longer cosmetic.
+3. **Attendance, no door** — press **IN**, tap a registered card → an
+   `attendance_event` with `direction: "in"` and the right `user_id` reaches the
+   server, a success screen shows the cardholder's name, and the strike **does
+   not pulse**. Verify with a strike physically wired: this is the defining rule
+   of the mode.
+4. **Direction is respected and sticky** — press **OUT**, tap → `direction: "out"`.
+   Tap again *without* touching the toggle → still `"out"`. The selection holds
+   until the other button is pressed; there is **no** `DIRECTION_SELECT_TIMEOUT_SEC`
+   revert yet ([T8b](#t8b)) — do not raise that as a defect.
+5. **No camera, no session** — throughout step 3/4 the preview never starts and
+   no `auth_matched` / `access_granted` / `access_denied` events appear. Face
+   policy `verify` is not implemented ([T8b](#t8b)).
+6. **Unregistered card** — tap an unknown card → failure screen, **zero**
+   attendance events, no relay.
+7. **Durability gap (expected)** — record an IN while the server is unreachable,
+   then `kill -9` the process before the next heartbeat → the event **is lost**.
+   This is the agreed B13 scope; [FR-MODE-10](SOFTWARE_REQUIREMENTS.md#fr-mode-10)
+   lands with [T5b](#t5b)/B11. Confirm the loss is limited to attendance-in-flight
+   and nothing else misbehaves on restart.
+8. **Other modes unaffected** — re-bind the terminal as `card_and_face` and
+   confirm a normal grant still works, with the IN/OUT control hidden.
+
+*(Per-batch checklists for B11/B12/B14/B15 are added when each batch is implemented.)*

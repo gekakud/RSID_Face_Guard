@@ -249,6 +249,38 @@ def host():
 
 
 @pytest.fixture()
+def recorded():
+    """Events emitted during a test, as a live list.
+
+    The events buffer is process-global, so it is cleared before and after each
+    test that inspects it.
+    """
+    from observability import events as _events
+
+    _events.clear()
+
+    class _Recorded:
+        def __iter__(self):
+            return iter(_events.snapshot())
+
+        def __len__(self):
+            return len(_events.snapshot())
+
+        def __getitem__(self, i):
+            return _events.snapshot()[i]
+
+        def __eq__(self, other):
+            return _events.snapshot() == other
+
+        def __repr__(self):
+            return repr(_events.snapshot())
+
+    yield _Recorded()
+
+    _events.clear()
+
+
+@pytest.fixture()
 def make_controller(sched, view, preview, host):
     """Factory building a SessionController wired to the fakes.
 

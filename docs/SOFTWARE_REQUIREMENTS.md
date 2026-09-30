@@ -5,7 +5,7 @@
 | Item | Detail |
 |---|---|
 | Document ID | SRS-FG-001 |
-| Revision | 1.8 |
+| Revision | 1.9 |
 | Product | RSID Face Guard kiosk application |
 | Target platform | Raspberry Pi 5, 720×720 round touch display |
 | Biometric device | Intel RealSense ID F45x (`rsid_py` SDK) |
@@ -266,6 +266,12 @@ Working-hours journalling: the end user declares direction, then identifies.
 The **face policy** referenced below is an explicit per-door setting with
 exactly two values, provisioned alongside `device_mode` ([FR-MODE-01](#fr-mode-01)).
 *(Confirmed decision — see [A6](#a6).)*
+
+> **Build status (rev 1.9).** The mode itself is **implemented and shipping**
+> (FR-MODE-06..09). Two sub-behaviours specified here are **not yet built** and
+> are tracked as [D22](#d22): the face policy is effectively fixed at `none`
+> (`verify` has no code path), and the direction selection is **sticky** rather
+> than latched with `DIRECTION_SELECT_TIMEOUT_SEC`.
 
 | Face policy | Behaviour on card tap |
 |---|---|
@@ -1073,9 +1079,9 @@ suspend a user without deleting their enrolment.
 
 | Parameter | Purpose |
 |---|---|
-| `DEVICE_MODE` | Operating mode ([§4](#4-device-operating-modes)): `card_only` / `card_and_face` / `face_only` / `time_registry`. **Install-time fallback only** — the server-provisioned value from the device identity overrides it at boot ([FR-MODE-01](#fr-mode-01), [A8](#a8)). Assigned exclusively through `set_device_mode(mode, source)`, which validates both this default and any server value: an unknown mode raises `ValueError`, `time_registry` raises `NotImplementedError` (T8a) |
-| `FACE_POLICY` **[NEW]** | `none` / `verify` — fallback time-registry face policy ([§4.3](#43-time-registry-mode-new)) |
-| `DIRECTION_SELECT_TIMEOUT_SEC` **[NEW]** | IN/OUT selection latch timeout |
+| `DEVICE_MODE` | Operating mode ([§4](#4-device-operating-modes)): `card_only` / `card_and_face` / `face_only` / `time_registry`. **Install-time fallback only** — the server-provisioned value from the device identity overrides it at boot ([FR-MODE-01](#fr-mode-01), [A8](#a8)). Assigned exclusively through `set_device_mode(mode, source)`, which validates both this default and any server value: an unknown mode raises `ValueError`. *(Rev 1.9: the `time_registry` `NotImplementedError` guard was removed — the mode is implemented.)* |
+| `FACE_POLICY` **[NEW]** | `none` / `verify` — fallback time-registry face policy ([§4.3](#43-time-registry-mode-new)). **Not yet implemented** ([D22](#d22)): the build behaves as `none` |
+| `DIRECTION_SELECT_TIMEOUT_SEC` **[NEW]** | IN/OUT selection latch timeout. **Not yet implemented** ([D22](#d22)): the selection is sticky until the other option is pressed |
 | `DB_MODE` | `local` (file only) or `remote` (periodic server sync) |
 | `USER_DB_FILE` | Local user/faceprint cache path |
 | `CARD_READER_BACKEND` | `gwiot_hid` / `wiegand_gpio` / `simulated` |
@@ -1281,7 +1287,7 @@ list.
 |---|---|---|---|
 | <a id="d1"></a>D1 | [FR-HB-10](#fr-hb-10) revocation is fail-secure | *Was:* `binding.py` cleared the identity only; the local DB was retained and the door kept opening; no `device_revoked` event | ✅ **Resolved** (T6/B5) — `provisioning/binding.py` `_handle_revoked` emits + flushes `device_revoked` while still bound, stops the heartbeat, deletes the identity, purges the user DB incl. faceprints (`db/user_database.py` `detach_remote`) and re-enters init mode. Step 6 (self-restart) diverges → [D21](#d21) |
 | <a id="d2"></a>D2 | [FR-MODE-03](#fr-mode-03) `card_only` | *Was:* face always ran when a reader was present | ✅ **Resolved** (T7) — `config.DEVICE_MODE == "card_only"` routes `session/controller.py` `on_card_detected()` into `_handle_card_only()`: relay pulse, result hold, no session and no camera |
-| <a id="d3"></a>D3 | [FR-MODE-06](#fr-mode-06)..[FR-MODE-11](#fr-mode-11) time registry | Not implemented | **Implement** (T8) |
+| <a id="d3"></a>D3 | [FR-MODE-06](#fr-mode-06)..[FR-MODE-11](#fr-mode-11) time registry | ✅ **Partly resolved (T8/B13, 2026-09-30)** — FR-MODE-06/07/08/09 are implemented: `session/controller.py` `_handle_time_registry()` journals `attendance_event {user_id, direction, ts}` from a card tap with no session, no camera and **no relay** (blocked both in the handler and by `relay=None` from `gui_web/web_window.py`); the `demo_ui/app.js` IN/OUT toggle is functional, pushing each press through `Bridge.directionChanged()` to `controller.set_direction()`. The `config.py` boot guard is deleted and `time_registry` is selectable in the dashboard. **Still open:** FR-MODE-10 durability ([D5](#d5), T5b) and FR-MODE-11 / [FR-API-15](#fr-api-15) server journal (T8s); face policy and selection timeout → [D22](#d22) | **Partly resolved** |
 | <a id="d4"></a>D4 | [FR-MODE-01](#fr-mode-01) server-provisioned mode | ✅ **Resolved** (T4/B9, 2026-09-06) — the mode is assigned server-side at provisioning: `device_mode` on the generate-QR request (validated, `time_registry` excluded) → `tokens` → `devices` → registration response → `DeviceIdentity.device_mode` → `config.set_device_mode()`, applied at boot before the card reader is built, with `config.py` as the fallback when unbound. `face_policy` / `DIRECTION_SELECT_TIMEOUT_SEC` deferred to T8 as `time_registry`-only | — |
 | <a id="d5"></a>D5 | [FR-MODE-10](#fr-mode-10) durable attendance queue | Events are in-memory only, capped at 200 | **Implement** (T5) |
 | <a id="d6"></a>D6 | [FR-UI-09](#fr-ui-09) PIN path disabled | ✅ **Resolved (rev 1.5)** — keypad markup, styles, JS state machine and `Bridge.codeSubmitted()` removed outright; no `keypad`/`codeApproved`/`setExpectedCode` references remain in `demo_ui/` or `gui_web/`. The hardcoded `"1234"` is gone from both former sites | Closed (T18) |

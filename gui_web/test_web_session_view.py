@@ -18,6 +18,9 @@ class FakeDeviceUI:
     def screensaver_basic(self):
         self.calls.append("screensaver_basic")
 
+    def set_attendance_enabled(self, on):
+        self.calls.append(f"attendance_enabled={on}")
+
 
 def _view():
     ui = FakeDeviceUI()
@@ -35,10 +38,10 @@ def test_non_time_registry_modes_hide_direction_control(mode, monkeypatch):
 
 
 def test_time_registry_shows_direction_control(monkeypatch):
-    # Set directly: set_device_mode() still refuses this mode until T8.
     monkeypatch.setattr(config, "DEVICE_MODE", "time_registry")
     ui, view = _view()
 
     view.show_idle()
 
-    assert ui.calls == ["screensaver"]
+    # The control ships hidden in index.html, so it must be switched on too.
+    assert ui.calls == ["attendance_enabled=True", "screensaver"]

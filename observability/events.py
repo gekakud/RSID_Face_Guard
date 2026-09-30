@@ -64,6 +64,7 @@ class EventType(StrEnum):
     ACCESS_OUTPUT_FAILED = "access_output_failed"
     AUTH_MATCHED = "auth_matched"
     RELAY_OPENED = "relay_opened"
+    ATTENDANCE_EVENT = "attendance_event"
     INIT_MODE_ENTERED = "init_mode_entered"
     QR_ACCEPTED = "qr_accepted"
     QR_REJECTED = "qr_rejected"

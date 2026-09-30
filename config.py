@@ -40,8 +40,9 @@ SIMULATE_CARD_READER = CARD_READER_BACKEND == "simulated"
 #                      1:1 against that cardholder (FR-MODE-04). Production default.
 #   "face_only"     -> a screen tap starts a face-only (1:N) session; no card
 #                      reader is present or used (FR-MODE-05).
-#   "time_registry" -> IN/OUT attendance journalling, no relay (FR-MODE-06..11).
-#                      Not implemented yet (T8).
+#   "time_registry" -> the user picks IN/OUT on screen, then taps a card; the
+#                      direction is journalled as an attendance_event and the
+#                      relay is never actuated (FR-MODE-06..08).
 DEVICE_MODE = "card_and_face"
 
 DEVICE_MODES = ("card_only", "card_and_face", "face_only", "time_registry")
@@ -62,16 +63,6 @@ def set_device_mode(mode: str, source: str = "config.py") -> None:
         raise ValueError(
             f"Invalid DEVICE_MODE {mode!r} (from {source}); "
             f"expected one of {DEVICE_MODES}"
-        )
-
-    if mode == "time_registry":
-        # T8a: the mode validates but nothing branches on it yet, so it would
-        # silently behave like card_and_face -- pulsing the door and journalling
-        # nothing. Refuse to start rather than run the wrong mode (FR-MODE-06..11).
-        raise NotImplementedError(
-            f"DEVICE_MODE 'time_registry' (from {source}) is not implemented yet "
-            "(T8); it would silently behave like 'card_and_face' and open the "
-            "door. Use 'card_only', 'card_and_face' or 'face_only'."
         )
 
     DEVICE_MODE = mode
@@ -103,7 +94,7 @@ def mode_is_time_registry() -> bool:
     """True when the user picks IN/OUT before presenting a card (FR-MODE-06).
 
     The only mode that shows the direction control; every other mode rests on
-    the plain idle screen. Always False until T8 lifts the boot guard above.
+    the plain idle screen.
     """
     return DEVICE_MODE == "time_registry"
 

@@ -90,6 +90,11 @@ class SessionController:
         self._init_timer_handle = None
         self._qr_scan_handle = None
 
+        # time_registry: the IN/OUT direction the user last selected on screen.
+        # Sticky by design -- it holds until somebody presses the other option,
+        # mirroring the toggle the page actually shows (FR-MODE-06).
+        self._direction = "in"
+
     # --- introspection (heartbeat metadata snapshot) ------------------- #
 
     @property
@@ -104,6 +109,10 @@ class SessionController:
     def init_mode_active(self) -> bool:
         return self._init_mode_active
 
+    @property
+    def direction(self) -> str:
+        return self._direction
+
 
     # --- entry points -------------------------------------------------- #
 
@@ -111,6 +120,17 @@ class SessionController:
         """Screen tap: wakes a session only in face_only mode."""
         if config.mode_uses_tap_to_wake() and not self._init_mode_active:
             self.start_session()
+
+    def set_direction(self, direction) -> None:
+        """The user pressed IN or OUT on the idle screen (time_registry).
+
+        Driven from the page's toggle via the web bridge. Unknown values are
+        ignored so a stray JS call cannot journal a nonsense direction.
+        """
+        if direction not in ("in", "out"):
+            log.warning("Ignoring unknown attendance direction: %r", direction)
+            return
+        self._direction = direction
 
     def on_card_detected(self, card_id) -> None:
         """A registered card was tapped (monitor already filtered unknowns).
@@ -120,10 +140,54 @@ class SessionController:
         """
         if self._init_mode_active:
             return
+        if config.mode_is_time_registry():
+            self._handle_time_registry(card_id)
+            return
         if config.mode_is_card_only():
             self._handle_card_only(card_id)
             return
         self.start_session(card_id=card_id)
+
+    # --- time_registry mode (FR-MODE-06..08) --------------------------- #
+
+    def _handle_time_registry(self, card_id) -> None:
+        """Valid card -> journal the selected direction. No session, no camera,
+        and critically **no relay**: this is an attendance terminal, not a door
+        (FR-MODE-08).
+
+        Same authorisation gate as card_only -- the monitor established the card
+        is present in the local DB, and 'active' is checked here because no
+        biometric stage runs to enforce it (BR-01, FR-DATA-07).
+        """
+        if self._session_active or self._init_mode_active or not self._is_page_ready():
+            return
+
+        holder = self._host.resolve_cardholder(card_id)
+        if holder is None:
+            # Raced with a sync that dropped the user: treat as unregistered.
+            events.emit(EventType.ACCESS_DENIED, method="card",
+                        reason="card_unregistered")
+            self._deny_card_only()
+            return
+        if not holder.get("active", True):
+            events.emit(EventType.ACCESS_DENIED, method="card",
+                        user_id=holder.get("user_id"), reason="user_inactive")
+            self._deny_card_only()
+            return
+
+        # Hold the reader off for the result hold so one physical tap cannot
+        # journal twice (BR-04, FR-CARD-04).
+        self._host.mark_card_session_active()
+        self._card_only_busy = True
+
+        events.emit(EventType.ATTENDANCE_EVENT, user_id=holder.get("user_id"),
+                    direction=self._direction, method="card")
+        log.info("Attendance recorded: user_id=%s direction=%s",
+                 holder.get("user_id"), self._direction)
+
+        self._view.show_success(str(holder["name"]) if holder.get("name") else None)
+        self._sched.call_later(config.WELCOME_DURATION_MS, self._end_card_only)
+        self._sched.call_later(config.WELCOME_DURATION_MS, self._view.show_idle)
 
     # --- card_only mode (FR-MODE-03) ----------------------------------- #
 
