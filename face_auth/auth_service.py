@@ -44,6 +44,8 @@ class AuthService:
         if config.DB_MODE == "remote":
             from provisioning.identity import load as load_identity
             identity = load_identity()
+            if identity is not None and not identity.device_token:
+                identity = None
             if identity is None:
                 log.warning("DB_MODE=remote but device is not bound to a server yet -- "
                             "remote sync disabled until provisioning completes")
@@ -108,21 +110,18 @@ class AuthService:
         handler): loads the freshly-saved identity, attaches the remote
         provider to the DB, and starts an immediate + periodic sync so the
         door DB is fetched right after pairing rather than only on the next
-        reboot. No-op in local mode or if already remote-enabled. Returns True
-        if remote sync is (now or already) active.
+        reboot. Replaces any previous remote connection after a re-pair.
+        No-op in local mode. Returns True when sync is active.
 
         Runs a blocking HTTP fetch on first sync, so callers must invoke it off
         the UI thread.
         """
         if config.DB_MODE != "remote":
             return False
-        if self.user_db.is_remote_enabled():
-            log.info("Remote sync already enabled -- binding refresh is a no-op")
-            return True
-
+        self.disable_remote_sync()
         from provisioning.identity import load as load_identity
         identity = load_identity()
-        if identity is None:
+        if identity is None or not identity.device_token:
             log.warning("enable_remote_sync called but no device identity on disk yet")
             return False
 

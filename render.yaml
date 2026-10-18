@@ -5,10 +5,8 @@
 #
 # Set in the Render dashboard, not here:
 #   ADMIN_USER / ADMIN_PASSWORD  -> enables HTTP Basic on the dashboard
-#   PUBLIC_BASE_URL              -> this service's public https URL. It is signed
-#                                   into every QR as server_url, so devices learn
-#                                   where to register. Getting it wrong means
-#                                   devices scan fine and then call nowhere.
+#   PUBLIC_BASE_URL              -> this service's public https URL, included
+#                                   in unsigned installation QRs as serverLink.
 services:
   - type: web
     name: face-guard-dashboard
@@ -25,7 +23,9 @@ services:
       - key: HEARTBEAT_TIMEOUT_SEC
         value: "90"
       - key: PUBLIC_BASE_URL
-        sync: false
+        value: https://rsid-face-guard.onrender.com
+      - key: USER_STORE_FILE
+        value: /var/data/server_user_database.json
       - key: ADMIN_USER
         sync: false
       - key: ADMIN_PASSWORD

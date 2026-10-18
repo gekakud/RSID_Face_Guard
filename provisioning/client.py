@@ -4,6 +4,8 @@ Two requests, both blocking -- callers are responsible for keeping them off the
 Qt UI thread. See server/README.md for the contract.
 """
 
+import json
+from datetime import datetime, timezone
 from typing import Optional
 
 import requests
@@ -12,6 +14,8 @@ import config
 from observability.logging_setup import get_logger
 from provisioning import network
 from provisioning.identity import DeviceIdentity, get_mac_address
+from provisioning.hardware_identity import get_serial_number
+from qr_scanner.payload import parse_payload
 
 log = get_logger("provision")
 
@@ -38,12 +42,71 @@ def _fw_version() -> str:
         return "unknown"
 
 
-def register(payload: dict, device_type: Optional[str] = None) -> DeviceIdentity:
-    """Redeem a scanned provisioning QR and return this device's credentials.
+def pair(payload: dict) -> DeviceIdentity:
+    """Pair an installation without a signature or Authorization header.
 
-    `payload` is the verified QR payload straight out of QRScanner.scan(). The
-    server URL comes from the payload rather than config: the QR is what tells
-    a fresh device which deployment it belongs to.
+    Render adds credentials for our existing database/status APIs. Other
+    servers may omit those extensions; pairing then has no remote DB service.
+    A timed-out POST is not automatically retried.
+    """
+    try:
+        payload = parse_payload(json.dumps(payload))
+        serial = get_serial_number()
+    except ValueError as exc:
+        raise RegistrationError(str(exc)) from exc
+    server_url = payload["serverLink"].rstrip("/")
+    mac = get_mac_address().upper()
+    try:
+        response = requests.post(
+            f"{server_url}/installation/pair",
+            json={"installationId": payload["installationId"], "mac": mac, "serial": serial},
+            timeout=config.REMOTE_TIMEOUT_SEC,
+            allow_redirects=False,
+        )
+    except requests.RequestException as exc:
+        raise RegistrationError("Pairing server unreachable or timed out; scan again to recover") from exc
+    if not 200 <= response.status_code < 300:
+        try:
+            detail = response.json().get("detail", "Pairing refused")
+        except (ValueError, AttributeError):
+            detail = "Pairing refused"
+        raise RegistrationError(f"Pairing failed ({response.status_code}): {detail}")
+    try:
+        data = response.json()
+        if not isinstance(data, dict) or data.get("status") != "paired":
+            raise ValueError("Server did not confirm paired status")
+        if data.get("_id") != payload["installationId"]:
+            raise ValueError("Server returned a different installation ID")
+        if not isinstance(data.get("device"), str) or not data["device"].strip():
+            raise ValueError("Server returned no hardware device ID")
+        token = data.get("device_token", "")
+        if not isinstance(token, str):
+            raise ValueError("Invalid device token in pair response")
+        customer = data.get("customer") or {}
+        gate = data.get("gate") or {}
+        customer_id = customer.get("_id", "") if isinstance(customer, dict) else customer
+        gate_id = gate.get("_id", "") if isinstance(gate, dict) else gate
+        interval = int(data.get("heartbeat_interval_sec", config.HEARTBEAT_INTERVAL_SEC))
+        if interval <= 0:
+            raise ValueError("Invalid heartbeat interval")
+        return DeviceIdentity(
+            device_id=data["device"], device_token=token, server_url=server_url,
+            customer_id=str(customer_id), site_id=str(data.get("venue") or ""),
+            door_id=str(gate_id), network_profile={"mode": "local"},
+            device_mode="face_only", identity_version=2,
+            installation_id=data["_id"], serial=serial, mac=mac,
+            device_type=str(data.get("deviceType") or payload["deviceType"]),
+            registered_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            heartbeat_interval_sec=interval,
+        )
+    except (ValueError, TypeError, KeyError) as exc:
+        raise RegistrationError(f"Invalid pair response: {exc}") from exc
+
+
+def register(payload: dict, device_type: Optional[str] = None) -> DeviceIdentity:
+    """Legacy token registration, retained for old clients and compatibility tests.
+
+    The production scanner and BindingManager now use installation pairing.
     """
     server_url = (payload.get("server_url") or "").rstrip("/")
     if not server_url:
@@ -123,6 +186,8 @@ def post_status(identity: DeviceIdentity, status: str, metadata: dict) -> bool:
     Raises DeviceRevokedError on HTTP 410 -- the operator removed this device,
     and the caller must drop its identity rather than retry.
     """
+    if not identity.device_token:
+        return False
     try:
         response = requests.post(
             identity.status_url,

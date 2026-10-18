@@ -402,7 +402,7 @@ class GUIWeb(QMainWindow):
             qr_scanner=self._qr_scanner,
             latest_frame=self._latest_frame,
             on_qr_payload=self._begin_binding,
-            is_page_ready=lambda: self._page_ready,
+            is_page_ready=lambda: self._page_ready and self.binding.identity is not None,
         )
         self.js_bridge.tap_detected.connect(self.controller.on_user_tapped)
         self.js_bridge.direction_changed.connect(self.controller.set_direction)
@@ -470,10 +470,11 @@ class GUIWeb(QMainWindow):
 
     def _on_binding_result(self, ok: bool, message: str):
         """Binding finished (marshalled onto the Qt thread by _SignalBridge)."""
-        text = message if ok else f"Registration failed\n{message}"
+        text = message if ok else f"Pairing failed\n{message}"
         self.view.page().runJavaScript(_status_overlay_show_js(text))
         # Leave a failure up longer -- an installer needs time to read why.
-        QTimer.singleShot(3000 if ok else 6000, self.controller.end_init_mode)
+        QTimer.singleShot(3000 if ok else 6000,
+                          self.controller.end_init_mode if ok else self.controller.start_init_mode)
         if ok:
             # The device is now bound: wire up remote DB sync and pull the door
             # user set immediately (FR-DB-07) instead of waiting for a reboot.

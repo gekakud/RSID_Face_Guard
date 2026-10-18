@@ -5,8 +5,8 @@
 | Item | Detail |
 |---|---|
 | Document ID | PLAN-FG-001 |
-| Revision | 1.6 |
-| Date | 2026-09-30 |
+| Revision | 1.8 |
+| Date | 2026-10-18 |
 | Specification | [`SOFTWARE_REQUIREMENTS.md`](SOFTWARE_REQUIREMENTS.md) rev 1.6 |
 | Basis | Static audit of the working tree. Evidence cites **file + symbol**, never line numbers — rev 1.1 used `file:line` and every reference rotted the moment [T1](#delivered) moved the session machine |
 | Scope | Device application **and** the reference server (`server/`) |
@@ -18,6 +18,12 @@ the code does *today*. [§2](#2-task-list) is the live queue of remaining work,
 plus a [Delivered](#delivered) roll-up of what has shipped.
 [§3](#3-batches-and-device-validation) is the batch schedule and per-batch
 device-validation checklists.
+
+**New binding refactor (2026-10-18):** [§4](#4-installation-pairing-refactor)
+plans the replacement of signed provisioning with the unsigned installation QR
+and `POST /installation/pair`. It takes precedence over the older binding
+design below for this work. It is a plan, not a claim that production code has
+changed; §1 remains the historical reconciliation baseline.
 
 Status legend: **✅ IMPLEMENTED** · **⚠️ PARTIAL** · **❌ MISSING** ·
 **➖ DEPRECATED** (withdrawn in SRS rev 1.2, no work required).
@@ -1048,3 +1054,259 @@ spare terminal with **Time registry** and validate:
    confirm a normal grant still works, with the IN/OUT control hidden.
 
 *(Per-batch checklists for B11/B12/B14/B15 are added when each batch is implemented.)*
+
+## 4. Installation pairing refactor
+
+**Status:** implemented locally, 2026-10-18; deployment and physical Pi checks pending. Owner validates the
+camera and deployment on Raspberry Pi 5. No production API calls are part of
+planning or automated tests.
+
+### 4.1 Agreed input and server contract
+
+The QR contains unsigned JSON:
+
+```json
+{"installationId":"6ad4bbae041ea07eac2a9847","deviceType":"Genie Door Camera Lite","serverLink":"https://api-dev.itsu.tech"}
+```
+
+Require a JSON object with three non-empty string fields and a valid HTTP(S)
+server address. Preserve the camelCase wire names. Do not require the old
+schema, command, signature, expiry, nonce, provisioning token, or trust store.
+Additional fields may be ignored. No network profile is present: the terminal
+must already have a working network connection.
+
+Call the QR server, off the UI thread:
+
+```text
+POST {serverLink without trailing slash}/installation/pair
+Content-Type: application/json
+
+{"installationId":"<QR installationId>","mac":"AA:BB:CC:DD:EE:FF","serial":"<hardware serial>"}
+```
+
+Pairing is public; send no Authorization header in this phase. Optional
+technician authentication is outside this refactor. The supplied description
+assigns HTTP 201/pending to installation creation, not necessarily pairing.
+Accept a successful 2xx pairing response only when its JSON reports
+`status: "paired"` and contains the required installation/hardware identifiers.
+A pending response is not completed pairing.
+
+The terminal consumes the existing pending installation; it does not create
+one. It does not send `deviceType`, the old token/nonce, or app/SDK versions
+in the pair request unless the API contract is later extended.
+
+**Server scope added:** implement this contract in our `server/` application
+deployed at `https://rsid-face-guard.onrender.com`. For our end-to-end test,
+generate the QR with `serverLink` set to that Render URL and an installation
+created on that server. The ITS URL above illustrates the supplied format;
+its installation IDs cannot be assumed to exist on Render. The terminal still
+uses the URL from the QR, rather than hardcoding Render in the scanner.
+Pairing directly with ITS while fetching users from Render would require a
+separate cross-server mapping/bootstrap contract; it is not implied by this
+same-server implementation plan.
+
+### 4.2 Identity and temporary defaults
+
+Persist a versioned pairing identity, atomically, with explicit separate
+fields. Do not coerce this response into the old token-based identity.
+
+| New identity field | Source / rule |
+|---|---|
+| `installation_id` | Response `_id`; must match QR `installationId` |
+| `device_id` | Response `device` (hardware record ID), distinct from `_id` |
+| `server_url` | QR `serverLink`, normalized without trailing slash |
+| `device_type` | Response `deviceType`; QR value retained as the requested type for diagnostics |
+| `mac`, `serial` | Exact identifiers used in the pair request |
+| `customer_id`, `customer_name` | `customer._id`, `customer.name` when present |
+| `venue_id` | `venue` ID from response |
+| `gate_id`, `gate_name` | `gate._id`, `gate.name` when present |
+| `paired_at` | Local UTC time when the successful result is persisted; keep server `timeStamp` separately if useful |
+| `device_mode` | Explicit temporary default: `config.DEVICE_MODE`, initially `face_only` |
+| `network_profile` | Temporary default: `{"mode":"local"}`; do not call NetworkManager |
+| device API token | Our Render pair response adds `device_token` for existing users/status APIs; absent in the supplied ITS response, never invented by the client |
+| heartbeat interval | Our Render extension supplies `heartbeat_interval_sec`; fall back to `config.HEARTBEAT_INTERVAL_SEC` when a real token is available |
+| database sync interval | Keep existing `config.DB_SYNC_INTERVAL_SEC` for the current database adapter |
+
+The response example has a different installation ID from the QR example;
+fixtures must use matching IDs for a successful test. `deviceType` is also
+different (Lite versus Pro): use the paired response as authoritative metadata
+and log the difference, without inferring an operating mode from the label.
+`customer.serverLink` is metadata in this phase; do not silently switch the
+pairing or database server to that URL.
+
+Keep temporary defaults in one named configuration/adapter location and mark
+them for replacement when the new APIs provide real values. Preserve all four
+existing modes and apply the selected mode before hardware initialization.
+
+### 4.3 Render server and current database integration
+
+Keep our existing local JSON schema, faceprints, matching logic, remote
+provider, cache and bearer-authenticated users/status endpoints. Extend our
+pair response with `device_token` and `heartbeat_interval_sec` so a newly
+paired device can use them immediately. These are **our compatibility
+extensions**, not fields promised by the supplied ITS contract. The response
+`device` value must identify the same row used by `/devices/{id}/users` and
+`/devices/{id}/status`. Persist the issued token using the existing credential
+handling. Do not treat the public Pi serial as an authentication secret.
+
+Server work:
+
+1. Add an `installations` table with installation ID, customer/site/door
+   assignment (exposed as customer/venue/gate), device type, pending/paired
+   status, paired device ID and timestamps. Add a nullable serial column and
+   unique index for non-empty normalized serials on `devices`; keep existing
+   devices valid. Use a schema migration for deployed databases, not just a
+   changed `CREATE TABLE IF NOT EXISTS` statement.
+2. Add an admin-protected installation creation action and endpoint, proposed
+   `POST /installation`, returning 201/pending. Generate an unsigned QR with
+   exactly `installationId`, `deviceType`, and `serverLink`. Set deployed
+   `PUBLIC_BASE_URL=https://rsid-face-guard.onrender.com`. Update the dashboard
+   Add device form, pending list and detail page for this flow. Keep operating
+   mode at the temporary configured default; the new QR carries no mode or
+   network profile.
+3. Add public `POST /installation/pair` accepting the exact three request
+   fields. Validate that the installation exists and is pending. In one
+   transaction, create/reuse the hardware row by serial, bind it to the
+   installation, mark paired, and issue credentials. Respond with the supplied
+   nested installation shape plus our compatibility fields. Return 200/paired
+   on success; define 404 for unknown installations and 409 for ownership/
+   hardware conflicts. Optional technician-token support is deferred; existing
+   admin authentication protects installation creation and dashboard actions.
+4. Define recovery explicitly: a replay for the same installation and same
+   normalized serial/MAC returns the same hardware identity; another device
+   cannot claim an already paired installation. Provide a recoverable credential
+   issuance policy for lost responses (proposed: rotate and return a fresh
+   token on a matching replay). Concurrent calls must never create duplicate
+   hardware rows. Document that token rotation invalidates the prior token.
+5. A new installation for an already known serial moves that hardware record
+   to the new gate, retires the previous active assignment and invalidates old
+   credentials. Refresh its assigned users using the current dataset/assignment
+   mechanism. Keep the existing default-template seeding as an explicit
+   temporary demo behavior; true gate-scoped datasets remain T14 follow-up.
+6. On device success, save identity, start an immediate current-database fetch,
+   periodic sync and the existing heartbeat with the returned credentials.
+   Retain current HTTP 410 revocation and local-cache behavior. A missing token
+   in a non-Render response does not enable unauthenticated users/status calls;
+   report that database integration is unavailable for that backend.
+7. Preserve old saved identities and endpoints while migrating the client.
+   Old signed QR issuance is removed from the primary dashboard path; legacy
+   endpoints can remain temporarily for existing devices and tests.
+
+Deploy server support before switching the production client. Verify Render's
+database and user-store persistence settings before migration; preserve
+existing records. Use a designated test installation for live verification.
+
+### 4.4 Ordered implementation work
+
+| Step | Change | Main files |
+|---|---|---|
+| P1 | Extract a shared unsigned-payload parser from the PoC; production scanner decodes frames and uses it, without crypto imports or key loading | `qr_scanner/qr_scanner.py`, new parser module, `qr_scanner/poc.py`, package exports |
+| S1 | Add installation/serial migrations, API models, creation and pairing endpoints, idempotency and compatibility credentials | `server/db.py`, `server/models.py`, `server/main.py`, `server/user_store.py`, server tests |
+| S2 | Update dashboard QR creation/pending/paired views and Render configuration; deploy backward-compatible server support first | `server/templates/`, `server/config.py`, `render.yaml`, server docs |
+| P2 | Add versioned pairing identity with optional server-issued token, defaults and migration preserving old credentials | `provisioning/identity.py`, `config.py`, `main_web.py` |
+| P3 | Read serial and MAC; implement pair request, response validation, and clear HTTP/timeout errors | `provisioning/client.py`, startup hardware metadata helper |
+| P4 | Replace registration orchestration with pair → validate → save → activate database adapter; marshal results to UI | `provisioning/binding.py`, `gui_web/web_window.py`, `face_auth/auth_service.py` |
+| P5 | Update controller diagnostics and completion/retry states; keep duplicate scans from launching concurrent requests | `session/controller.py`, `gui_web/web_window.py` |
+| P6 | Update relevant automated tests and docs; remove obsolete device-side signing settings/dependencies only after checking remaining callers | tests, SRS, `DEVICE_SERVER_API.md`, setup docs, requirements |
+
+Keep P2–P4 in one coherent production change so an intermediate identity shape
+does not break startup or database access. S1/S2 must be available before
+end-to-end client validation. Keep signing dependencies while legacy endpoints
+still use them. Historical POC tools can remain isolated.
+
+### 4.5 Hardware identifiers and state transitions
+
+**Confirmed: `serial` is the Raspberry Pi board serial**, not the camera
+serial. Read `/proc/device-tree/serial-number`, remove its trailing NUL and
+whitespace, and normalize as a lowercase 16-digit hexadecimal string while
+preserving leading zeros. Fall back to the `Serial` entry in `/proc/cpuinfo`.
+Use the full value rather than truncating it. Reject missing, malformed or
+all-zero values with a clear pairing error. Windows uses an explicit stable
+`DEVICE_SERIAL_OVERRIDE`, such as `dev-win-<chosen-machine-id>`, clearly marked
+as a development identifier and kept unchanged across runs. Do not derive a
+replacement from the camera, COM port, hostname, or a fresh random UUID.
+On Render, use the serial as the hardware lookup/deduplication key, and retain
+an internal hardware ID as the API record identifier. The serial identifies a
+board; it is neither a credential nor a guarantee against spoofed requests.
+Official reference: [Raspberry Pi hardware documentation](https://www.raspberrypi.com/documentation/computers/raspberry-pi.html)
+documents the full Pi 5 serial at `/proc/device-tree/serial-number` and the
+`Serial` entry in `/proc/cpuinfo`.
+Format the existing MAC lookup as uppercase colon-separated octets and allow
+an explicit development override. Keep identifiers stable across restarts.
+
+Target UI flow:
+
+```text
+startup → QR scan window → valid unsigned payload → pairing in progress
+  → paired response + identity saved → success (3 s)
+    → fetch current DB / start configured refresh → idle
+  → invalid response / HTTP failure / save failure → error (6 s)
+    → fresh QR scan window
+```
+
+Start the immediate DB fetch on a worker after the successful save; it need
+not hold the success screen open. A database fetch failure does not roll back
+successful pairing. Stop QR scan timers while pairing, and allow exactly one
+pair request at a time. Invalid QR content keeps the current scan window open.
+An unbound terminal whose window expires must not enter access operation with
+the development dataset unless explicit development mode is enabled.
+
+On reboot, load the new identity and resume the configured database source;
+do not repeat `/installation/pair`. Retain startup QR scanning for re-pairing.
+On a re-pair failure, keep the prior identity and database settings intact.
+On success, replace the local pairing identity only after persistence succeeds.
+For our Render server, implement and test the replay/replacement semantics in
+§4.3 before enabling bounded retries. For other backends, do not automatically
+replay a timed-out POST without their idempotency contract. If pairing
+succeeds remotely but saving fails, report that explicitly for recovery.
+
+### 4.6 Validation and completion criteria
+
+- Unsigned QR works through the real production frame decoder, including the
+  example payload. Missing fields, non-object JSON and invalid URLs are rejected
+  without stopping the scan window. No keys or cryptography are needed.
+- Mocked HTTP asserts the exact pair URL/body and absence of Authorization;
+  cover paired 200/201 responses, pending, mismatched installation ID, missing
+  hardware ID, malformed JSON, timeout, 4xx and 5xx. Never pair a real
+  installation in an automated test.
+- Cover atomic-save failure, old-identity migration, restart without re-pair,
+  duplicate scans, failed re-pair preserving prior state, and failure returning
+  to a fresh scan window.
+- Verify no old registration request is sent after scanning the new QR. Users
+  and heartbeat requests go to Render with its actual issued token; a backend
+  without a token receives neither call. Retain cache on sync failure and
+  confirm no Wi-Fi reconfiguration occurs.
+- Server tests cover fresh/migrated databases, pending creation, unsigned QR
+  payload, pair/replay/conflict, concurrent pair attempts, token rotation,
+  serial-based rebinding, assigned users, status and HTTP 410 revocation.
+- Re-run affected session/mode tests; attendance never pulses the relay.
+- Windows manual check: scan from the phone, inspect parsed fields, pair using
+  a designated Render test installation, inspect saved identity, and confirm
+  current remote DB fetch and heartbeat after restart without re-pairing.
+- RPi5 owner check: repeat with RealSense frames, confirm stable MAC/serial,
+  UI responsiveness, offline cached access after pairing, and startup under
+  systemd. Record physical validation separately from Windows test results.
+
+The serial source and database server are now settled: Raspberry Pi board
+serial and our Render server. This plan assumes Render hosts pairing as well
+as the current users/status APIs. Pairing against ITS with Render as a separate
+database service would need an explicit bridge and separate credentials.
+
+
+### 4.7 Implementation notes (2026-10-18)
+
+- Temporary defaults: `face_only` and `{"mode":"local"}` on device and server.
+  Existing saved identities retain their operating modes.
+- Unsigned parsing is shared by PoC and production scanner. Device crypto and
+  trust-store loading are removed; legacy server signing stays isolated.
+- Additive SQLite migration adds installations and a unique nullable serial.
+  Dashboard creation/status and hardware serial display are wired.
+- Matching replay rotates credentials; a new installation reuses hardware by
+  Pi board serial, replaces the prior assignment and seeds the demo dataset.
+- Identity version 2 separates installation/hardware IDs. A successful save
+  activates existing authenticated database and heartbeat services.
+- Pair failure restarts scanning; concurrent bind requests are suppressed.
+  Unbound devices cannot start access sessions. Windows needs a stable explicit
+  `DEVICE_SERIAL_OVERRIDE=dev-...`; Pi reads the board serial automatically.
+- Render settings target the named server and persistent user store. Preserve
+  the existing assigned-user file before switching its path in a live deploy.

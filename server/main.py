@@ -49,6 +49,7 @@ from fastapi.security import (
 from fastapi.templating import Jinja2Templates
 
 from server import config, db, models, signing, timeutil, user_store
+from server.installations import install_routes
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(_HERE, "templates"))
@@ -147,6 +148,7 @@ def _device_summary(row: sqlite3.Row) -> models.DeviceSummary:
     age = timeutil.age_seconds(row["last_seen_at"]) if row["last_seen_at"] else None
     return models.DeviceSummary(
         device_id=row["device_id"],
+        serial=row["serial"] if "serial" in row.keys() else None,
         name=row["name"],
         customer_id=row["customer_id"],
         site_id=row["site_id"],
@@ -238,6 +240,8 @@ def device_auth(
 # =====================================================
 # Provisioning
 # =====================================================
+
+install_routes(app, require_admin, _hash_token)
 
 @app.post(
     "/devices/generate-qr",

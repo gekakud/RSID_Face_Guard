@@ -2,6 +2,17 @@
 
 **Access Control & Time-Registry Edge Terminal**
 
+> **Binding update, implemented locally 2026-10-18:** unsigned QR fields
+> `installationId`, `deviceType`, `serverLink` replace the signed envelope.
+> POST `{installationId, mac, serial}` to `/installation/pair`; serial is the
+> Raspberry Pi board serial. Defaults are local networking and `face_only`.
+> Render supplies credentials for the unchanged users/status APIs. This
+> supersedes the signature/trust-store/token/nonce and QR Wi-Fi requirements
+> below for new installations. Legacy identities/endpoints remain compatible.
+> Pair failures reopen scanning; successful identity persistence precedes
+> heartbeat and DB refresh. See [implementation plan §4](IMPLEMENTATION_PLAN.md#4-installation-pairing-refactor)
+> and [server contract](../server/README.md).
+
 | Item | Detail |
 |---|---|
 | Document ID | SRS-FG-001 |

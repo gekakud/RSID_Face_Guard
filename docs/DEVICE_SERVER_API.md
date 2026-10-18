@@ -1,5 +1,15 @@
 # RSID Face Guard — Device ↔ Server API
 
+> **Current binding contract (2026-10-18):** unsigned installation QR →
+> `POST {serverLink}/installation/pair` with `{installationId, mac, serial}`.
+> `serial` is the Raspberry Pi board serial. Our Render server returns paired
+> installation metadata and hardware `device` ID, plus `device_token` and
+> `heartbeat_interval_sec` compatibility extensions. Identity version 2 uses
+> local network and `face_only`, then the existing users/status APIs.
+> No signature, nonce, token redemption or Wi-Fi changes are part of new
+> binding. See [server documentation](../server/README.md) for the current
+> contract. The signed provisioning contract below is legacy documentation.
+
 What the terminal (the door device) and your server send each other. Four
 endpoints, in the order you will build them.
 

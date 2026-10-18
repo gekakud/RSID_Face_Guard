@@ -1,5 +1,12 @@
 # Setting Up RSID_Face_Guard on a Fresh Raspberry Pi 5
 
+> **Pairing update (2026-10-18):** use an unsigned installation QR from the
+> updated dashboard. Networking must already work; the temporary mode is
+> `face_only`. QR decoding still needs pyzbar/zbar; public keys and device-side
+> cryptography are no longer required. Pi board serial is read automatically
+> from `/proc/device-tree/serial-number`, falling back to `/proc/cpuinfo`.
+> On Windows set `$env:DEVICE_SERIAL_OVERRIDE = 'dev-win-my-pc'` before launch.
+
 This document records the **exact, verified** steps used to get `main_web.py`
 running from a completely clean Raspberry Pi OS install. Follow it top to
 bottom on a new Pi 5 to reproduce a working environment.

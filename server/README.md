@@ -1,5 +1,45 @@
 # Device dashboard server
 
+## Installation pairing (current flow, 2026-10-18)
+
+The dashboard **Add device** page now creates an installation and displays an
+unsigned QR containing only `installationId`, `deviceType`, and `serverLink`.
+The device must already be online. Current temporary settings are **local
+network** and **face_only**. The signed-token endpoints documented below are
+legacy compatibility APIs; new devices do not use them.
+
+- `POST /installation` (admin): `{customer_id, site_id, door_id, deviceType?}`
+  creates a pending installation, returning 201 with `_id`, `status`, `payload`
+  and a QR PNG data URI. Customer/site/door names map to customer/venue/gate
+  in the pair response.
+- `GET /installation` and `GET /installation/{id}` (admin) show pairing status.
+- `POST /installation/pair` (public): `{installationId, mac, serial}` returns
+  200 with `status: "paired"`, `_id` (installation ID), `device` (hardware ID),
+  `deviceType`, `customer`, `venue`, `gate`, and `timeStamp`. Our response also
+  includes `device_token` and `heartbeat_interval_sec` for the existing
+  authenticated users/status APIs, plus the temporary mode/network defaults.
+
+The Pi board serial is the hardware lookup key. MACs are normalized to
+uppercase and serials to lowercase, preserving full 16-digit Pi serials.
+`dev-...` serials support Windows development. A same-installation, same-serial/
+MAC replay recovers the same device ID and rotates its token; the previous
+token stops working. Replaying a removed/replaced installation or claiming one
+with different hardware returns 409. A new pending installation rebinds the
+existing hardware row and replaces its prior installation. Users are seeded
+from our existing demo template on a new binding; replay preserves uploads.
+
+Render configuration: `PUBLIC_BASE_URL=https://rsid-face-guard.onrender.com`,
+`DB_PATH=/var/data/faceguard.db`, and
+`USER_STORE_FILE=/var/data/server_user_database.json`. Before switching an
+existing deployment to the persistent user-store path, copy its current
+assigned-user file there; do not overwrite an existing persistent store.
+The additive SQLite migration preserves legacy device rows. Deploy server
+support before updating kiosks. For local testing, set `PUBLIC_BASE_URL` to
+the reachable local URL. ITS installation IDs do not exist on Render unless
+created there; the device uses the QR's actual `serverLink`.
+
+## Legacy provisioning API and shared configuration
+
 FastAPI + SQLite. Issues signed provisioning QR codes, registers devices that
 scan them, receives their status heartbeats, and shows it all on a dashboard.
 

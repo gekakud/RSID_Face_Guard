@@ -61,7 +61,8 @@ def device_env(tmp_path, monkeypatch, live_server):
     monkeypatch.setattr(
         device_config, "DEVICE_IDENTITY_FILE", str(tmp_path / "device_identity.json")
     )
-    # The QR's server_url is what the device calls back to.
+    monkeypatch.setenv("DEVICE_SERIAL_OVERRIDE", "dev-win-" + tmp_path.name)
+    # The QR server URL is what the device calls back to.
     monkeypatch.setattr(server_config, "PUBLIC_BASE_URL", live_server)
     return live_server
 
@@ -215,6 +216,15 @@ def test_load_returns_none_on_corrupt_file(device_env):
 # provisioning/binding.py -- the flow the GUIs call
 # =====================================================
 
+def _issue_installation(base_url, door_id="main-entrance"):
+    import requests
+    response = requests.post(f"{base_url}/installation", json={
+        "customer_id": "acme", "site_id": "hq", "door_id": door_id,
+    }, timeout=10)
+    response.raise_for_status()
+    return response.json()["payload"]
+
+
 def _bind_and_wait(manager, payload, timeout=15):
     """Run bind_async and block until its callback fires."""
     done = threading.Event()
@@ -236,9 +246,9 @@ def test_bind_async_registers_persists_and_heartbeats(device_env):
         device_type="F455", metadata_fn=lambda: {"user_count": 3, "camera_available": True}
     )
 
-    ok, message = _bind_and_wait(manager, _issue_qr(device_env))
+    ok, message = _bind_and_wait(manager, _issue_installation(device_env))
     assert ok, message
-    assert "registered" in message.lower()
+    assert "paired" in message.lower()
 
     # Credentials persisted...
     saved = identity_store.load()
@@ -262,8 +272,8 @@ def test_bind_async_registers_persists_and_heartbeats(device_env):
 
 
 def test_bind_async_reports_failure_without_raising(device_env):
-    payload = _issue_qr(device_env)
-    payload["server_url"] = f"http://127.0.0.1:{_free_port()}"
+    payload = _issue_installation(device_env)
+    payload["serverLink"] = f"http://127.0.0.1:{_free_port()}"
 
     manager = binding_mod.BindingManager()
     ok, message = _bind_and_wait(manager, payload)
@@ -280,7 +290,7 @@ def test_start_if_bound_resumes_after_restart(device_env):
     import requests
 
     first = binding_mod.BindingManager(metadata_fn=lambda: {"boot": 1})
-    ok, _ = _bind_and_wait(first, _issue_qr(device_env))
+    ok, _ = _bind_and_wait(first, _issue_installation(device_env))
     assert ok
     device_id = first.identity.device_id
     # Wait for the old worker to actually finish: a beat still in flight would
@@ -325,7 +335,7 @@ def test_removal_drops_identity_and_notifies_gui(device_env, monkeypatch):
         metadata_fn=lambda: {"boot": 1},
         on_revoked=lambda: revoked.set(),
     )
-    ok, _ = _bind_and_wait(manager, _issue_qr(device_env))
+    ok, _ = _bind_and_wait(manager, _issue_installation(device_env))
     assert ok
     device_id = manager.identity.device_id
     assert identity_store.load() is not None
@@ -351,13 +361,13 @@ def test_rebinding_replaces_the_old_identity(device_env):
     """An installer moving a device to another door just rescans."""
     manager = binding_mod.BindingManager()
 
-    ok, _ = _bind_and_wait(manager, _issue_qr(device_env, door_id="front-door"))
+    ok, _ = _bind_and_wait(manager, _issue_installation(device_env, door_id="front-door"))
     assert ok
     first_id = manager.identity.device_id
 
-    ok, _ = _bind_and_wait(manager, _issue_qr(device_env, door_id="back-door"))
+    ok, _ = _bind_and_wait(manager, _issue_installation(device_env, door_id="back-door"))
     assert ok
-    assert manager.identity.device_id != first_id
+    assert manager.identity.device_id == first_id
     assert manager.identity.door_id == "back-door"
     assert identity_store.load().device_id == manager.identity.device_id
     manager.shutdown()
@@ -371,7 +381,7 @@ def test_heartbeat_survives_a_broken_metadata_callback(device_env):
         raise RuntimeError("boom")
 
     manager = binding_mod.BindingManager(metadata_fn=exploding_metadata)
-    ok, _ = _bind_and_wait(manager, _issue_qr(device_env))
+    ok, _ = _bind_and_wait(manager, _issue_installation(device_env))
     assert ok
 
     deadline = time.time() + 10

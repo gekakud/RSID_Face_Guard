@@ -6,9 +6,8 @@
 <div class="mb-6">
   <h1 class="text-xl font-semibold tracking-tight text-slate-100">Add a device</h1>
   <p class="mt-1 text-sm text-slate-500">
-    Pick the customer, site and door (or add new ones), choose how the device
-    reaches the internet, then show the generated QR to the device camera while
-    it is in init mode. The code binds that device to this door.
+    Pick the customer, site and door, then show the QR to the device camera.
+    The device must already be connected to the network. Pairing uses face-only mode.
   </p>
 </div>
 
@@ -46,65 +45,11 @@
       </div>
     </div>
 
-    <!-- Operating mode -->
-    <div class="rounded-md border border-slate-800 bg-slate-950/40 p-3">
-      <span class="{{ label }}">Operating mode</span>
-      <div class="mt-2 space-y-2 text-sm text-slate-300">
-        <label class="flex items-start gap-2">
-          <input type="radio" name="device_mode" value="card_and_face" class="mt-1" checked>
-          <span>Card + face
-            <span class="block text-xs text-slate-500">Tap a card, then the face is verified against that cardholder.</span>
-          </span>
-        </label>
-        <label class="flex items-start gap-2">
-          <input type="radio" name="device_mode" value="card_only" class="mt-1">
-          <span>Card only
-            <span class="block text-xs text-slate-500">A valid card opens the door immediately -- no camera.</span>
-          </span>
-        </label>
-        <label class="flex items-start gap-2">
-          <input type="radio" name="device_mode" value="face_only" class="mt-1">
-          <span>Face only
-            <span class="block text-xs text-slate-500">Tap the screen to start; no card reader is used.</span>
-          </span>
-        </label>
-        <label class="flex items-start gap-2">
-          <input type="radio" name="device_mode" value="time_registry" class="mt-1">
-          <span>Time registry
-            <span class="block text-xs text-slate-500">Pick IN/OUT, then tap a card to record attendance -- the door is never opened.</span>
-          </span>
-        </label>
-      </div>
-      <p class="mt-2 text-xs text-slate-500">
-        Fixed for this binding -- changing it later means revoking and re-binding the device.
-      </p>
-    </div>
-
-    <!-- Network -->
-    <div class="rounded-md border border-slate-800 bg-slate-950/40 p-3">
-      <span class="{{ label }}">Network</span>
-      <div class="mt-2 flex gap-4 text-sm text-slate-300">
-        <label class="flex items-center gap-2">
-          <input type="radio" name="net_mode" value="local" checked> Local (LAN cable)
-        </label>
-        <label class="flex items-center gap-2">
-          <input type="radio" name="net_mode" value="wifi"> Wi-Fi
-        </label>
-      </div>
-      <p id="net_local_note" class="mt-2 text-xs text-slate-500">
-        Assumes the device is plugged into the LAN and already has internet.
-      </p>
-      <div id="net_wifi" class="mt-2 hidden space-y-2">
-        <input class="{{ field }} mt-0" id="wifi_ssid" placeholder="Network name (SSID)">
-        <input class="{{ field }} mt-0" id="wifi_password" type="text" placeholder="Password">
-      </div>
-    </div>
-
     <div>
-      <label class="{{ label }}" for="validity_minutes">Valid for (minutes)</label>
-      <input class="{{ field }}" id="validity_minutes" name="validity_minutes"
-             type="number" min="0" max="1440" value="{{ default_validity }}" required>
+      <label class="{{ label }}" for="device_type">Device type</label>
+      <input class="{{ field }}" id="device_type" value="Genie Door Camera Lite" required maxlength="128">
     </div>
+    <p class="text-sm text-slate-400">Face only ? Local network</p>
 
     <button type="submit"
             class="w-full rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-sky-500 disabled:opacity-50">
@@ -119,7 +64,7 @@
         <!-- White plate behind the code: the device camera needs the quiet zone
              to stay light, and the page background is near-black. -->
         <div class="rounded-lg bg-white p-3">
-          <img id="qr" alt="Provisioning QR code" class="block h-64 w-64">
+          <img id="qr" alt="Installation QR code" class="block h-64 w-64">
         </div>
         <p id="countdown" class="mt-3 text-center text-sm"></p>
       </div>
@@ -129,7 +74,7 @@
         <dl id="meta" class="mt-3 space-y-1.5 text-sm"></dl>
         <details class="mt-4">
           <summary class="cursor-pointer text-xs uppercase tracking-wider text-slate-500 hover:text-slate-300">
-            Signed payload
+            QR payload
           </summary>
           <pre id="payload" class="mt-2 max-h-64 overflow-auto rounded-md bg-slate-950 p-3 font-mono text-xs text-slate-400"></pre>
         </details>
@@ -319,118 +264,41 @@
     if (e.key === "Enter") { e.preventDefault(); saveAdd(); }
   });
 
-  // Network mode toggle
-  document.querySelectorAll("input[name=net_mode]").forEach((radio) => {
-    radio.addEventListener("change", () => {
-      const wifi = document.querySelector("input[name=net_mode]:checked").value === "wifi";
-      $("net_wifi").classList.toggle("hidden", !wifi);
-      $("net_local_note").classList.toggle("hidden", wifi);
-    });
-  });
-
-  function startCountdown(expiresAt) {
-    clearInterval(countdownTimer);
-    const expiry = new Date(expiresAt).getTime();
-
-    const tick = () => {
-      const remaining = Math.floor((expiry - Date.now()) / 1000);
-      if (remaining <= 0) {
-        countdown.textContent = "Expired — generate a new code";
-        countdown.className = "mt-3 text-center text-sm font-medium text-red-400";
-        $("qr").style.opacity = "0.25";
-        clearInterval(countdownTimer);
-        return;
-      }
-      const mins = String(Math.floor(remaining / 60)).padStart(2, "0");
-      const secs = String(remaining % 60).padStart(2, "0");
-      countdown.textContent = `Expires in ${mins}:${secs}`;
-      countdown.className = "mt-3 text-center text-sm text-slate-400";
-    };
-
-    tick();
-    countdownTimer = setInterval(tick, 1000);
-  }
-
-  const MODE_LABELS = {
-    card_and_face: "Card + face",
-    card_only: "Card only",
-    face_only: "Face only",
-    time_registry: "Time registry",
-  };
-
-  function buildNetworkProfile() {
-    const mode = document.querySelector("input[name=net_mode]:checked").value;
-    if (mode === "wifi") {
-      return {
-        mode: "wifi",
-        wifi: { ssid: $("wifi_ssid").value.trim(), password: $("wifi_password").value },
-      };
-    }
-    return { mode: "local" };
-  }
-
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     errorBox.classList.add("hidden");
-
     const customer = selectedName(customerSel);
     const site = selectedName(siteSel);
     const door = selectedName(doorSel);
-    if (!customer || !site || !door) {
-      return showError("Select a customer, site and door");
-    }
-
-    const netProfile = buildNetworkProfile();
-    if (netProfile.mode === "wifi" && (!netProfile.wifi.ssid || !netProfile.wifi.password)) {
-      return showError("Wi-Fi needs both a network name and a password");
-    }
-
-    const deviceMode = document.querySelector("input[name=device_mode]:checked").value;
-
-    const data = {
-      customer_id: customer,
-      site_id: site,
-      door_id: door,
-      device_mode: deviceMode,
-      network_profile: netProfile,
-      validity_minutes: Number($("validity_minutes").value),
-    };
-
+    if (!customer || !site || !door) return showError("Select a customer, site and door");
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+    clearInterval(countdownTimer);
     try {
-      const payload = await api("/devices/generate-qr", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+      const installation = await api("/installation", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({customer_id: customer, site_id: site, door_id: door,
+                              deviceType: $("device_type").value.trim()}),
       });
-
-      $("qr").src = payload.qr_png;
-      $("qr").style.opacity = "1";
-      $("payload").textContent = JSON.stringify(payload.payload, null, 2);
-
-      const net = payload.payload.network_profile || {};
-      const netLabel = net.mode === "wifi"
-        ? `Wi-Fi — ${net.wifi ? net.wifi.ssid : ""}`
-        : "Local (LAN cable)";
-
+      $("qr").src = installation.qr_png;
+      $("payload").textContent = JSON.stringify(installation.payload, null, 2);
       $("meta").innerHTML = [
-        ["Door", payload.payload.door_id],
-        ["Site", payload.payload.site_id],
-        ["Customer", payload.payload.customer_id],
-        ["Mode", MODE_LABELS[deviceMode] || deviceMode],
-        ["Network", netLabel],
-        ["Registers at", payload.payload.server_url],
-        ["Expires", payload.expires_at],
-      ].map(([key, value]) => `
-        <div class="flex gap-3">
-          <dt class="w-28 shrink-0 text-slate-500">${key}</dt>
-          <dd class="min-w-0 break-all text-slate-300">${escapeHtml(value)}</dd>
-        </div>`).join("");
-
+        ["Installation", installation._id], ["Door", door], ["Site", site],
+        ["Customer", customer], ["Mode", "Face only"], ["Network", "Local"],
+        ["Server", installation.payload.serverLink],
+      ].map(([key, value]) => `<div class="flex gap-3"><dt class="w-28 shrink-0 text-slate-500">${key}</dt><dd class="break-all text-slate-300">${escapeHtml(value)}</dd></div>`).join("");
       result.classList.remove("hidden");
-      startCountdown(payload.expires_at);
+      countdown.textContent = "Waiting for device to pair?";
+      countdownTimer = setInterval(async () => {
+        try {
+          const state = await api(`/installation/${encodeURIComponent(installation._id)}`);
+          countdown.textContent = state.status === "paired" ? "Paired successfully" : state.status === "pending" ? "Waiting for device to pair?" : "Installation replaced ? generate a new QR";
+          if (state.status !== "pending") clearInterval(countdownTimer);
+        } catch (_) { countdown.textContent = "Connection lost ? checking again?"; }
+      }, 3000);
     } catch (err) {
       showError("Could not generate: " + err.message);
-    }
+    } finally { button.disabled = false; }
   });
 
   // Initial load

@@ -37,13 +37,13 @@ SIMULATE_CARD_READER = CARD_READER_BACKEND == "simulated"
 #   "card_only"     -> valid card opens the relay immediately; no face step,
 #                      no session, no camera (FR-MODE-03).
 #   "card_and_face" -> valid card starts a session and verifies the live face
-#                      1:1 against that cardholder (FR-MODE-04). Production default.
+#                      1:1 against that cardholder (FR-MODE-04).
 #   "face_only"     -> a screen tap starts a face-only (1:N) session; no card
-#                      reader is present or used (FR-MODE-05).
+#                      reader is present or used (FR-MODE-05). Current default.
 #   "time_registry" -> the user picks IN/OUT on screen, then taps a card; the
 #                      direction is journalled as an attendance_event and the
 #                      relay is never actuated (FR-MODE-06..08).
-DEVICE_MODE = "card_and_face"
+DEVICE_MODE = "face_only"
 
 DEVICE_MODES = ("card_only", "card_and_face", "face_only", "time_registry")
 
@@ -139,11 +139,7 @@ PREVIEW_LEAD_IN_MS = 700
 INIT_MODE_ENABLED = True
 INIT_MODE_DURATION_SEC = 8.0
 
-# Directory of trusted issuer public keys for provisioning QR verification.
-# Each file must be named "<key_id>.pem" (Ed25519 SubjectPublicKeyInfo PEM),
-# where <key_id> matches the QR payload's signature.key_id. See
-# qr_scanner/qr_scanner.py and other/qr_code_poc/issuer_keys.py.
-PROVISIONING_PUBLIC_KEYS_DIR = "provisioning_keys"
+# Installation QRs are unsigned; no device-side provisioning trust store.
 
 # =====================================================
 # Logging (see observability/README.md)
@@ -230,7 +226,7 @@ APP_VERSION = "face-guard-0.1.0"
 # registers. Leave False on dev machines -- it would reconfigure the host's
 # networking. Set True only on the Raspberry Pi kiosk. A "local" profile (LAN
 # cable) is always a no-op regardless of this flag.
-APPLY_NETWORK_PROFILE = True
+APPLY_NETWORK_PROFILE = False
 
 # Seconds to wait for the Wi-Fi connection to come up after nmcli is invoked.
 NETWORK_APPLY_TIMEOUT_SEC = 30

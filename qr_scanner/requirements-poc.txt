@@ -1,0 +1,3 @@
+# Standalone PoC only; no Qt, cryptography, GPIO or rsid_py needed for webcam/image input.
+numpy
+opencv-python

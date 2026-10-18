@@ -50,7 +50,7 @@ def client():
     conn = db.connect()
     try:
         conn.executescript(
-            "DELETE FROM tokens; DELETE FROM devices; "
+            "DELETE FROM installations; DELETE FROM tokens; DELETE FROM devices; "
             "DELETE FROM status_history; DELETE FROM events; "
             "DELETE FROM doors; DELETE FROM sites; DELETE FROM customers;"
         )

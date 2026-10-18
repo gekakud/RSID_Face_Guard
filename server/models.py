@@ -135,6 +135,7 @@ class StatusResponse(BaseModel):
 
 class DeviceSummary(BaseModel):
     device_id: str
+    serial: Optional[str] = None
     name: Optional[str] = None
     customer_id: Optional[str] = None
     site_id: Optional[str] = None

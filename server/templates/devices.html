@@ -38,6 +38,10 @@
     </tbody>
   </table>
 </div>
+<div class="mt-6 rounded-xl border border-slate-800 p-4">
+  <h2 class="text-sm font-medium text-slate-300">Pending installations</h2>
+  <div id="installations" class="mt-2 text-sm text-slate-400">Loading?</div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -110,7 +114,7 @@
         <td class="px-4 py-3">${statusCell}</td>
         <td class="px-4 py-3 text-slate-400">${relativeAge(device.last_seen_age_sec)}</td>
         <td class="px-4 py-3 text-slate-400">${dash(device.fw_version)}</td>
-        <td class="px-4 py-3 font-mono text-xs text-slate-500">${dash(device.mac)}</td>
+        <td class="px-4 py-3 font-mono text-xs text-slate-500">${dash(device.mac)}<div>${dash(device.serial)}</div></td>
         <td class="px-4 py-3 text-right">${actionCell}</td>
       </tr>`;
   }
@@ -142,6 +146,13 @@
       const response = await fetch("/devices", { headers: { Accept: "application/json" } });
       if (!response.ok) throw new Error(response.status);
       const devices = await response.json();
+      const pendingResponse = await fetch("/installation");
+      if (pendingResponse.ok) {
+        const pending = (await pendingResponse.json()).filter(i => i.status === "pending");
+        document.getElementById("installations").innerHTML = pending.length
+          ? pending.map(i => `<p>${escapeHtml(i.gate.name)} ? ${escapeHtml(i.deviceType)} ? <span class="font-mono">${escapeHtml(i._id)}</span></p>`).join("")
+          : "No pending installations";
+      }
 
       rows.innerHTML = devices.length ? devices.map(renderRow).join("") : emptyState;
       const online = devices.filter((d) => d.online).length;

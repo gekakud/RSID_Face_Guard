@@ -99,6 +99,18 @@ CREATE INDEX IF NOT EXISTS idx_devices_token  ON devices(token_hash);
 CREATE INDEX IF NOT EXISTS idx_events_device  ON events(device_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_sites_customer ON sites(customer_id);
 CREATE INDEX IF NOT EXISTS idx_doors_site     ON doors(site_id);
+
+CREATE TABLE IF NOT EXISTS installations (
+  installation_id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL,
+  site_id TEXT NOT NULL,
+  door_id TEXT NOT NULL,
+  device_type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  device_id TEXT,
+  created_at TEXT NOT NULL,
+  paired_at TEXT
+);
 """
 
 
@@ -152,6 +164,10 @@ def init_db() -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(devices)")}
+        if "serial" not in columns:
+            conn.execute("ALTER TABLE devices ADD COLUMN serial TEXT")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_serial ON devices(serial) WHERE serial IS NOT NULL AND serial != ''")
         conn.commit()
         _seed_defaults(conn)
     finally:

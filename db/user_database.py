@@ -158,7 +158,10 @@ class UserDatabase:
         if self._sync_thread is None:
             return
         self._sync_stop_event.set()
-        self._sync_thread.join(timeout=2)
+        # Rebinding must not leave an old in-flight fetch able to overwrite
+        # the new installation's cache. HTTP fetches have bounded timeouts.
+        timeout = getattr(self._remote, "timeout_sec", 10)
+        self._sync_thread.join(timeout=timeout + 1)
         self._sync_thread = None
 
     def detach_remote(self) -> None:

@@ -28,69 +28,56 @@ from observability.logging_setup import get_logger
 
 log = get_logger("card")
 
-import sys
-
+import importlib
 import config
 
-if config.CARD_READER_BACKEND == "simulated":
-    from card_backends_impl.card_read_write_simulator import (
-        initialize_card_reader as _initialize_card_reader,
-        get_card_id as _get_card_id,
-        disconnect_card_reader as _disconnect_card_reader,
-        initialize_wiegand_tx as _initialize_wiegand_tx,
-        send_w32 as _send_w32,
-        close_wiegand_tx as _close_wiegand_tx,
-    )
-elif config.CARD_READER_BACKEND == "gwiot_hid":
-    try:
-        from card_backends_impl.gwiot_hid_card_reader import (
-            initialize_card_reader as _initialize_card_reader,
-            get_card_id as _get_card_id,
-            disconnect_card_reader as _disconnect_card_reader,
-        )
-        from card_backends_impl.wiegand_card_writer import (
-            initialize_wiegand_tx as _initialize_wiegand_tx,
-            send_w32 as _send_w32,
-            close_wiegand_tx as _close_wiegand_tx,
-        )
-    except ImportError:
-        log.critical("GWIOT HID card reader backend not available.")
-        sys.exit(1)
-elif config.CARD_READER_BACKEND == "wiegand_gpio":
-    try:
-        from card_backends_impl.wiegand_card_reader import (
-            initialize_card_reader as _initialize_card_reader,
-            get_card_id as _get_card_id,
-            disconnect_card_reader as _disconnect_card_reader,
-        )
-        from card_backends_impl.wiegand_card_writer import (
-            initialize_wiegand_tx as _initialize_wiegand_tx,
-            send_w32 as _send_w32,
-            close_wiegand_tx as _close_wiegand_tx,
-        )
-    except ImportError:
-        log.critical("Wiegand GPIO card reader backend not available.")
-        sys.exit(1)
-else:
-    log.critical("Unknown CARD_READER_BACKEND: %r", config.CARD_READER_BACKEND)
-    sys.exit(1)
+_reader = None
+_writer = None
 
-# card reader API
+
+def _reader_module():
+    global _reader
+    if _reader is None:
+        names = {
+            "simulated": "card_read_write_simulator",
+            "gwiot_hid": "gwiot_hid_card_reader",
+            "wiegand_gpio": "wiegand_card_reader",
+        }
+        if config.CARD_READER_BACKEND not in names:
+            raise ValueError(f"Unknown CARD_READER_BACKEND: {config.CARD_READER_BACKEND!r}")
+        _reader = importlib.import_module("card_backends_impl." + names[config.CARD_READER_BACKEND])
+    return _reader
+
+
+def _writer_module():
+    global _writer
+    if _writer is None:
+        name = "card_read_write_simulator" if config.CARD_READER_BACKEND == "simulated" else "wiegand_card_writer"
+        _writer = importlib.import_module("card_backends_impl." + name)
+    return _writer
+
+
 def initialize_card_reader():
-    return _initialize_card_reader()
+    return _reader_module().initialize_card_reader()
+
 
 def get_card_id(timeout=None):
-    return _get_card_id(timeout=timeout)
+    return _reader_module().get_card_id(timeout=timeout)
+
 
 def disconnect_card_reader():
-    return _disconnect_card_reader()
+    if _reader is not None:
+        return _reader.disconnect_card_reader()
 
-# Wiegand card writer API
+
 def initialize_wiegand_writer():
-    return _initialize_wiegand_tx()
+    return _writer_module().initialize_wiegand_tx()
+
 
 def send_w32(value: int):
-    return _send_w32(value)
+    return _writer_module().send_w32(value)
+
 
 def close_wiegand_writer():
-    return _close_wiegand_tx()
+    if _writer is not None:
+        return _writer.close_wiegand_tx()

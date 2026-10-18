@@ -42,6 +42,12 @@ def _frame(data_uri: str):
     return np.array(Image.open(io.BytesIO(png)).convert("RGB"))
 
 
+def _legacy_decode(frame):
+    import json
+    from pyzbar.pyzbar import decode, ZBarSymbol
+    return json.loads(decode(frame, symbols=[ZBarSymbol.QRCODE])[0].data)
+
+
 def _register(client, qr_body, **overrides):
     body = {
         "token": qr_body["token"],
@@ -98,9 +104,9 @@ def test_pending_tokens_lists_unredeemed(client, qr):
 # =====================================================
 
 @needs_device_verifier
-def test_real_device_verifier_accepts_our_qr(qr):
+def test_legacy_signed_qr_remains_decodable(qr):
     body = qr()
-    scanned = QRScanner().scan(_frame(body["qr_png"]))
+    scanned = _legacy_decode(_frame(body["qr_png"]))
 
     assert scanned is not None, "the device would reject this QR"
     assert scanned["provisioning_token"] == body["token"]
@@ -108,7 +114,7 @@ def test_real_device_verifier_accepts_our_qr(qr):
 
 
 @needs_device_verifier
-def test_every_generated_qr_is_readable_by_the_device(qr):
+def test_every_legacy_signed_qr_is_decodable(qr):
     """The regression test for signing._decodes().
 
     The server re-signs with a fresh nonce until the decoder reads the image it
@@ -119,13 +125,13 @@ def test_every_generated_qr_is_readable_by_the_device(qr):
     """
     for index in range(25):
         body = qr(door_id=f"door-{index:03d}")
-        assert QRScanner().scan(_frame(body["qr_png"])) is not None, (
+        assert _legacy_decode(_frame(body["qr_png"])) is not None, (
             f"generated an undecodable QR on sample {index}"
         )
 
 
 @needs_device_verifier
-def test_real_device_verifier_accepts_a_rescanned_qr(qr):
+def test_legacy_qr_can_be_decoded_again(qr):
     """T19: replay protection is server-side, not on the device.
 
     A re-scan is legitimate (the camera sees the same code many times per
@@ -133,10 +139,8 @@ def test_real_device_verifier_accepts_a_rescanned_qr(qr):
     what stops an actual replay, at registration.
     """
     frame = _frame(qr()["qr_png"])
-    scanner = QRScanner()
-
-    assert scanner.scan(frame) is not None
-    assert scanner.scan(frame) is not None
+    assert _legacy_decode(frame) is not None
+    assert _legacy_decode(frame) is not None
 
 
 @needs_device_verifier
@@ -471,12 +475,12 @@ def test_network_profile_persists_to_device(client, qr):
     assert device["network_profile"]["wifi"]["ssid"] == "acme-guest"
 
 @needs_device_verifier
-def test_wifi_profile_round_trips_through_device_verifier(qr):
+def test_legacy_wifi_qr_remains_decodable(qr):
     body = qr(network_profile={
         "mode": "wifi",
         "wifi": {"ssid": "acme-guest", "password": "s3cr3t"},
     })
-    scanned = QRScanner().scan(_frame(body["qr_png"]))
+    scanned = _legacy_decode(_frame(body["qr_png"]))
     assert scanned is not None
     assert scanned["network_profile"]["wifi"]["ssid"] == "acme-guest"
 

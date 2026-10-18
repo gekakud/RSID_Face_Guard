@@ -55,6 +55,11 @@ class DeviceIdentity:
     device_mode: str = ""
     registered_at: str = ""
     heartbeat_interval_sec: int = 30
+    identity_version: int = 1
+    installation_id: str = ""
+    serial: str = ""
+    mac: str = ""
+    device_type: str = ""
 
     @property
     def status_url(self) -> str:
@@ -81,6 +86,9 @@ def load() -> Optional[DeviceIdentity]:
     # Tolerate unknown keys so a newer server adding a field can't stop an
     # already-bound device from booting.
     known = {f.name for f in fields(DeviceIdentity)}
+    if not isinstance(data, dict):
+        log.error("Device identity is not a JSON object")
+        return None
     filtered = {k: v for k, v in data.items() if k in known}
 
     try:

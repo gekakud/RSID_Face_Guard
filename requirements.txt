@@ -44,6 +44,5 @@ gpiozero
 # (qr_scanner/qr_scanner.py).
 pyzbar
 
-# Ed25519 signature verification for provisioning QR codes
-# (qr_scanner/qr_scanner.py).
-cryptography
+# Installation QRs are unsigned; no device-side cryptography is required.
+# Legacy server signing keeps its dependency in server/requirements.txt.

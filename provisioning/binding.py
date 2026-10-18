@@ -39,6 +39,7 @@ class BindingManager:
         self._on_revoked_ui = on_revoked
         self.identity: Optional[DeviceIdentity] = None
         self._heartbeat: Optional[HeartbeatWorker] = None
+        self._binding_lock = threading.Lock()
 
     # ------------------------------------------------------------------ boot
 
@@ -71,9 +72,14 @@ class BindingManager:
         are responsible for marshalling it back (both GUIs use their
         _SignalBridge for exactly this).
         """
-        threading.Thread(
-            target=self._bind, args=(payload, on_done), name="binding", daemon=True
-        ).start()
+        if not self._binding_lock.acquire(blocking=False):
+            return
+        def run():
+            try:
+                self._bind(payload, on_done)
+            finally:
+                self._binding_lock.release()
+        threading.Thread(target=run, name="binding", daemon=True).start()
 
     def _bind(self, payload: dict, on_done: Callable[[bool, str], None]) -> None:
         try:
@@ -85,18 +91,18 @@ class BindingManager:
                     self.identity.device_id, self.identity.door_id,
                 )
 
-            new_identity = client.register(payload, device_type=self.device_type)
+            new_identity = client.pair(payload)
 
+            # Join the old worker before replacing credentials: a late 410 from
+            # that worker must not erase the newly saved identity.
+            self._stop_heartbeat(config.REMOTE_TIMEOUT_SEC + 1)
             if not identity_store.save(new_identity):
-                # (heartbeat for any previous binding is left running -- the old
-                # identity is still the one on disk, so it is still the truth)
-                # Registration succeeded server-side but we can't persist it, so
-                # the next boot would silently come back unbound. Say so rather
-                # than showing a success message that won't survive a reboot.
-                on_done(False, "Registered, but could not save credentials")
+                # Keep the prior local identity and resume its worker. The
+                # server may have rotated its token, so recovery needs a scan.
+                self._start_heartbeat()
+                on_done(False, "Paired on server, but could not save credentials; scan again to recover")
                 return
 
-            self._stop_heartbeat()
             self.identity = new_identity
             self._start_heartbeat()
 
@@ -109,10 +115,13 @@ class BindingManager:
                     "Provisioned mode %s differs from running mode %s -- restart required",
                     new_mode, config.DEVICE_MODE,
                 )
-                on_done(True, f"Device registered\n{door}\nRestart for {new_mode}")
+                on_done(True, f"Device paired\n{door}\nRestart for {new_mode}")
                 return
 
-            on_done(True, f"Device registered\n{door}")
+            message = f"Device paired\n{door}"
+            if not new_identity.device_token:
+                message += "\nDatabase credentials not provided by server"
+            on_done(True, message)
 
         except client.RegistrationError as exc:
             log.error("Registration failed: %s", exc)
@@ -124,7 +133,7 @@ class BindingManager:
     # ------------------------------------------------------------- heartbeat
 
     def _start_heartbeat(self) -> None:
-        if self.identity is None:
+        if self.identity is None or not self.identity.device_token:
             return
         self._heartbeat = HeartbeatWorker(
             self.identity,

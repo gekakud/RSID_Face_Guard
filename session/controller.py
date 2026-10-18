@@ -578,8 +578,8 @@ class SessionController:
         if not self._init_mode_active:
             return
         log.info(
-            "Provisioning QR detected during init mode: door_id=%s site_id=%s customer_id=%s",
-            payload.get("door_id"), payload.get("site_id"), payload.get("customer_id"),
+            "Installation QR detected: installation_id=%s device_type=%s",
+            payload.get("installationId"), payload.get("deviceType"),
         )
         # Stop scanning immediately so a second frame can't start a second
         # registration with the same single-use token.
