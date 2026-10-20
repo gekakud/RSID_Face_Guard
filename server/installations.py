@@ -10,7 +10,7 @@ import qrcode
 from fastapi import Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from server import config, db, timeutil, user_store
+from server import config, db, models, timeutil, user_store
 
 
 class CreateInstallation(BaseModel):
@@ -18,6 +18,9 @@ class CreateInstallation(BaseModel):
     site_id: str = Field(min_length=1, max_length=64)
     door_id: str = Field(min_length=1, max_length=64)
     deviceType: str = Field(default="Genie Door Camera Lite", min_length=1, max_length=128)
+    # Per-door operating mode (FR-MODE-01). Carried through the QR so an
+    # attendance terminal can be paired as time_registry, not just face_only.
+    device_mode: models.DeviceMode = models.DEFAULT_DEVICE_MODE
 
 
 class PairInstallation(BaseModel):
@@ -34,6 +37,7 @@ def _summary(row):
         "venue": row["site_id"],
         "gate": {"_id": row["door_id"], "name": row["door_id"], "status": True},
         "status": row["status"], "device": row["device_id"],
+        "device_mode": row["device_mode"] or models.DEFAULT_DEVICE_MODE,
         "timeStamp": row["paired_at"] or row["created_at"],
     }
 
@@ -46,9 +50,10 @@ def install_routes(app, require_admin, hash_token):
         with conn:
             conn.execute(
                 """INSERT INTO installations
-                (installation_id, customer_id, site_id, door_id, device_type, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)""",
-                (installation_id, body.customer_id, body.site_id, body.door_id, body.deviceType, now),
+                (installation_id, customer_id, site_id, door_id, device_type, device_mode, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (installation_id, body.customer_id, body.site_id, body.door_id,
+                 body.deviceType, body.device_mode, now),
             )
         payload = {"installationId": installation_id, "deviceType": body.deviceType,
                    "serverLink": config.PUBLIC_BASE_URL}
@@ -86,6 +91,7 @@ def install_routes(app, require_admin, hash_token):
             if replay and (hardware is None or hardware["device_id"] != installation["device_id"]
                            or hardware["mac"] != mac or hardware["state"] != "active"):
                 raise HTTPException(409, "Installation is already paired or device was removed; generate a new QR")
+            device_mode = installation["device_mode"] or models.DEFAULT_DEVICE_MODE
             device_id = hardware["device_id"] if hardware else secrets.token_hex(12)
             if not replay:
                 conn.execute("UPDATE installations SET status = 'replaced' WHERE device_id = ? AND status = 'paired'",
@@ -93,17 +99,17 @@ def install_routes(app, require_admin, hash_token):
             conn.execute(
                 """INSERT INTO devices
                 (device_id, name, customer_id, site_id, door_id, device_mode,
-                 network_profile, token_hash, mac, serial, device_type, registered_at, ip_address)
-                VALUES (?, ?, ?, ?, ?, 'face_only', ?, ?, ?, ?, ?, ?, ?)
+                 token_hash, mac, serial, device_type, registered_at, ip_address)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(device_id) DO UPDATE SET
                   name=excluded.name, customer_id=excluded.customer_id, site_id=excluded.site_id,
                   door_id=excluded.door_id, device_mode=excluded.device_mode,
-                  network_profile=excluded.network_profile, token_hash=excluded.token_hash,
+                  token_hash=excluded.token_hash,
                   mac=excluded.mac, device_type=excluded.device_type,
                   registered_at=excluded.registered_at, ip_address=excluded.ip_address,
                   state='active', suspended_at=NULL, last_seen_at=NULL, status=NULL, metadata=NULL""",
                 (device_id, installation["door_id"], installation["customer_id"],
-                 installation["site_id"], installation["door_id"], '{"mode":"local"}',
+                 installation["site_id"], installation["door_id"], device_mode,
                  hash_token(token), mac, serial, installation["device_type"], now,
                  request.client.host if request.client else None),
             )
@@ -116,7 +122,7 @@ def install_routes(app, require_admin, hash_token):
                                        (body.installationId,)).fetchone())
         # Render compatibility extensions for the existing users/status API.
         result.update(device_token=token, heartbeat_interval_sec=config.HEARTBEAT_INTERVAL_SEC,
-                      device_mode="face_only", network_profile={"mode": "local"})
+                      device_mode=device_mode)
         return result
 
     @app.get("/installation/{installation_id}", dependencies=[Depends(require_admin)])

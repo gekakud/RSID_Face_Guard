@@ -21,7 +21,6 @@ from provisioning import binding as binding_mod
 from provisioning import client as device_client
 from provisioning import identity as identity_store
 from server import config as server_config
-from server import signing
 from server.main import app
 
 
@@ -67,75 +66,30 @@ def device_env(tmp_path, monkeypatch, live_server):
     return live_server
 
 
-def _issue_qr(base_url, door_id="main-entrance", validity_minutes=10):
-    """Mint a token the same way POST /devices/generate-qr does."""
+def _issue_installation(base_url, door_id="main-entrance", **extra):
+    """Create an installation and return its unsigned QR payload."""
     import requests
 
-    response = requests.post(
-        f"{base_url}/devices/generate-qr",
-        json={
-            "customer_id": "acme",
-            "site_id": "hq",
-            "door_id": door_id,
-            "network_profile": {
-                "mode": "wifi",
-                "wifi": {"ssid": "acme-guest", "password": "s3cr3t"},
-            },
-            "validity_minutes": validity_minutes,
-        },
-        timeout=10,
-    )
+    body = {"customer_id": "acme", "site_id": "hq", "door_id": door_id}
+    body.update(extra)
+    response = requests.post(f"{base_url}/installation", json=body, timeout=10)
     response.raise_for_status()
     return response.json()["payload"]
+
+
+def _pair(base_url, door_id="main-entrance"):
+    """Pair a fresh device against the live server and return its identity."""
+    return device_client.pair(_issue_installation(base_url, door_id))
 
 
 # =====================================================
 # provisioning/client.py
 # =====================================================
 
-def test_register_over_real_http(device_env):
-    payload = _issue_qr(device_env)
-
-    identity = device_client.register(payload, device_type="F455")
-
-    assert identity.device_id
-    assert identity.device_token
-    assert identity.server_url == device_env
-    assert identity.door_id == "main-entrance"
-    assert identity.heartbeat_interval_sec > 0
-
-
-def test_register_rejects_reused_token(device_env):
-    payload = _issue_qr(device_env)
-    device_client.register(payload)
-
-    with pytest.raises(device_client.RegistrationError) as excinfo:
-        device_client.register(payload)
-    # The installer needs to see *why*, not just that it failed.
-    assert "already used" in str(excinfo.value)
-
-
-def test_register_reports_unreachable_server(device_env):
-    payload = _issue_qr(device_env)
-    payload["server_url"] = f"http://127.0.0.1:{_free_port()}"  # nothing listening
-
-    with pytest.raises(device_client.RegistrationError) as excinfo:
-        device_client.register(payload)
-    assert "unreachable" in str(excinfo.value).lower()
-
-
-def test_register_rejects_payload_without_server_url(device_env):
-    payload = _issue_qr(device_env)
-    payload["server_url"] = ""
-
-    with pytest.raises(device_client.RegistrationError):
-        device_client.register(payload)
-
-
 def test_post_status_reaches_the_dashboard(device_env):
     import requests
 
-    identity = device_client.register(_issue_qr(device_env))
+    identity = _pair(device_env)
 
     assert device_client.post_status(identity, "online", {"user_count": 7}) is True
 
@@ -145,7 +99,7 @@ def test_post_status_reaches_the_dashboard(device_env):
 
 
 def test_post_status_returns_false_on_bad_token(device_env):
-    identity = device_client.register(_issue_qr(device_env))
+    identity = _pair(device_env)
     identity.device_token = "not-the-real-token"
 
     # Must not raise -- a heartbeat failure can never be allowed to reach the kiosk.
@@ -155,7 +109,7 @@ def test_post_status_raises_revoked_after_removal(device_env):
     """A removed device's heartbeat gets 410, surfaced as DeviceRevokedError."""
     import requests
 
-    identity = device_client.register(_issue_qr(device_env))
+    identity = _pair(device_env)
     # First beat is fine.
     assert device_client.post_status(identity, "online", {}) is True
 
@@ -172,7 +126,7 @@ def test_post_status_raises_revoked_after_removal(device_env):
 # =====================================================
 
 def test_identity_round_trips(device_env):
-    identity = device_client.register(_issue_qr(device_env))
+    identity = _pair(device_env)
     assert identity_store.save(identity) is True
 
     loaded = identity_store.load()
@@ -190,7 +144,7 @@ def test_load_tolerates_unknown_fields(device_env):
     """A newer server adding a field must not stop an existing device booting."""
     import json
 
-    identity = device_client.register(_issue_qr(device_env))
+    identity = _pair(device_env)
     identity_store.save(identity)
 
     path = identity_store.identity_path()
@@ -215,15 +169,6 @@ def test_load_returns_none_on_corrupt_file(device_env):
 # =====================================================
 # provisioning/binding.py -- the flow the GUIs call
 # =====================================================
-
-def _issue_installation(base_url, door_id="main-entrance"):
-    import requests
-    response = requests.post(f"{base_url}/installation", json={
-        "customer_id": "acme", "site_id": "hq", "door_id": door_id,
-    }, timeout=10)
-    response.raise_for_status()
-    return response.json()["payload"]
-
 
 def _bind_and_wait(manager, payload, timeout=15):
     """Run bind_async and block until its callback fires."""

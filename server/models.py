@@ -4,33 +4,9 @@ These double as the API contract documented in server/README.md -- the device
 side will send exactly these shapes.
 """
 
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
-
-from server import config
-
-
-# ------------------------------------------------------- network profile
-
-class WifiCredentials(BaseModel):
-    ssid: str = Field(min_length=1, max_length=64)
-    password: str = Field(min_length=1, max_length=128)
-
-
-class WifiNetworkProfile(BaseModel):
-    """The device should join this Wi-Fi network to reach the server."""
-    mode: Literal["wifi"] = "wifi"
-    wifi: WifiCredentials
-
-
-class LocalNetworkProfile(BaseModel):
-    """The device is on a LAN cable and already has internet; nothing to apply."""
-    mode: Literal["local"] = "local"
-
-
-# Discriminated on "mode": wifi requires ssid+password, local requires nothing.
-NetworkProfile = Union[WifiNetworkProfile, LocalNetworkProfile]
 
 
 # ---------------------------------------------------------- device mode
@@ -76,51 +52,6 @@ class Door(BaseModel):
 
 # ---------------------------------------------------------------- dashboard ->
 
-class GenerateQRRequest(BaseModel):
-    # The human-readable names (as selected in the dashboard) are what get
-    # signed into the QR and stored on the device -- see server/README.md.
-    customer_id: str = Field(min_length=1, max_length=64)
-    site_id: str = Field(min_length=1, max_length=64)
-    door_id: str = Field(min_length=1, max_length=64)
-    device_mode: DeviceMode = DEFAULT_DEVICE_MODE
-    network_profile: NetworkProfile = Field(
-        default_factory=LocalNetworkProfile,
-        discriminator="mode",
-    )
-    validity_minutes: int = Field(default=config.DEFAULT_VALIDITY_MINUTES, ge=0, le=1440)
-
-
-class GenerateQRResponse(BaseModel):
-    token: str
-    nonce: str
-    issued_at: str
-    expires_at: str
-    payload: Dict[str, Any]      # the full signed QR payload, for debugging
-    qr_png: str                  # "data:image/png;base64,..." -- drop into <img src>
-
-
-# ------------------------------------------------------------------ device ->
-
-class RegisterRequest(BaseModel):
-    token: str = Field(min_length=1)
-    nonce: Optional[str] = None          # cross-checked against the token row
-    mac: Optional[str] = None
-    device_type: Optional[str] = None
-    fw_version: Optional[str] = None
-    app_version: Optional[str] = None
-
-
-class RegisterResponse(BaseModel):
-    device_id: str
-    device_token: str                    # returned once, never retrievable again
-    heartbeat_interval_sec: int
-    customer_id: str
-    site_id: str
-    door_id: str
-    device_mode: str                     # per-door operating mode (FR-MODE-01)
-    registered_at: str
-
-
 class StatusRequest(BaseModel):
     status: str = Field(default="online", max_length=64)
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -141,7 +72,6 @@ class DeviceSummary(BaseModel):
     site_id: Optional[str] = None
     door_id: Optional[str] = None
     device_mode: Optional[str] = None
-    network_profile: Dict[str, Any] = Field(default_factory=dict)
     mac: Optional[str] = None
     device_type: Optional[str] = None
     fw_version: Optional[str] = None
@@ -184,13 +114,3 @@ class ClearEventsResponse(BaseModel):
     ok: bool = True
     device_id: str
     deleted: int        # number of event rows removed
-
-
-class PendingToken(BaseModel):
-    token: str
-    customer_id: str
-    site_id: str
-    door_id: str
-    issued_at: str
-    expires_at: str
-    expired: bool

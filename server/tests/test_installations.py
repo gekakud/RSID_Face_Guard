@@ -36,8 +36,7 @@ def test_qr_pair_database_status_and_revoke(client):
     result = response.json()
     assert result["_id"] == installation["_id"]
     assert result["device"] != result["_id"]
-    assert result["device_mode"] == "face_only"
-    assert result["network_profile"] == {"mode": "local"}
+    assert result["device_mode"] == "card_and_face"   # server default
     headers = {"Authorization": "Bearer " + result["device_token"]}
     url = f"/devices/{result['device']}"
     assert client.get(url + "/users", headers=headers).json() == user_store.load_default_template()
@@ -114,8 +113,7 @@ def test_device_client_pairs_and_round_trips_identity(client, monkeypatch, tmp_p
     assert calls[0][0] == "http://testserver/installation/pair"
     assert set(calls[0][1]["json"]) == {"installationId", "mac", "serial"}
     assert "headers" not in calls[0][1]
-    assert identity.device_mode == "face_only"
-    assert identity.network_profile == {"mode": "local"}
+    assert identity.device_mode == "card_and_face"
     assert identity.serial == "dev-win-test"
     assert identity_store.save(identity)
     assert identity_store.load() == identity
@@ -205,8 +203,17 @@ def test_external_response_without_token_does_not_start_heartbeat(client, monkey
     assert identity.device_token == ""
 
 
-def test_production_scanner_rejects_legacy_signed_qr(qr):
-    old = qr()
-    png = base64.b64decode(old["qr_png"].split(",")[1])
-    frame = np.array(Image.open(io.BytesIO(png)).convert("RGB"))
+def test_production_scanner_rejects_legacy_signed_qr():
+    """The retired signed envelope must not be accepted by the shipping scanner."""
+    import json
+
+    import qrcode
+
+    legacy = {
+        "schema": "faceguard.provisioning.v1", "command": "provision",
+        "server_url": "http://testserver", "provisioning_token": "tok",
+        "nonce": "abc123", "sig": "ZmFrZS1zaWduYXR1cmU=", "key_id": "k1",
+    }
+    image = qrcode.make(json.dumps(legacy)).convert("RGB")
+    frame = np.array(image)
     assert QRScanner().scan(frame) is None

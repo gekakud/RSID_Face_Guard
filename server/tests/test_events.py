@@ -10,16 +10,10 @@ strips them from stored metadata, and serves them back (optionally filtered).
 import uuid
 
 
-def _register(client, qr):
-    """Register a device and return (device_id, device_token)."""
-    payload = qr()["payload"]
-    resp = client.post(
-        "/devices/register",
-        json={"token": payload["provisioning_token"], "nonce": payload["nonce"]},
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    return body["device_id"], body["device_token"]
+def _register(client, paired):
+    """Pair a device and return (device_id, device_token)."""
+    body = paired()
+    return body["device"], body["device_token"]
 
 
 def _event(event_type, **fields):
@@ -37,8 +31,8 @@ def _post_status(client, device_id, token, events, metadata=None):
     )
 
 
-def test_events_ingested_and_returned(client, qr):
-    device_id, token = _register(client, qr)
+def test_events_ingested_and_returned(client, paired):
+    device_id, token = _register(client, paired)
 
     sent = [
         _event("device_boot", app_version="face-guard-0.1.0"),
@@ -61,8 +55,8 @@ def test_events_ingested_and_returned(client, qr):
     assert granted["received_at"]  # server stamped it
 
 
-def test_events_stripped_from_stored_metadata(client, qr):
-    device_id, token = _register(client, qr)
+def test_events_stripped_from_stored_metadata(client, paired):
+    device_id, token = _register(client, paired)
     _post_status(
         client, device_id, token,
         [_event("device_boot")],
@@ -75,8 +69,8 @@ def test_events_stripped_from_stored_metadata(client, qr):
     assert detail["metadata"]["user_count"] == 42
 
 
-def test_duplicate_event_id_is_idempotent(client, qr):
-    device_id, token = _register(client, qr)
+def test_duplicate_event_id_is_idempotent(client, paired):
+    device_id, token = _register(client, paired)
 
     ev = _event("qr_accepted", door_id="main")
     # Same event delivered twice (e.g. a beat whose response was lost, resent).
@@ -87,8 +81,8 @@ def test_duplicate_event_id_is_idempotent(client, qr):
     assert len(got) == 1
 
 
-def test_events_filter_by_type(client, qr):
-    device_id, token = _register(client, qr)
+def test_events_filter_by_type(client, paired):
+    device_id, token = _register(client, paired)
     _post_status(client, device_id, token, [
         _event("access_granted", user_id=47),
         _event("access_denied", reason="no_match"),
@@ -103,12 +97,12 @@ def test_events_filter_by_type(client, qr):
     assert len(denied) == 1
 
 
-def test_event_log_is_bounded(client, qr, monkeypatch):
+def test_event_log_is_bounded(client, paired, monkeypatch):
     from server import config, main
     monkeypatch.setattr(config, "EVENTS_LIMIT", 5)
     monkeypatch.setattr(main.config, "EVENTS_LIMIT", 5)
 
-    device_id, token = _register(client, qr)
+    device_id, token = _register(client, paired)
     # Post 12 events across a couple of beats; only the newest 5 survive.
     _post_status(client, device_id, token, [_event("device_boot") for _ in range(7)])
     _post_status(client, device_id, token, [_event("access_granted") for _ in range(5)])
@@ -117,8 +111,8 @@ def test_event_log_is_bounded(client, qr, monkeypatch):
     assert len(got) == 5
 
 
-def test_no_events_key_is_harmless(client, qr):
-    device_id, token = _register(client, qr)
+def test_no_events_key_is_harmless(client, paired):
+    device_id, token = _register(client, paired)
     # A plain heartbeat with no events at all must still succeed.
     resp = client.post(
         f"/devices/{device_id}/status",
@@ -129,8 +123,8 @@ def test_no_events_key_is_harmless(client, qr):
     assert client.get(f"/devices/{device_id}/events").json() == []
 
 
-def test_clear_events_removes_the_log(client, qr):
-    device_id, token = _register(client, qr)
+def test_clear_events_removes_the_log(client, paired):
+    device_id, token = _register(client, paired)
     _post_status(client, device_id, token, [
         _event("access_granted", user_id=47),
         _event("access_denied", reason="card_unregistered"),
@@ -150,8 +144,8 @@ def test_clear_events_removes_the_log(client, qr):
     assert client.get(f"/devices/{device_id}").status_code == 200
 
 
-def test_clear_events_is_idempotent(client, qr):
-    device_id, token = _register(client, qr)
+def test_clear_events_is_idempotent(client, paired):
+    device_id, token = _register(client, paired)
     # Clearing an already-empty log succeeds and reports zero removed.
     resp = client.delete(f"/devices/{device_id}/events")
     assert resp.status_code == 200, resp.text
@@ -163,9 +157,9 @@ def test_clear_events_unknown_device_404(client):
     assert resp.status_code == 404
 
 
-def test_clear_events_only_affects_target_device(client, qr):
-    dev_a, tok_a = _register(client, qr)
-    dev_b, tok_b = _register(client, qr)
+def test_clear_events_only_affects_target_device(client, paired):
+    dev_a, tok_a = _register(client, paired)
+    dev_b, tok_b = _register(client, paired)
     _post_status(client, dev_a, tok_a, [_event("access_granted")])
     _post_status(client, dev_b, tok_b, [_event("access_granted"), _event("device_boot")])
 

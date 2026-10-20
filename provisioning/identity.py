@@ -9,7 +9,7 @@ power cut mid-write can't leave a half-written file that bricks the next boot.
 import json
 import os
 import uuid
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, fields
 from typing import Optional
 
 import config
@@ -45,10 +45,6 @@ class DeviceIdentity:
     customer_id: str = ""
     site_id: str = ""
     door_id: str = ""
-    # How this device was told to reach the server ("wifi" + ssid/password, or
-    # "local"). Carried and stored for reference; applying it on the Pi is a
-    # separate concern.
-    network_profile: dict = field(default_factory=dict)
     # Per-door operating mode issued at registration (FR-MODE-01, T4). Empty
     # means "server said nothing" -- config.DEVICE_MODE stays in force. Applied
     # once at boot; a mode change requires re-binding and a restart.

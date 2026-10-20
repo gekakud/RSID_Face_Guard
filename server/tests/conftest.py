@@ -5,6 +5,7 @@ reads the environment at import time -- hence the work at module scope here.
 conftest.py is imported by pytest ahead of any test module, so this lands first.
 """
 
+import itertools
 import os
 import sys
 import tempfile
@@ -29,15 +30,8 @@ os.environ.pop("ADMIN_PASSWORD", None)
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-import config as device_config  # noqa: E402
 from server import db  # noqa: E402
 from server.main import app  # noqa: E402
-
-# Never let a test touch host networking. test_device_binding.py provisions with
-# a wifi profile, so with this flag on, network.apply() really shells out to
-# nmcli and deletes/recreates the live faceguard-wifi connection (FR-NET-03).
-# Tests that exercise the wifi path monkeypatch it back on with _run stubbed.
-device_config.APPLY_NETWORK_PROFILE = False
 
 
 @pytest.fixture()
@@ -50,7 +44,7 @@ def client():
     conn = db.connect()
     try:
         conn.executescript(
-            "DELETE FROM installations; DELETE FROM tokens; DELETE FROM devices; "
+            "DELETE FROM installations; DELETE FROM devices; "
             "DELETE FROM status_history; DELETE FROM events; "
             "DELETE FROM doors; DELETE FROM sites; DELETE FROM customers;"
         )
@@ -63,19 +57,26 @@ def client():
 
 
 @pytest.fixture()
-def qr(client):
-    """Generate a provisioning QR and return the parsed response body."""
+def paired(client):
+    """Create an installation, pair it, and return the pair response body.
 
-    def _generate(validity_minutes=10, **overrides):
-        body = {
-            "customer_id": "acme",
-            "site_id": "hq",
-            "door_id": "main-entrance",
-            "validity_minutes": validity_minutes,
-        }
+    Serials must be unique (devices.serial has a unique index), so each call
+    mints a fresh one rather than reusing a constant.
+    """
+    counter = itertools.count(1)
+
+    def _pair(door_id="main-entrance", **overrides):
+        body = {"customer_id": "acme", "site_id": "hq", "door_id": door_id}
         body.update(overrides)
-        response = client.post("/devices/generate-qr", json=body)
+        created = client.post("/installation", json=body)
+        assert created.status_code == 201, created.text
+        installation = created.json()
+        response = client.post("/installation/pair", json={
+            "installationId": installation["_id"],
+            "mac": "AA:BB:CC:DD:EE:%02X" % (next(counter) % 256),
+            "serial": "%016x" % (0x1234abcd0000 + next(counter)),
+        })
         assert response.status_code == 200, response.text
         return response.json()
 
-    return _generate
+    return _pair

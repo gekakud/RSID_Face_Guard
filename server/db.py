@@ -35,28 +35,13 @@ CREATE TABLE IF NOT EXISTS doors (
   UNIQUE (site_id, name)
 );
 
-CREATE TABLE IF NOT EXISTS tokens (
-  token           TEXT PRIMARY KEY,
-  nonce           TEXT UNIQUE NOT NULL,
-  customer_id     TEXT NOT NULL,
-  site_id         TEXT NOT NULL,
-  door_id         TEXT NOT NULL,
-  device_mode     TEXT,                -- per-door operating mode (FR-MODE-01)
-  network_profile TEXT,                -- JSON of the signed network_profile
-  issued_at       TEXT NOT NULL,
-  expires_at      TEXT NOT NULL,
-  used_at         TEXT,
-  device_id       TEXT
-);
-
 CREATE TABLE IF NOT EXISTS devices (
   device_id       TEXT PRIMARY KEY,
   name            TEXT,
   customer_id     TEXT,
   site_id         TEXT,
   door_id         TEXT,
-  device_mode     TEXT,                -- operating mode it was provisioned with
-  network_profile TEXT,                -- JSON of the network_profile it was given
+  device_mode     TEXT,                -- operating mode it was paired with
   token_hash      TEXT NOT NULL,
   mac             TEXT,
   device_type     TEXT,
@@ -106,6 +91,7 @@ CREATE TABLE IF NOT EXISTS installations (
   site_id TEXT NOT NULL,
   door_id TEXT NOT NULL,
   device_type TEXT NOT NULL,
+  device_mode TEXT,
   status TEXT NOT NULL DEFAULT 'pending',
   device_id TEXT,
   created_at TEXT NOT NULL,
@@ -167,6 +153,11 @@ def init_db() -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(devices)")}
         if "serial" not in columns:
             conn.execute("ALTER TABLE devices ADD COLUMN serial TEXT")
+        # Installations predating per-door modes have no column; back-fill it so
+        # pairing can carry time_registry (FR-MODE-01).
+        install_columns = {row["name"] for row in conn.execute("PRAGMA table_info(installations)")}
+        if "device_mode" not in install_columns:
+            conn.execute("ALTER TABLE installations ADD COLUMN device_mode TEXT")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_serial ON devices(serial) WHERE serial IS NOT NULL AND serial != ''")
         conn.commit()
         _seed_defaults(conn)

@@ -49,7 +49,17 @@
       <label class="{{ label }}" for="device_type">Device type</label>
       <input class="{{ field }}" id="device_type" value="Genie Door Camera Lite" required maxlength="128">
     </div>
-    <p class="text-sm text-slate-400">Face only ? Local network</p>
+
+    <!-- Operating mode the device is paired with (FR-MODE-01). -->
+    <div>
+      <label class="{{ label }}" for="device_mode">Mode</label>
+      <select class="{{ field }}" id="device_mode">
+        <option value="card_and_face" selected>Card and face</option>
+        <option value="card_only">Card only</option>
+        <option value="face_only">Face only</option>
+        <option value="time_registry">Time registry</option>
+      </select>
+    </div>
 
     <button type="submit"
             class="w-full rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-sky-500 disabled:opacity-50">
@@ -278,13 +288,15 @@
       const installation = await api("/installation", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({customer_id: customer, site_id: site, door_id: door,
-                              deviceType: $("device_type").value.trim()}),
+                              deviceType: $("device_type").value.trim(),
+                              device_mode: $("device_mode").value}),
       });
       $("qr").src = installation.qr_png;
       $("payload").textContent = JSON.stringify(installation.payload, null, 2);
       $("meta").innerHTML = [
         ["Installation", installation._id], ["Door", door], ["Site", site],
-        ["Customer", customer], ["Mode", "Face only"], ["Network", "Local"],
+        ["Customer", customer],
+        ["Mode", $("device_mode").selectedOptions[0].textContent],
         ["Server", installation.payload.serverLink],
       ].map(([key, value]) => `<div class="flex gap-3"><dt class="w-28 shrink-0 text-slate-500">${key}</dt><dd class="break-all text-slate-300">${escapeHtml(value)}</dd></div>`).join("");
       result.classList.remove("hidden");

@@ -4,16 +4,11 @@ fastapi
 uvicorn[standard]
 jinja2
 pydantic
-cryptography
 qrcode[pil]
 requests
 
-# Used to read back each QR we generate and confirm the device's own decoder
-# (pyzbar/zbar) can actually parse it before we hand it to an installer. See
-# signing._decodes(). pyzbar needs the system library libzbar0; where it's
-# unavailable (e.g. a plain Render Python runtime) the self-check degrades to
-# "skip" rather than failing. numpy is also used by the device-compatibility
-# tests, which import qr_scanner.
+# numpy/pyzbar are used by the tests, which decode a generated installation QR
+# through the device's own scanner (qr_scanner). pyzbar needs libzbar0.
 numpy
 pyzbar
 

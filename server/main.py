@@ -1,13 +1,12 @@
-"""FastAPI app: provisioning QR issuance, device registration, status intake,
-and the dashboard that displays it all.
+"""FastAPI app: installation pairing, status intake, and the dashboard.
 
 Route map
     GET    /                      dashboard: device list (HTML)
     GET    /new                   dashboard: generate a provisioning QR (HTML)
     GET    /device/{id}           dashboard: device detail (HTML)
 
-    POST   /devices/generate-qr   mint a one-time token + signed QR image
-    POST   /devices/register      device redeems the token, gets its credentials
+    POST   /installation          dashboard: create an installation + unsigned QR
+    POST   /installation/pair     device pairs by hardware serial + MAC
     POST   /devices/{id}/status   device heartbeat (Bearer device_token)
     GET    /devices/{id}/users    device: fetch its assigned face users (Bearer device_token)
     POST   /devices/{id}/users    dashboard: replace a device's assigned face users
@@ -16,7 +15,7 @@ Route map
     DELETE /devices/{id}          soft-delete (suspend) a device
     GET    /devices/{id}/events   recent device events, optionally filtered by type
     DELETE /devices/{id}/events   clear a device's stored event log
-    GET    /tokens                pending (unused, unexpired) tokens
+    GET    /installation          list installations
     GET    /healthz               unauthenticated liveness probe
 
     GET/POST /customers           customer CRUD (idempotent by name)
@@ -24,9 +23,9 @@ Route map
     GET/POST /doors?site_id=      door CRUD (idempotent by name within site)
 
     All dashboard endpoints above are HTTP-Basic-authed via require_admin when
-    ADMIN_USER/ADMIN_PASSWORD are set; device endpoints (register, status,
-    users GET) are authed differently -- the provisioning token or the
-    per-device Bearer device_token, respectively.
+    ADMIN_USER/ADMIN_PASSWORD are set. Device endpoints differ: /installation/pair
+    is unauthenticated (it is how a device obtains credentials), and status/users
+    use the per-device Bearer device_token.
 """
 
 import hashlib
@@ -48,7 +47,7 @@ from fastapi.security import (
 )
 from fastapi.templating import Jinja2Templates
 
-from server import config, db, models, signing, timeutil, user_store
+from server import config, db, models, timeutil, user_store
 from server.installations import install_routes
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -154,7 +153,6 @@ def _device_summary(row: sqlite3.Row) -> models.DeviceSummary:
         site_id=row["site_id"],
         door_id=row["door_id"],
         device_mode=row["device_mode"],
-        network_profile=_json_loads(row["network_profile"]),
         mac=row["mac"],
         device_type=row["device_type"],
         fw_version=row["fw_version"],
@@ -242,137 +240,6 @@ def device_auth(
 # =====================================================
 
 install_routes(app, require_admin, _hash_token)
-
-@app.post(
-    "/devices/generate-qr",
-    response_model=models.GenerateQRResponse,
-    dependencies=[Depends(require_admin)],
-)
-def generate_qr(
-    body: models.GenerateQRRequest,
-    conn: sqlite3.Connection = Depends(db.get_db),
-):
-    """Mint a one-time provisioning token and return it as a signed QR image."""
-    token = secrets.token_urlsafe(24)
-    network_profile = body.network_profile.model_dump()
-    # generate() may re-sign with a fresh nonce until it produces an image the
-    # device's decoder can actually read, so persist the payload it returns --
-    # not one built separately.
-    payload, qr_data_uri = signing.generate(
-        customer_id=body.customer_id,
-        site_id=body.site_id,
-        door_id=body.door_id,
-        provisioning_token=token,
-        validity_minutes=body.validity_minutes,
-        network_profile=network_profile,
-    )
-
-    conn.execute(
-        """INSERT INTO tokens
-               (token, nonce, customer_id, site_id, door_id, device_mode,
-                network_profile, issued_at, expires_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            token,
-            payload["nonce"],
-            body.customer_id,
-            body.site_id,
-            body.door_id,
-            body.device_mode,
-            json.dumps(network_profile, separators=(",", ":")),
-            payload["issued_at"],
-            payload["expires_at"],
-        ),
-    )
-    conn.commit()
-
-    return models.GenerateQRResponse(
-        token=token,
-        nonce=payload["nonce"],
-        issued_at=payload["issued_at"],
-        expires_at=payload["expires_at"],
-        payload=payload,
-        qr_png=qr_data_uri,
-    )
-
-
-@app.post("/devices/register", response_model=models.RegisterResponse)
-def register_device(
-    body: models.RegisterRequest,
-    request: Request,
-    conn: sqlite3.Connection = Depends(db.get_db),
-):
-    """Redeem a provisioning token and issue the device its long-lived credentials.
-
-    Expiry is re-checked here even though the device already verified the signed
-    expires_at -- a device could be replaying an old capture, so the server never
-    delegates that decision.
-    """
-    row = conn.execute("SELECT * FROM tokens WHERE token = ?", (body.token,)).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Unknown provisioning token")
-    if row["used_at"] is not None:
-        raise HTTPException(status_code=409, detail="Provisioning token already used")
-    if timeutil.is_expired(row["expires_at"]):
-        raise HTTPException(status_code=400, detail="Provisioning token expired")
-    if body.nonce is not None and body.nonce != row["nonce"]:
-        raise HTTPException(status_code=400, detail="Nonce does not match token")
-
-    device_id = str(uuid.uuid4())
-    device_token = secrets.token_urlsafe(32)
-    now = timeutil.now_ts()
-    # Tokens minted before device_mode existed have NULL here; fall back rather
-    # than handing the device an empty mode it would have to interpret.
-    device_mode = row["device_mode"] or models.DEFAULT_DEVICE_MODE
-
-    conn.execute(
-        """INSERT INTO devices
-               (device_id, name, customer_id, site_id, door_id, device_mode,
-                network_profile, token_hash, mac, device_type, fw_version,
-                app_version, ip_address, registered_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            device_id,
-            row["door_id"],
-            row["customer_id"],
-            row["site_id"],
-            row["door_id"],
-            device_mode,
-            row["network_profile"],
-            _hash_token(device_token),
-            body.mac,
-            body.device_type,
-            body.fw_version,
-            body.app_version,
-            _client_ip(request),
-            now,
-        ),
-    )
-    # Burn the token in the same transaction as the insert, so a crash between
-    # the two can't leave a redeemable token pointing at a live device.
-    conn.execute(
-        "UPDATE tokens SET used_at = ?, device_id = ? WHERE token = ?",
-        (now, device_id, body.token),
-    )
-    conn.commit()
-
-    # PoC seeding: every freshly-registered device starts with the server's
-    # default user template, so its very first sync already has data instead
-    # of needing a manual dashboard upload. Admin can replace it per-device
-    # later via POST /devices/{id}/users.
-    user_store.set_for_device(device_id, user_store.load_default_template())
-
-    return models.RegisterResponse(
-        device_id=device_id,
-        device_token=device_token,
-        heartbeat_interval_sec=config.HEARTBEAT_INTERVAL_SEC,
-        customer_id=row["customer_id"],
-        site_id=row["site_id"],
-        door_id=row["door_id"],
-        device_mode=device_mode,
-        registered_at=now,
-    )
-
 
 @app.get("/devices/{device_id}/users")
 def get_device_users(
@@ -654,30 +521,6 @@ def _purge_acknowledged(conn: sqlite3.Connection) -> None:
         conn.execute("DELETE FROM events WHERE device_id = ?", (device_id,))
         conn.execute("DELETE FROM devices WHERE device_id = ?", (device_id,))
     conn.commit()
-
-@app.get(
-    "/tokens",
-    response_model=List[models.PendingToken],
-    dependencies=[Depends(require_admin)],
-)
-def list_pending_tokens(conn: sqlite3.Connection = Depends(db.get_db)):
-    """Unredeemed tokens, so a half-finished enrollment is visible."""
-    rows = conn.execute(
-        "SELECT * FROM tokens WHERE used_at IS NULL ORDER BY issued_at DESC"
-    ).fetchall()
-    return [
-        models.PendingToken(
-            token=row["token"],
-            customer_id=row["customer_id"],
-            site_id=row["site_id"],
-            door_id=row["door_id"],
-            issued_at=row["issued_at"],
-            expires_at=row["expires_at"],
-            expired=timeutil.is_expired(row["expires_at"]),
-        )
-        for row in rows
-    ]
-
 
 @app.get(
     "/devices/{device_id}",
