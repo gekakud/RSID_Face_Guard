@@ -14,6 +14,7 @@ import config
 from observability.logging_setup import get_logger
 from provisioning.identity import DeviceIdentity, get_mac_address
 from provisioning.hardware_identity import get_serial_number
+from provisioning import network
 from qr_scanner.payload import parse_payload
 
 log = get_logger("provision")
@@ -55,6 +56,14 @@ def pair(payload: dict) -> DeviceIdentity:
         raise RegistrationError(str(exc)) from exc
     server_url = payload["serverLink"].rstrip("/")
     mac = get_mac_address().upper()
+    # Join the QR's Wi-Fi BEFORE the POST below: a fresh Pi may have no other
+    # route to the server, so doing this after would fail DNS every time.
+    # A "local" profile (or APPLY_NETWORK_PROFILE off) is a no-op.
+    network_profile = payload.get("networkProfile") or {"mode": "local"}
+    try:
+        network.apply(network_profile)
+    except network.NetworkApplyError as exc:
+        raise RegistrationError(f"Could not join network: {exc}") from exc
     try:
         response = requests.post(
             f"{server_url}/installation/pair",
@@ -92,6 +101,9 @@ def pair(payload: dict) -> DeviceIdentity:
             device_id=data["device"], device_token=token, server_url=server_url,
             customer_id=str(customer_id), site_id=str(data.get("venue") or ""),
             door_id=str(gate_id),
+            # Stored so the credentials survive a reboot (the server echoes
+            # customer/site/door but not the network profile).
+            network_profile=network_profile,
             # Per-door mode (FR-MODE-01) chosen when the installation QR was
             # created; empty means config.DEVICE_MODE stays in force.
             device_mode=str(data.get("device_mode") or ""), identity_version=2,

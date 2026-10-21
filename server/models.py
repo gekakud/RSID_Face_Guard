@@ -4,7 +4,7 @@ These double as the API contract documented in server/README.md -- the device
 side will send exactly these shapes.
 """
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -15,6 +15,28 @@ from pydantic import BaseModel, Field
 DeviceMode = Literal["card_only", "card_and_face", "face_only", "time_registry"]
 
 DEFAULT_DEVICE_MODE = "card_and_face"
+
+
+# ------------------------------------------------------- network profile
+
+class WifiCredentials(BaseModel):
+    ssid: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class WifiNetworkProfile(BaseModel):
+    """The device should join this Wi-Fi network to reach the server."""
+    mode: Literal["wifi"] = "wifi"
+    wifi: WifiCredentials
+
+
+class LocalNetworkProfile(BaseModel):
+    """Device is already on the LAN (cable) -- nothing to apply."""
+    mode: Literal["local"] = "local"
+
+
+# Discriminated on "mode": wifi requires ssid+password, local requires nothing.
+NetworkProfile = Union[WifiNetworkProfile, LocalNetworkProfile]
 
 
 # --------------------------------------------------- customer/site/door CRUD

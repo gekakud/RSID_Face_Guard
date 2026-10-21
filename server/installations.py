@@ -21,6 +21,10 @@ class CreateInstallation(BaseModel):
     # Per-door operating mode (FR-MODE-01). Carried through the QR so an
     # attendance terminal can be paired as time_registry, not just face_only.
     device_mode: models.DeviceMode = models.DEFAULT_DEVICE_MODE
+    # Wi-Fi the device must join to reach us; defaults to "local" (LAN cable).
+    network_profile: models.NetworkProfile = Field(
+        default_factory=models.LocalNetworkProfile
+    )
 
 
 class PairInstallation(BaseModel):
@@ -38,6 +42,7 @@ def _summary(row):
         "gate": {"_id": row["door_id"], "name": row["door_id"], "status": True},
         "status": row["status"], "device": row["device_id"],
         "device_mode": row["device_mode"] or models.DEFAULT_DEVICE_MODE,
+        "network_profile": json.loads(row["network_profile"] or '{"mode":"local"}'),
         "timeStamp": row["paired_at"] or row["created_at"],
     }
 
@@ -47,16 +52,21 @@ def install_routes(app, require_admin, hash_token):
     def create_installation(body: CreateInstallation, conn=Depends(db.get_db)):
         installation_id = secrets.token_hex(12)
         now = timeutil.now_ts()
+        profile = body.network_profile.model_dump()
         with conn:
             conn.execute(
                 """INSERT INTO installations
-                (installation_id, customer_id, site_id, door_id, device_type, device_mode, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (installation_id, customer_id, site_id, door_id, device_type, device_mode, network_profile, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (installation_id, body.customer_id, body.site_id, body.door_id,
-                 body.deviceType, body.device_mode, now),
+                 body.deviceType, body.device_mode, json.dumps(profile), now),
             )
         payload = {"installationId": installation_id, "deviceType": body.deviceType,
                    "serverLink": config.PUBLIC_BASE_URL}
+        # Only carry the Wi-Fi block when there is one: a "local" profile is the
+        # device-side default, and omitting it keeps the QR smaller to scan.
+        if profile.get("mode") == "wifi":
+            payload["networkProfile"] = profile
         output = io.BytesIO()
         qrcode.make(json.dumps(payload, separators=(",", ":"))).save(output, format="PNG")
         return {"_id": installation_id, "status": "pending", "payload": payload,

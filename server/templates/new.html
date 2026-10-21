@@ -61,6 +61,30 @@
       </select>
     </div>
 
+    <!-- How the device reaches the server. "local" = LAN cable, no QR block. -->
+    <div>
+      <label class="{{ label }}" for="network_mode">Network</label>
+      <select class="{{ field }}" id="network_mode">
+        <option value="local" selected>Wired / already on the LAN</option>
+        <option value="wifi">Wi-Fi (credentials go in the QR)</option>
+      </select>
+    </div>
+
+    <div id="wifi_fields" class="hidden space-y-4">
+      <div>
+        <label class="{{ label }}" for="wifi_ssid">Wi-Fi name (SSID)</label>
+        <input class="{{ field }}" id="wifi_ssid" maxlength="64" autocomplete="off">
+      </div>
+      <div>
+        <label class="{{ label }}" for="wifi_password">Wi-Fi password</label>
+        <input class="{{ field }}" id="wifi_password" type="password" maxlength="128" autocomplete="new-password">
+      </div>
+      <p class="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+        The QR is unsigned: anyone who photographs it can read this password.
+        Show it to the installer only, and delete the installation if unused.
+      </p>
+    </div>
+
     <button type="submit"
             class="w-full rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-sky-500 disabled:opacity-50">
       Generate QR code
@@ -211,6 +235,10 @@
 
   customerSel.addEventListener("change", () => loadSites());
   siteSel.addEventListener("change", () => loadDoors());
+  // Wi-Fi credentials are only relevant (and only sent) in "wifi" mode.
+  $("network_mode").addEventListener("change", (event) => {
+    $("wifi_fields").classList.toggle("hidden", event.target.value !== "wifi");
+  });
 
   // ---- Add-new popup (native <dialog>), reused for all three levels ----
   const addDialog = $("add_dialog");
@@ -285,11 +313,23 @@
     button.disabled = true;
     clearInterval(countdownTimer);
     try {
+      const networkMode = $("network_mode").value;
+      let networkProfile = { mode: "local" };
+      if (networkMode === "wifi") {
+        const ssid = $("wifi_ssid").value.trim();
+        const password = $("wifi_password").value;
+        if (!ssid || !password) {
+          button.disabled = false;
+          return showError("Enter the Wi-Fi name and password");
+        }
+        networkProfile = { mode: "wifi", wifi: { ssid, password } };
+      }
       const installation = await api("/installation", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({customer_id: customer, site_id: site, door_id: door,
                               deviceType: $("device_type").value.trim(),
-                              device_mode: $("device_mode").value}),
+                              device_mode: $("device_mode").value,
+                              network_profile: networkProfile}),
       });
       $("qr").src = installation.qr_png;
       $("payload").textContent = JSON.stringify(installation.payload, null, 2);

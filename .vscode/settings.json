@@ -1,0 +1,32 @@
+{
+    "python.analysis.languageServerMode": "light",
+    // Keep the file watcher off big/generated trees - costly on the Pi's SD card.
+    "files.watcherExclude": {
+        "**/.git/objects/**": true,
+        "**/.git/subtree-cache/**": true,
+        "**/__pycache__/**": true,
+        "**/datadir/**": true,
+        "**/RealSense_official/**": true,
+        "**/rpi_py_build_lib/**": true,
+        "**/win_py_build_lib/**": true,
+        "**/.venv/**": true,
+        "**/.env/**": true
+    },
+    "search.exclude": {
+        "**/__pycache__": true,
+        "**/datadir": true,
+        "**/RealSense_official": true,
+        "**/rpi_py_build_lib": true,
+        "**/win_py_build_lib": true,
+        "**/.venv": true,
+        "**/.env": true
+    },
+    "python.analysis.exclude": [
+        "**/datadir",
+        "**/RealSense_official",
+        "**/__pycache__"
+    ],
+    "files.exclude": {
+        "**/__pycache__": true
+    }
+}

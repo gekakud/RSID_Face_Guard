@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS installations (
   door_id TEXT NOT NULL,
   device_type TEXT NOT NULL,
   device_mode TEXT,
+  network_profile TEXT,
   status TEXT NOT NULL DEFAULT 'pending',
   device_id TEXT,
   created_at TEXT NOT NULL,
@@ -158,6 +159,10 @@ def init_db() -> None:
         install_columns = {row["name"] for row in conn.execute("PRAGMA table_info(installations)")}
         if "device_mode" not in install_columns:
             conn.execute("ALTER TABLE installations ADD COLUMN device_mode TEXT")
+        # Same for the Wi-Fi profile carried in the QR -- back-fill so existing
+        # deployments (Render) upgrade in place instead of failing on INSERT.
+        if "network_profile" not in install_columns:
+            conn.execute("ALTER TABLE installations ADD COLUMN network_profile TEXT")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_serial ON devices(serial) WHERE serial IS NOT NULL AND serial != ''")
         conn.commit()
         _seed_defaults(conn)
