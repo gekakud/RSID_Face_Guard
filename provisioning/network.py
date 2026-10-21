@@ -113,6 +113,38 @@ def _psk_is_stored(con_name):
             flags = value.strip()
     return bool(psk) and flags == "0"
 
+def _radio_is_enabled() -> bool:
+    result = _run(["radio", "wifi"], timeout=5)
+    return result.returncode == 0 and result.stdout.strip().lower() == "enabled"
+
+
+def _enable_radio() -> None:
+    """Clear a Wi-Fi soft block so wlan0 leaves the "unavailable" state.
+
+    A soft-blocked radio (common on a Pi imaged without a WLAN country) makes
+    `connection up` fail with "device not available", which reads like a broken
+    profile rather than a switched-off radio. Done via nmcli, not rfkill:
+    /dev/rfkill is not writable by the non-root kiosk user, whereas the
+    enable-disable-wifi action is granted in deploy/50-faceguard-nm.rules.
+    """
+    if _radio_is_enabled():
+        return
+    log.warning("Wi-Fi radio is disabled (soft block) -- enabling it via nmcli")
+    result = _run(["radio", "wifi", "on"], timeout=10)
+    if result.returncode != 0:
+        raise NetworkApplyError(
+            f"Wi-Fi radio is disabled and could not be enabled: {result.stderr.strip()}"
+        )
+    # The driver needs a moment to bring wlan0 out of "unavailable".
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if _radio_is_enabled():
+            log.info("Wi-Fi radio enabled")
+            return
+        time.sleep(0.5)
+    raise NetworkApplyError("Wi-Fi radio did not come up after enabling it")
+
+
 def _is_connected() -> bool:
     """True if NetworkManager reports full connectivity."""
     try:
@@ -156,6 +188,10 @@ def apply(profile: dict) -> bool:
         raise NetworkApplyError(
             "nmcli not found -- host is not managed by NetworkManager"
         )
+
+    # A soft-blocked radio would make `connection up` below fail with the
+    # misleading "device not available"; clear it first.
+    _enable_radio()
 
     log.info("Applying Wi-Fi profile: joining SSID %r via nmcli", ssid)
 
