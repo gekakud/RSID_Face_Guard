@@ -6,12 +6,12 @@
 # uses (see provisioning/network.py CONNECTION_NAME).
 #
 # Usage:
-#   sudo ./reset_wifi_profile.sh              # removes faceguard-wifi
+#   sudo ./reset_wifi_profile.sh              # removes OnePlus 13
 #   sudo ./reset_wifi_profile.sh Workport      # removes a specific profile
 
 set -u
 
-CON_NAME="${1:-faceguard-wifi}"
+CON_NAME="${1:-OnePlus 13}"
 
 if [[ $EUID -ne 0 ]]; then
     echo "Must run as root (sudo) -- nmcli connection management needs it." >&2
