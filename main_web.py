@@ -87,6 +87,7 @@ except ImportError:
     sys.exit(1)
 
 try:
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
     from PySide6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
 except ImportError as e:
@@ -189,38 +190,77 @@ def main():
     window = GUIWeb(port, camera_index, device_type)
     window.show_appropriately()
 
-    # Ctrl+C (SIGINT) is normally swallowed by the Qt event loop. Install a
-    # handler that triggers an orderly window shutdown (stop preview, wait for
-    # in-flight auth, disconnect device) instead of letting native threads race
-    # during interpreter teardown -- which otherwise aborts the process with
-    # "terminate called without an active exception".
-    def _handle_signal(signum, _frame):
-        log.info("Received signal %s -- shutting down cleanly", signum)
+    # Ctrl+C (SIGINT) is normally swallowed by the Qt event loop (and by
+    # Chromium, which installs its own handlers when QtWebEngine starts).
+    # Shut down in order (stop preview, wait for in-flight auth, disconnect
+    # device) instead of letting native threads race during interpreter
+    # teardown -- which otherwise aborts with "terminate called without an
+    # active exception".
+    def _shutdown_now(reason):
+        log.info("%s -- shutting down cleanly", reason)
         # Failsafe: if graceful cleanup blocks (native threads can hang), a
         # watchdog thread force-exits after a short grace period so Ctrl+C
         # always terminates the process promptly.
         import threading as _t
 
-        def _watchdog():
-            os._exit(0)
-        wd = _t.Timer(6.0, _watchdog)
+        wd = _t.Timer(6.0, lambda: os._exit(0))
         wd.daemon = True
         wd.start()
         try:
             window.shutdown()
         except Exception:
-            log.exception("Error during signal shutdown")
+            log.exception("Error during shutdown")
         os._exit(0)
 
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
+    def _handle_signal(signum, _frame):
+        _shutdown_now("Received signal %s" % signum)
 
-    # Let the Python interpreter run periodically so the signal handler above
-    # can actually fire while the Qt C++ event loop is blocking.
-    from PySide6.QtCore import QTimer
+    # Deliver signals through the Qt event loop: the C handler writes a byte to
+    # a socketpair, QSocketNotifier wakes the main thread and runs Python.
+    import socket
+
+    from PySide6.QtCore import QSocketNotifier, QTimer
+
+    _sig_r, _sig_w = socket.socketpair()
+    _sig_r.setblocking(False)
+    _sig_w.setblocking(False)
+    signal.set_wakeup_fd(_sig_w.fileno())
+
+    _sig_notifier = QSocketNotifier(_sig_r.fileno(), QSocketNotifier.Type.Read)
+
+    def _drain(_fd):
+        try:
+            _sig_r.recv(64)
+        except OSError:
+            pass
+    _sig_notifier.activated.connect(_drain)
+
+    def _install_handlers():
+        # Re-installed after startup: QtWebEngine/Chromium replaces SIGINT/
+        # SIGTERM handlers of its own once the render processes come up.
+        signal.signal(signal.SIGINT, _handle_signal)
+        signal.signal(signal.SIGTERM, _handle_signal)
+        signal.set_wakeup_fd(_sig_w.fileno())
+
+    _install_handlers()
+    for _delay in (1000, 3000, 8000):
+        QTimer.singleShot(_delay, _install_handlers)
+
+    # Keyboard escape hatch from the kiosk window itself: the QWebEngineView
+    # has focus and eats key events, so use application-wide shortcuts.
+    from PySide6.QtGui import QKeySequence, QShortcut
+
+    _shortcuts = []
+    for _seq in ("Ctrl+C", "Ctrl+Q", "Esc"):
+        sc = QShortcut(QKeySequence(_seq), window)
+        sc.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        sc.activated.connect(lambda s=_seq: _shutdown_now("Shortcut %s" % s))
+        _shortcuts.append(sc)
+
+    # Keep the interpreter ticking as a last-resort fallback.
     _sig_timer = QTimer()
-    _sig_timer.start(200)
     _sig_timer.timeout.connect(lambda: None)
+    _sig_timer.start(200)
 
     try:
         exit_code = app.exec()
