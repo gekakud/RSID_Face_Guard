@@ -77,6 +77,7 @@ BRIDGE_SETUP_JS = """
       img.style.width = '100%';
       img.style.height = '100%';
       img.style.objectFit = 'cover';
+      img.style.transform = 'scaleX(-1)';  // mirror view (done in CSS, not Python)
       img.style.zIndex = '0';
       img.style.background = '#05040a';
       cam.parentNode.insertBefore(img, cam);

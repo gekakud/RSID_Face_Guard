@@ -18,10 +18,11 @@ WorkingDirectory=/home/geka/RSID_Face_Guard
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/geka/.Xauthority
 Environment=XDG_RUNTIME_DIR=/run/user/1000
-# Pin the X path: on a Wayland session Qt would otherwise pick the wayland
-# plugin and ignore DISPLAY. The QtWebEngine software-GL flags set in
-# main_web.py are tuned for this path.
-Environment=QT_QPA_PLATFORM=xcb
+# Native Wayland + GPU rendering (much lower CPU than the old software path).
+# To go back: QT_QPA_PLATFORM=xcb and RSID_GPU=0.
+Environment=QT_QPA_PLATFORM=wayland
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=RSID_GPU=1
 
 # rsid_py's native libraries live in rpi_py_build_lib/ (mirrors run_main_web.sh)
 Environment=LD_LIBRARY_PATH=/home/geka/RSID_Face_Guard/rpi_py_build_lib

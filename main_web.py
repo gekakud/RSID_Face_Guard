@@ -29,12 +29,19 @@ import sys
 # 1. Chromium refuses to run as root with its sandbox on; the kiosk runs as root.
 # 2. Force software OpenGL: the Pi's GL stack under X can't back Chromium's GPU
 #    process, which otherwise silently stalls page loads.
-os.environ.setdefault(
-    "QTWEBENGINE_CHROMIUM_FLAGS",
-    "--no-sandbox --disable-gpu --disable-gpu-compositing --in-process-gpu",
-)
-os.environ.setdefault("QT_OPENGL", "software")
-os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
+# RSID_GPU=1 (experimental) lets Chromium use the Pi's GPU instead.
+if os.environ.get("RSID_GPU") == "1":
+    os.environ.setdefault(
+        "QTWEBENGINE_CHROMIUM_FLAGS",
+        "--no-sandbox --ignore-gpu-blocklist --enable-gpu-rasterization",
+    )
+else:
+    os.environ.setdefault(
+        "QTWEBENGINE_CHROMIUM_FLAGS",
+        "--no-sandbox --disable-gpu --disable-gpu-compositing --in-process-gpu",
+    )
+    os.environ.setdefault("QT_OPENGL", "software")
+    os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
 
 import config
 from observability.logging_setup import get_logger, install_native_log_bridge, setup_logging

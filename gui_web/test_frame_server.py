@@ -76,3 +76,22 @@ def test_placeholder_is_valid_jpeg():
     data = _placeholder_jpeg()
     assert data.startswith(b"\xff\xd8")  # JPEG SOI marker
     assert data.endswith(b"\xff\xd9")    # JPEG EOI marker
+
+
+def test_portrait_frame_is_cropped_square_and_downscaled():
+    import io
+    from PIL import Image
+
+    s = CameraStreamer(_FakePreview(), mirror=False, max_width=100)
+    s._encode_store(np.zeros((400, 200, 3), dtype=np.uint8))
+    assert Image.open(io.BytesIO(s.latest())).size == (100, 100)
+
+
+def test_small_frame_is_square_without_upscale():
+    import io
+    from PIL import Image
+
+    s = CameraStreamer(_FakePreview(), mirror=False, max_width=100)
+    s._encode_store(np.zeros((60, 40, 3), dtype=np.uint8))
+    assert Image.open(io.BytesIO(s.latest())).size == (40, 40)
+

@@ -22,6 +22,13 @@ export LD_LIBRARY_PATH="$PROJECT_DIR/rpi_py_build_lib:$LD_LIBRARY_PATH"
 # icon (which may not inherit DISPLAY).
 export DISPLAY="${DISPLAY:-:0}"
 
+# GPU rendering on native Wayland (labwc). Override: RSID_GPU=0 for the old
+# software path, QT_QPA_PLATFORM=xcb for Xwayland.
+export RSID_GPU="${RSID_GPU:-1}"
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland}"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/1000}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+
 echo "=================================================="
 echo " RSID Face Guard - Web UI"
 echo " Project : $PROJECT_DIR"
@@ -38,4 +45,4 @@ echo
 echo "=================================================="
 echo " main_web.py exited with status $STATUS"
 echo "=================================================="
-read -r -p "Press Enter to close this window..." _
+# read -r -p "Press Enter to close this window..." _

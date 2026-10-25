@@ -43,8 +43,8 @@ class CameraStreamer:
     # interval at the lowest expected capture rate.
     STALE_AFTER_SEC = 0.5
 
-    def __init__(self, preview_controller, jpeg_quality: int = 55, mirror: bool = True,
-                 max_width: int = 720):
+    def __init__(self, preview_controller, jpeg_quality: int = 55, mirror: bool = False,
+                 max_width: int = 704):
         self.preview = preview_controller
         self.jpeg_quality = jpeg_quality
         self.mirror = mirror
@@ -89,18 +89,23 @@ class CameraStreamer:
         log.info("Camera streamer encode loop exited")
 
     def _encode_store(self, frame: np.ndarray):
+        if frame.ndim == 3 and frame.shape[2] == 1:
+            frame = frame[:, :, 0]
+        # Centre square crop: the UI shows a square/round area (object-fit:
+        # cover), so the cropped-away pixels were never visible anyway.
+        h, w = frame.shape[:2]
+        side = min(h, w)
+        top, left = (h - side) // 2, (w - side) // 2
+        frame = frame[top:top + side, left:left + side]
         if self.mirror:
-            frame = frame[:, ::-1, :]
-        channels = frame.shape[2] if frame.ndim == 3 else 1
-        if channels == 4:
+            frame = frame[:, ::-1]
+        if frame.ndim == 3 and frame.shape[2] == 4:
             frame = frame[:, :, :3]
-        mode = "L" if channels == 1 else "RGB"
-        img = Image.fromarray(np.ascontiguousarray(frame), mode=mode)
-        if mode != "RGB":
+        img = Image.fromarray(np.ascontiguousarray(frame))
+        if img.mode != "RGB":
             img = img.convert("RGB")
         if self.max_width and img.width > self.max_width:
-            ratio = self.max_width / img.width
-            img = img.resize((self.max_width, max(1, int(img.height * ratio))), Image.BILINEAR)
+            img = img.resize((self.max_width, self.max_width), Image.BILINEAR, reducing_gap=2.0)
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=self.jpeg_quality)
         with self._lock:
