@@ -1,203 +1,221 @@
-# HOWTO – RSID Face Guard: Setup, Virtual Env, and Fixing `rsid_py` Import Error
+# HOWTO – RSID Face Guard: virtual env, running the app, `rsid_py` and web UI setup
 
-This guide explains how to work with the Python virtual environment (`.venv`) in this
-project, and documents the exact steps used to fix the error:
-
-```
-[CRITICAL] Failed importing rsid_py. Please ensure rsid_py module is available.
-```
+How to work with the Python environment, run the app, fix the `rsid_py` import
+error, and set up the QtWebEngine web UI on a Raspberry Pi 5. For a fresh Pi, see
+`docs/SETUP_RPI5.md`.
 
 ---
 
-## 1. What is the virtual environment (`.venv`)?
+## 1. The virtual environment (`.venv`)
 
-A virtual environment is an isolated Python installation used to keep this project's
-dependencies separate from the system Python. The project's venv lives at:
-
-```
-/home/mahat/RSID_Face_Guard/.venv
-```
-
-It uses Python 3.11 and has its own `site-packages` directory:
+An isolated Python 3.11 installation that keeps this project's dependencies away
+from the system Python. It lives in the project root:
 
 ```
-.venv/lib/python3.11/site-packages/
+/home/geka/RSID_Face_Guard/.venv
 ```
 
-## 2. Activating / deactivating the virtual environment
+Packages go to `.venv/lib/python3.11/site-packages/`.
 
-From the project root:
+## 2. Activate / deactivate
 
 ```bash
-cd /home/mahat/RSID_Face_Guard
-
-# Activate
-source .venv/bin/activate
-
-# Your shell prompt will now show (.venv) at the beginning.
-# Any `python` / `pip` commands now refer to the venv's binaries.
-
-# Deactivate when done
-deactivate
+cd /home/geka/RSID_Face_Guard
+source .venv/bin/activate     # the prompt now starts with (.venv)
+deactivate                    # when done
 ```
 
-You can also call the venv's Python directly without activating, using its full path:
+You can also call the venv Python directly, without activating:
 
 ```bash
-/home/mahat/RSID_Face_Guard/.venv/bin/python your_script.py
+/home/geka/RSID_Face_Guard/.venv/bin/python main_web.py
 ```
 
-## 3. Creating the virtual environment (if it doesn't exist)
+## 3. Create the venv (if it does not exist)
 
 ```bash
-cd /home/mahat/RSID_Face_Guard
-python3 -m venv .venv
+cd /home/geka/RSID_Face_Guard
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## 4. Installing project dependencies
+## 4. Install dependencies
 
-With the venv activated:
+With the venv active: `pip install -r requirements.txt`.
+
+## 5. Run the app
+
+The app is `main_web.py` (PySide6 + QtWebEngine, UI in `demo_ui/`).
+
+### Easiest: the launcher script
 
 ```bash
-pip install -r requirements.txt
+./run_main_web.sh
 ```
 
-## 5. Running the project
+It sets `LD_LIBRARY_PATH` for `rsid_py`, and by default turns on **GPU rendering
+on native Wayland** (see section 8). Environment values you set yourself win over
+its defaults.
 
-### From a terminal
+### From a terminal, by hand
 
 ```bash
 source .venv/bin/activate
-python host_mode_gui_tk.py
+LD_LIBRARY_PATH=$PWD/rpi_py_build_lib python main_web.py
+```
+
+### As a service (auto-start on boot)
+
+`face-guard.service` runs `run_service.sh`. Steps are in `docs/SETUP_RPI5.md`
+section 8. Useful commands:
+
+```bash
+sudo systemctl restart face-guard
+sudo systemctl stop face-guard
+journalctl -u face-guard -b
 ```
 
 ### From VS Code
 
-1. Open the Command Palette → `Python: Select Interpreter`.
-2. Choose the interpreter at `.venv/bin/python`.
-3. Run/Debug `host_mode_gui_tk.py` normally (F5 or the Run button).
+1. Command Palette → `Python: Select Interpreter` → `.venv/bin/python`.
+2. Run or debug `main_web.py` (F5). Add `LD_LIBRARY_PATH` to the launch config,
+   see the end of section 6.
+
+### Kiosk mode and how to exit
+
+`config.py` has two switches:
+
+- `RUN_ON_REAL_SCREEN = True` places the window on the small display.
+- `KIOSK_BORDERLESS = True` makes it fullscreen with no border. `False` gives a
+  normal window, handy for debugging.
+
+To close the app:
+
+- **Keyboard** (needs a USB keyboard): `Ctrl+C`, `Ctrl+Q` or `Esc`.
+- **SSH:** `sudo pkill -f main_web.py` (clean shutdown). If it hangs, a watchdog
+  forces the exit after 6 seconds.
+- **Service:** `sudo systemctl stop face-guard`.
+
+Keep an SSH session open when you first test fullscreen on a touch-only screen.
+
+### Round or square screens
+
+The UI is drawn for 720x720. A fullscreen window uses the whole output, so the
+output mode must match the panel. If the screensaver circle looks like an
+ellipse, the Pi is driving a 4:3 mode (for example 1024x768) into a square
+panel. Check the modes:
+
+```bash
+WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/1000 wlr-randr
+```
+
+Try a square mode, for example `wlr-randr --output HDMI-A-2 --custom-mode 720x720@60`
+(use your output name). I have not confirmed that a given panel accepts it. If
+the screen goes blank, set the old mode back over SSH. To keep it after a reboot,
+add `video=HDMI-A-2:720x720@60` to `/boot/firmware/cmdline.txt`, or run the
+`wlr-randr` command from the labwc autostart file.
 
 ---
 
-## 6. Fixing "Failed importing rsid_py" error
+## 6. Fixing "Failed importing rsid_py"
+
+```
+[CRITICAL] Failed importing rsid_py. Please ensure rsid_py module is available.
+```
 
 ### Root cause
 
-The `rsid_py` native extension module (a compiled `.so` file for the Raspberry Pi's
-architecture) was present in the repo under `rpi_py_build_lib/`, but:
+The compiled `rsid_py` extension (a `.so` for the Pi's architecture) is in the
+repo under `rpi_py_build_lib/`, but:
 
-1. It was **not installed** into the venv's `site-packages`, so `import rsid_py` failed.
-2. Its native dependencies, `librsid.so` and `librsid_c.so` (also under
-   `rpi_py_build_lib/`), were not registered with the system's dynamic linker, so even
-   after installing the module, importing it would fail with a missing shared-library
-   error.
+1. It is not installed into the venv's `site-packages`, so `import rsid_py`
+   fails.
+2. Its native libraries `librsid.so` and `librsid_c.so` (also in
+   `rpi_py_build_lib/`) are not known to the dynamic linker, so the import fails
+   with a missing shared library error even after step 1.
 
-### Fix steps performed
+### Fix
 
-1. **Copy the compiled Python extension into the venv's site-packages:**
+1. Copy the extension into the venv:
 
    ```bash
    cp rpi_py_build_lib/rsid_py.cpython-311-aarch64-linux-gnu.so \
       .venv/lib/python3.11/site-packages/
    ```
 
-2. **Install the native shared libraries system-wide and refresh the linker cache:**
+2. Install the native libraries system-wide and refresh the linker cache:
 
    ```bash
    sudo cp rpi_py_build_lib/librsid.so rpi_py_build_lib/librsid_c.so /usr/lib/
    sudo ldconfig
+   ldconfig -p | grep rsid       # both libraries should be listed
    ```
 
-   Verify they are registered:
-
-   ```bash
-   ldconfig -p | grep rsid
-   # librsid_c.so (libc6,AArch64) => /lib/librsid_c.so
-   # librsid.so (libc6,AArch64) => /lib/librsid.so
-   ```
-
-3. **Verify the import works:**
+3. Check the import:
 
    ```bash
    .venv/bin/python -c "import rsid_py; print(rsid_py.__file__)"
    ```
 
-   Expected output:
-
-   ```
-   /home/mahat/RSID_Face_Guard/.venv/lib/python3.11/site-packages/rsid_py.cpython-311-aarch64-linux-gnu.so
-   ```
-
-4. **Run the application to confirm the fix:**
+4. Run the app:
 
    ```bash
-   .venv/bin/python host_mode_gui_tk.py
+   ./run_main_web.sh
    ```
 
-   You should see log lines such as:
+   The log should show the device being found and configured, not the
+   `Failed importing rsid_py` error.
 
-   ```
-   [INFO] rsid_py version: 1.3.1
-   [DiscoverDevices] Detected device type F45x
-   [INFO] Device configured successfully
-   [INFO] FaceAuthenticator connected
-   ```
+### After a rebuild
 
-   instead of the `Failed importing rsid_py` critical error.
+If you rebuild `rsid_py` (new RealSenseID SDK or wrapper), the new files appear
+in `rpi_py_build_lib/` again. Repeat steps 1–2.
 
-### Notes for future re-builds
+### Alternative: no system install
 
-- If you rebuild `rsid_py` (e.g. after updating the RealSenseID SDK or C++ wrapper),
-  the new `.so` files will again be produced under `rpi_py_build_lib/`. Repeat steps
-  1–2 above to reinstall them into the venv and system linker path.
-- Alternative to copying `librsid.so`/`librsid_c.so` into `/usr/lib`: you can instead
-  keep them in `rpi_py_build_lib/` and set `LD_LIBRARY_PATH` before running the script:
+Keep the libraries in `rpi_py_build_lib/` and set `LD_LIBRARY_PATH`. Both
+`run_main_web.sh` and `run_service.sh` already do this. By hand:
 
-  ```bash
-  LD_LIBRARY_PATH=/home/mahat/RSID_Face_Guard/rpi_py_build_lib:$LD_LIBRARY_PATH \
-    .venv/bin/python host_mode_gui_tk.py
-  ```
+```bash
+LD_LIBRARY_PATH=/home/geka/RSID_Face_Guard/rpi_py_build_lib:$LD_LIBRARY_PATH \
+  .venv/bin/python main_web.py
+```
 
-  This is useful if you don't have `sudo` access or don't want to modify system
-  library paths. To make this permanent for VS Code debugging, add an `env` entry
-  to `.vscode/launch.json`:
+For VS Code debugging, add it to `.vscode/launch.json`:
 
-  ```json
-  {
-    "version": "0.2.0",
-    "configurations": [
-      {
-        "name": "Python: host_mode_gui_tk.py",
-        "type": "debugpy",
-        "request": "launch",
-        "program": "${workspaceFolder}/host_mode_gui_tk.py",
-        "env": {
-          "LD_LIBRARY_PATH": "${workspaceFolder}/rpi_py_build_lib"
-        }
+```json
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: main_web.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/main_web.py",
+      "env": {
+        "LD_LIBRARY_PATH": "${workspaceFolder}/rpi_py_build_lib"
       }
-    ]
-  }
-  ```
+    }
+  ]
+}
+```
 
 ---
 
-## 7. QtWebEngine (web UI) setup
+## 7. QtWebEngine setup (one time)
 
-The project can render the designer-provided web UI in `demo_ui/` inside a
-`QWebEngineView` (embedded Chromium via PySide6). Getting QtWebEngine to run on
-a fresh Raspberry Pi 5 (Raspberry Pi OS **bookworm**, aarch64) requires a few
-one-time fixes. The smoke test `test_webengine_ui.py` validates all of this.
+The UI in `demo_ui/` runs in a `QWebEngineView` (Chromium inside PySide6). On a
+fresh Raspberry Pi 5 (Raspberry Pi OS **bookworm**, aarch64) it needs a few
+fixes. The smoke test `test_webengine_ui.py` checks all of this.
 
-### Symptom-by-symptom fixes
+### Import errors
 
-QtWebEngine ships inside `PySide6` (`PySide6-Addons`), but on bookworm it fails
-to import because Qt was built against older library sonames than bookworm
-ships. Fix by symlinking the newer libs to the names QtWebEngine expects:
+QtWebEngine in PySide6 was built against older library names than bookworm
+ships. Link the newer libraries to the names it expects:
 
-1. **`ImportError: libwebp.so.6: cannot open shared object file`**
+1. `ImportError: libwebp.so.6: cannot open shared object file`
    (bookworm ships `libwebp.so.7`):
 
    ```bash
@@ -205,7 +223,7 @@ ships. Fix by symlinking the newer libs to the names QtWebEngine expects:
                /usr/lib/aarch64-linux-gnu/libwebp.so.6
    ```
 
-2. **`ImportError: libtiff.so.5: cannot open shared object file`**
+2. `ImportError: libtiff.so.5: cannot open shared object file`
    (bookworm ships `libtiff.so.6`):
 
    ```bash
@@ -213,52 +231,66 @@ ships. Fix by symlinking the newer libs to the names QtWebEngine expects:
                /usr/lib/aarch64-linux-gnu/libtiff.so.5
    ```
 
-   > These two symlinks are a pragmatic workaround (the ABIs are compatible for
-   > QtWebEngine's usage). If the linked-to soname version differs on your
-   > machine, adjust the target — check with:
-   > `ls /usr/lib/aarch64-linux-gnu/libwebp.so.* /usr/lib/aarch64-linux-gnu/libtiff.so.*`
+   These links are a workaround. If the versions on your machine differ, check:
+   `ls /usr/lib/aarch64-linux-gnu/libwebp.so.* /usr/lib/aarch64-linux-gnu/libtiff.so.*`
 
-   Verify the import now works:
+Check the import:
 
-   ```bash
-   .venv/bin/python -c "from PySide6.QtWebEngineWidgets import QWebEngineView; print('OK')"
-   ```
+```bash
+.venv/bin/python -c "from PySide6.QtWebEngineWidgets import QWebEngineView; print('OK')"
+```
 
-### Runtime requirements (already baked into `test_webengine_ui.py` / the app)
+For a reproducible image, put these two links in an install script. A freshly
+flashed Pi will not have them.
 
-These environment variables MUST be set **before** QtWebEngine / QApplication
-initializes. They are set at the top of `test_webengine_ui.py`; the real web
-front-end sets them the same way.
+---
 
-- **Run as root → disable Chromium sandbox.** Chromium's zygote refuses to run
-  as root with the sandbox on (this kiosk runs as root):
-  `ERROR:zygote_host_impl_linux.cc … Running as root without --no-sandbox is not supported`
+## 8. Rendering: GPU (default) or software
 
-  ```python
-  os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--no-sandbox --disable-gpu --disable-gpu-compositing --in-process-gpu"
+`main_web.py` picks the Chromium flags from `RSID_GPU`. The launchers
+(`run_main_web.sh`, `run_service.sh`) and `face-guard.service` set these
+defaults:
+
+```
+RSID_GPU=1
+QT_QPA_PLATFORM=wayland
+WAYLAND_DISPLAY=wayland-0
+XDG_RUNTIME_DIR=/run/user/1000
+```
+
+- **GPU mode** (`RSID_GPU=1`) runs Chromium with the Pi's GPU on native
+  Wayland (labwc). On the idle screensaver it cut user CPU from about 62% to
+  about 19%. I measured only the screensaver, not a long card session.
+- **Software mode** is the old path: Chromium with `--disable-gpu` and Mesa
+  software GL (`QT_OPENGL=software`, `LIBGL_ALWAYS_SOFTWARE=1`). To use it:
+
+  ```bash
+  RSID_GPU=0 QT_QPA_PLATFORM=xcb ./run_main_web.sh
   ```
 
-- **Force software OpenGL.** The Pi's GL stack under X cannot back Chromium's
-  GPU process; without this the page **silently never finishes loading**
-  (`loadFinished` never fires — the window stays blank):
+  In the service, change the three `Environment=` lines in
+  `face-guard.service`, then `sudo systemctl daemon-reload` and restart.
 
-  ```python
-  os.environ["QT_OPENGL"] = "software"
-  os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
-  ```
+Both modes use `--no-sandbox`, because Chromium refuses to run its sandbox as
+root.
 
-  Harmless console noise you can ignore under software GL:
-  `ERROR:gbm_wrapper.cc … Failed to export buffer to dma_buf`.
+Under native Wayland an app cannot place its own window. With one screen this
+does not matter, because the window goes to that screen.
 
-### Running the smoke test
+The camera preview is an MJPEG stream from `gui_web/frame_server.py`: centre
+square crop at up to 704x704, sent when the camera produces a frame. The mirror
+is done in CSS.
+
+---
+
+## 9. Smoke test
 
 ```bash
 DISPLAY=:0 .venv/bin/python test_webengine_ui.py
 ```
 
-Expected: a 720x720 window shows the `demo_ui` web interface cycling through
-screensaver → camera → success → failed. A log is written to
-`/tmp/webengine_ui_test.txt`; a successful run contains:
+It shows a 720x720 window cycling screensaver → camera → success → failed, and
+writes a log to `/tmp/webengine_ui_test.txt`. A good run contains:
 
 ```
 page loaded ok=True
@@ -266,22 +298,13 @@ typeof window.deviceUI = object
 after success() body.dataset.state = success
 ```
 
-- `page loaded ok=True` → QtWebEngine rendered `demo_ui/index.html`.
-- `typeof window.deviceUI = object` → the UI's JS integration API is present.
-- `after success() … = success` → Python drove the UI via
-  `runJavaScript("window.deviceUI.success(...)")`.
+The test sets its own Chromium flags and may not match the GPU defaults above.
+I have not re-run it since the GPU change.
 
-### Known non-issue: camera
+### Camera in the browser
 
-The web UI's browser `getUserMedia()` **cannot** access the RealSense UVC
-camera (it is owned by `rsid_py`, and the firmware needs exclusive access
-during a scan). So `js: Camera could not start: DOMException` in the console is
-**expected** during the smoke test. In the real integration, camera frames are
-pushed from Python (the existing `rsid_py` `PreviewController`) into the page
-instead of using `getUserMedia()`.
-
-### Deployment note
-
-The `libwebp` / `libtiff` symlinks above are manual. For a reproducible image,
-fold them into a provisioning/install script (or ship the matching libraries)
-so a freshly-flashed Pi isn't missing them.
+The browser's `getUserMedia()` cannot open the RealSense camera, because
+`rsid_py` owns it and the firmware needs exclusive access during a scan. So
+`Camera could not start: DOMException` in the smoke test is expected. In the
+real app the frames come from Python (the `PreviewController`) over the local
+MJPEG stream.

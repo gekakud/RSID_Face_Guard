@@ -1,50 +1,16 @@
 # Device dashboard server
 
-## Installation pairing (current flow, 2026-10-18)
+FastAPI + SQLite. It creates installations and their QR codes, pairs terminals
+that scan them, serves each terminal its user list, receives heartbeats and
+events, and shows it all on a dashboard.
 
-The dashboard **Add device** page now creates an installation and displays an
-unsigned QR containing only `installationId`, `deviceType`, and `serverLink`.
-The device must already be online. Current temporary settings are **local
-network** and **face_only**. The signed-token endpoints documented below are
-legacy compatibility APIs; new devices do not use them.
+It is independent of the device application: no PySide6, no `rsid_py`, no GPIO.
+It runs on any plain Linux host.
 
-- `POST /installation` (admin): `{customer_id, site_id, door_id, deviceType?}`
-  creates a pending installation, returning 201 with `_id`, `status`, `payload`
-  and a QR PNG data URI. Customer/site/door names map to customer/venue/gate
-  in the pair response.
-- `GET /installation` and `GET /installation/{id}` (admin) show pairing status.
-- `POST /installation/pair` (public): `{installationId, mac, serial}` returns
-  200 with `status: "paired"`, `_id` (installation ID), `device` (hardware ID),
-  `deviceType`, `customer`, `venue`, `gate`, and `timeStamp`. Our response also
-  includes `device_token` and `heartbeat_interval_sec` for the existing
-  authenticated users/status APIs, plus the temporary mode/network defaults.
-
-The Pi board serial is the hardware lookup key. MACs are normalized to
-uppercase and serials to lowercase, preserving full 16-digit Pi serials.
-`dev-...` serials support Windows development. A same-installation, same-serial/
-MAC replay recovers the same device ID and rotates its token; the previous
-token stops working. Replaying a removed/replaced installation or claiming one
-with different hardware returns 409. A new pending installation rebinds the
-existing hardware row and replaces its prior installation. Users are seeded
-from our existing demo template on a new binding; replay preserves uploads.
-
-Render configuration: `PUBLIC_BASE_URL=https://rsid-face-guard.onrender.com`,
-`DB_PATH=/var/data/faceguard.db`, and
-`USER_STORE_FILE=/var/data/server_user_database.json`. Before switching an
-existing deployment to the persistent user-store path, copy its current
-assigned-user file there; do not overwrite an existing persistent store.
-The additive SQLite migration preserves legacy device rows. Deploy server
-support before updating kiosks. For local testing, set `PUBLIC_BASE_URL` to
-the reachable local URL. ITS installation IDs do not exist on Render unless
-created there; the device uses the QR's actual `serverLink`.
-
-## Legacy provisioning API and shared configuration
-
-FastAPI + SQLite. Issues signed provisioning QR codes, registers devices that
-scan them, receives their status heartbeats, and shows it all on a dashboard.
-
-Independent of the device application — no PySide6, no `rsid_py`, no GPIO — so
-it deploys to any plain Linux host.
+The contract between the terminal and the backend is in
+[docs/DEVICE_SERVER_API.md](../docs/DEVICE_SERVER_API.md) (short version:
+[docs/API_REFERENCE.md](../docs/API_REFERENCE.md)). This file covers this
+server only.
 
 ## Run it
 
@@ -53,11 +19,11 @@ pip install -r server/requirements.txt
 uvicorn server.main:app --reload            # from the repo root
 ```
 
-Then open <http://localhost:8000>. Interactive API docs at `/docs`.
+Then open <http://localhost:8000>. Interactive API docs are at `/docs`.
 
 To let a real device on the LAN reach it, bind all interfaces and tell the
-server its own address — that URL is signed into every QR as `server_url`, and
-it is how a device knows where to call back:
+server its own address. That URL goes into every QR as `serverLink`, and it is
+how the device knows where to call:
 
 ```bash
 PUBLIC_BASE_URL=http://192.168.1.50:8000 uvicorn server.main:app --host 0.0.0.0 --port 8000
@@ -65,298 +31,166 @@ PUBLIC_BASE_URL=http://192.168.1.50:8000 uvicorn server.main:app --host 0.0.0.0 
 
 ## Configuration
 
-All optional; every value has a working default.
+All optional. Every value has a working default.
 
 | Env var | Default | Notes |
 |---|---|---|
 | `DB_PATH` | `server/data/faceguard.db` | On Render, point at a mounted disk. |
-| `PUBLIC_BASE_URL` | `http://localhost:8000` | Signed into each QR as `server_url`. |
-| `HEARTBEAT_TIMEOUT_SEC` | `90` | Older than this ⇒ the device shows offline. |
-| `HEARTBEAT_INTERVAL_SEC` | `30` | Period handed to devices at registration. |
-| `DEFAULT_VALIDITY_MINUTES` | `10` | Default QR lifetime. |
+| `PUBLIC_BASE_URL` | `http://localhost:8000` | Put into each QR as `serverLink`. |
+| `HEARTBEAT_TIMEOUT_SEC` | `90` | Older than this means the device shows offline. |
+| `HEARTBEAT_INTERVAL_SEC` | `30` | Rate handed to devices in the pair response. |
 | `STATUS_HISTORY_LIMIT` | `200` | History rows kept per device. |
-| `EVENTS_LIMIT` | `500` | Event-log rows kept per device. |
-| `ADMIN_USER` / `ADMIN_PASSWORD` | unset | Both set ⇒ HTTP Basic on the dashboard. Unset ⇒ open. |
-| `SEED_DEFAULTS` | `true` | Seed the demo Customer/Site/Door on first startup with an empty DB. Tests turn this off. |
-| `USER_STORE_FILE` | `server_user_database.json` | Path (relative to `server/`) of the per-device assigned-users JSON store. |
-| `DEFAULT_USER_DB_FILE` | `default_user_database.json` | Path (relative to `server/`) of the flat template every newly-registered device is seeded with. |
+| `EVENTS_LIMIT` | `500` | Event rows kept per device. |
+| `ADMIN_USER` / `ADMIN_PASSWORD` | unset | Both set: HTTP Basic on the dashboard endpoints. Unset: open. |
+| `SEED_DEFAULTS` | `true` | Seed the demo Customer/Site/Door on first start with an empty DB. Tests turn this off. |
+| `USER_STORE_FILE` | `server_user_database.json` | Per-device assigned-users JSON store (relative to `server/`). |
+| `DEFAULT_USER_DB_FILE` | `default_user_database.json` | Flat template every newly paired device is seeded with (relative to `server/`). |
 
-## Customer / site / door
+## Installation pairing
 
-Devices are organised as **customer → site → door** (a door belongs to a site,
-a site to a customer). The dashboard's `/new` page selects these from managed
-dropdowns; you create records once and pick them thereafter (`+ add` opens a
-popup to create one). The **names** — not the numeric ids — are what get signed into the QR
-and stored on the device, so the device shows e.g. `acme-corp / main-entrance`.
+The dashboard **Add device** page (`/new`) creates an installation and shows an
+unsigned QR. The QR holds `installationId`, `deviceType` and `serverLink`, plus
+`networkProfile` for Wi-Fi. There is no signature, token or expiry.
+
+1. The operator fills the form. `POST /installation` creates a *pending*
+   installation and returns the QR.
+2. The operator shows the QR to the device camera while the device is in init
+   mode. The device joins the Wi-Fi if the QR has one.
+3. The device calls `POST /installation/pair`. The server binds the hardware to
+   the installation and returns a `device_token`.
+4. The device fetches its users and posts a heartbeat. It shows online for as
+   long as the heartbeats keep arriving.
+
+The names customer / site / door are what the device shows, for example
+`acme-corp / main-entrance`. In the pair response they appear as `customer`,
+`venue` and `gate`.
+
+### Hardware key and re-pairing
+
+The Pi board serial is the hardware lookup key. MACs are stored in upper case
+and serials in lower case, keeping the full 16-digit Pi serial. A `dev-...`
+serial supports Windows development.
+
+- **Same installation, same serial and MAC (replay):** recovers the same device
+  ID and rotates the token. The previous token stops working.
+- **Removed or replaced installation, or different hardware:** `409`.
+- **A new pending installation for known hardware:** the existing hardware row
+  is rebound and its older installation is marked `replaced`.
+- **Users:** seeded from the demo template on a new binding. A replay keeps
+  uploaded users.
+
+### Customer / site / door
+
+Devices are organised as **customer → site → door**. The `/new` page picks them
+from dropdowns (`+ add` creates one). The first start with an empty database
+seeds a Demo Customer → Demo Site → Demo Door.
 
 - `GET /customers` · `POST /customers {name}`
 - `GET /sites?customer_id=` · `POST /sites {customer_id, name}`
 - `GET /doors?site_id=` · `POST /doors {site_id, name}`
 
-POST is idempotent by name within its parent: creating a name that already
-exists returns the existing record rather than erroring.
+POST is idempotent by name within its parent. An existing name returns the
+existing record.
 
-## The flow
-
-1. Operator fills the form at `/new` (customer/site/door + network) →
-   `POST /devices/generate-qr` mints a one-time token and returns it as a
-   signed QR image.
-2. Operator shows the QR to the device camera while the device is in init mode.
-3. The device verifies the Ed25519 signature and expiry locally, then
-   `POST /devices/register` redeems the token and receives a `device_token`.
-4. The device `POST /devices/{id}/status` every 30s. It shows online on the
-   dashboard for as long as those keep arriving.
+---
 
 ## API
 
-### `POST /devices/generate-qr` — dashboard
+### Dashboard side (operator)
+
+HTTP Basic when `ADMIN_USER` and `ADMIN_PASSWORD` are set.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /installation` | Create a pending installation and its QR. |
+| `GET /installation`, `GET /installation/{id}` | Pairing status. |
+| `GET /devices` | All devices with derived `online`, `last_seen_age_sec` and `state`. Purges acknowledged removals. |
+| `GET /devices/{id}` | One device plus its last 50 status reports. |
+| `GET /devices/{id}/events?limit=&type=` | Recent events, newest first. `limit` is clamped to `EVENTS_LIMIT`. |
+| `DELETE /devices/{id}/events` | Clear the stored event log only. Idempotent. |
+| `POST /devices/{id}/users` | Replace the device's whole assigned user set (`{badge_id: user_data}`). |
+| `DELETE /devices/{id}` | Remove a device (see below). |
+| `GET /healthz` | Liveness probe, no auth. |
+
+`POST /installation` body:
 ```jsonc
-// request
 { "customer_id": "acme", "site_id": "hq", "door_id": "main-entrance",
-  "validity_minutes": 10,
-  // How a not-yet-networked device reaches the server. Defaults to "local".
+  "deviceType": "Genie Door Camera Lite",          // optional
+  "device_mode": "card_and_face",                  // optional, see below
+  // How a device without a network reaches the server. Default "local".
   "network_profile": { "mode": "wifi", "wifi": { "ssid": "acme-guest", "password": "s3cr3t" } } }
-  //                 or { "mode": "local" }   -- device already on a LAN cable
-// response
-{ "token": "...", "nonce": "...", "issued_at": "...", "expires_at": "...",
-  "payload": { /* the full signed QR payload, incl. network_profile */ },
-  "qr_png": "data:image/png;base64,..." }
 ```
-The `network_profile` is signed into the QR (so it is tamper-proof) and stored
-on the device. Note the Wi-Fi password is *signed but not encrypted* — anyone
-who photographs the QR can read it.
+Response `201`: `_id`, `status` (`pending`), `payload` (the QR content) and
+`qr_png` (data URI).
 
-**Applying it on the device.** When `config.APPLY_NETWORK_PROFILE` is `True`
-(set it so only on the Pi), scanning a `wifi` QR makes the device actually join
-that network via NetworkManager (`nmcli`) *before* it registers — so a device
-with no LAN cable can come online from the QR alone. It is `False` by default so
-a dev machine is never reconfigured; a `local` profile is always a no-op.
+`device_mode` is `card_only`, `card_and_face` (default), `face_only` or
+`time_registry`. The device applies it at boot.
 
-`nmcli`-based joining needs polkit authorisation. The rule NetworkManager ships
-grants it only to a subject with `subject.local && subject.active` — a real
-logind session — so a device app running as a **systemd service** (no session)
-fails with `Insufficient privileges` even though its user is in `sudo`/`netdev`.
-Install a scoped rule instead of running the app as root; the repo ships one at
-`deploy/50-faceguard-nm.rules` → `/etc/polkit-1/rules.d/`:
-```javascript
-polkit.addRule(function (action, subject) {
-    if (subject.user !== "geka") {
-        return null;
-    }
-    if (action.id == "org.freedesktop.NetworkManager.settings.modify.system" ||
-        action.id == "org.freedesktop.NetworkManager.network-control" ||
-        action.id == "org.freedesktop.NetworkManager.enable-disable-wifi") {
-        return polkit.Result.YES;
-    }
-});
-```
-See `docs/SETUP_RPI5.md` §6.2 for the full rationale.
-If the Pi is joining the *new* Wi-Fi it will drop its current connection, so
-don't provision over the same Wi-Fi you're SSH'd in on.
+The Wi-Fi password is in the QR in plain text. Anyone who photographs the QR can
+read it, and the QR has no expiry.
 
-> **Note:** the dashboard seeds a default **Demo Customer → Demo Site → Demo
-> Door** the first time it starts with an empty database, so `/new` works
-> immediately without creating anything. Real records you add sit alongside it.
+### Terminal side
 
-### `POST /devices/register` — device
-No auth; the provisioning token *is* the credential.
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `POST /installation/pair` | none | Pair by `{installationId, mac, serial}`. |
+| `GET /devices/{id}/users` | Bearer | The device's assigned face users, keyed by badge ID. |
+| `POST /devices/{id}/status` | Bearer | Heartbeat with metadata and events. |
+
+The token must belong to `{id}`, otherwise `403`. A bad token gives `401`. All
+fields and rules are in [docs/DEVICE_SERVER_API.md](../docs/DEVICE_SERVER_API.md).
+
+Notes on this server:
+
+- The pair response adds `device_token`, `heartbeat_interval_sec` and
+  `device_mode` to the installation summary. The token is stored only as a
+  SHA-256 hash.
+- Users are kept per device in a JSON file (`{device_id: {badge_id: user_data}}`),
+  not in SQL. A new binding is seeded from `default_user_database.json`. This is
+  the same for every customer, which is fine for a proof of concept.
+- `metadata` in the status call is free-form and stored as-is. The kiosk sends
+  `app_version`, `device_type`, `serial_port`, `user_count`, `camera_available`,
+  `relay_available`, `session_active`, `init_mode_active`, `auth_in_progress`
+  and `storage`. The server requires none of them.
+- `metadata.events` is pulled out into the events table and removed from the
+  stored metadata.
+
+### Removing a device
+
+`DELETE /devices/{id}` is a **soft delete**. The row is marked `suspended` and
+kept, so the device's next heartbeat can be told it is gone. It is idempotent,
+and `404` means the device never existed.
+
 ```jsonc
-// request
-{ "token": "<provisioning_token from the QR>",
-  "nonce": "<nonce from the QR>",        // optional, cross-checked if sent
-  "mac": "aa:bb:cc:dd:ee:ff",
-  "device_type": "F455", "fw_version": "6.1.0", "app_version": "face-guard" }
-// response
-{ "device_id": "uuid", "device_token": "...", "heartbeat_interval_sec": 30,
-  "customer_id": "acme", "site_id": "hq", "door_id": "main-entrance" }
+{ "ok": true, "device_id": "…", "state": "suspended" }
 ```
-`device_token` is returned **once** and stored server-side only as a SHA-256
-hash. A device that loses it must be re-provisioned with a new QR.
 
-Errors: `404` unknown token · `409` already used · `400` expired or nonce
-mismatch.
+Lifecycle: `active` → (remove) `suspended` → the next heartbeat gets
+**`410 Gone`** and the row becomes `revoked_ack` → the next `GET /devices`
+purges it.
 
-### `POST /devices/{device_id}/status` — device
-`Authorization: Bearer <device_token>`. The token must belong to `{device_id}`,
-otherwise `403`.
-```jsonc
-// request
-{ "status": "online", "metadata": { "user_count": 42, "camera_available": true } }
-// response
-{ "ok": true, "server_time": "2026-08-16T08:26:07Z" }
-```
-`metadata` is a free-form object — whatever the device sends is stored and
-displayed as-is. No schema migration needed to add a field.
-
-The kiosk currently sends: `app_version`, `device_type`, `serial_port`,
-`user_count`, `camera_available`, `relay_available`, `session_active`,
-`init_mode_active`, `auth_in_progress`, and `storage` (an object with
-`path`, `total_mb`, `used_mb`, `free_mb`, `free_pct`, `low` — see
-`observability/storage_monitor.py`). None of these are required by the
-server; it's purely a display convention on the device side.
-
-The reserved `metadata.events` key carries device telemetry (see
-[Device events](#device-events)); it is pulled out into the events table and
-stripped from the stored metadata, so it never appears in the "latest metadata"
-panel.
-
-
-### `GET /devices/{device_id}/users` — device
-`Authorization: Bearer <device_token>`. Returns this device's assigned face
-users, keyed by badge_id, in the same shape as the device's local
-`user_database.json`:
-```jsonc
-{
-  "1001": {
-    "name": "alice",
-    "permission_level": "User",
-    "faceprints": { "version": 9, "features_type": 0, "flags": 3, "...": "..." }
-  }
-}
-```
-Backed by a simple per-device JSON file (`server/server_user_database.json`,
-`{device_id: {badge_id: user_data}}`) rather than the SQL device registry —
-server-side user management (who assigns which faces to which device) is not
-built yet, so this is deliberately the simplest thing that works. Every device
-is auto-seeded at `/devices/register` time with the flat template in
-`server/default_user_database.json` (`{badge_id: user_data}`, PoC-only — this
-is currently the same for every customer/site/door), so a fresh binding already
-has data on its very first sync. An admin can later replace a specific
-device's set via `POST /devices/{device_id}/users` (see below / the dashboard's
-"Assign user database" upload on `/device/{id}`). The device's
-`db.remote_provider.RemoteUserDataProvider` polls this every
-`DB_SYNC_INTERVAL_SEC` when `config.DB_MODE = "remote"` (and does an immediate
-first sync at startup, not waiting a full interval), replacing its local cache
-wholesale on each successful fetch (so a badge removed here is also removed on
-the device). Empty object if nothing is assigned yet; `404` if `device_id`
-doesn't exist; `401`/`403` on bad/mismatched token, same as `/status`.
-
-### `POST /devices/{device_id}/users` — dashboard
-Admin-authed (`require_admin`, same as other dashboard endpoints). Body is the
-flat `{badge_id: user_data}` shape — replaces this device's whole assigned set
-in one call. The dashboard's `/device/{id}` page has an upload widget that
-reads a local `.json` file and POSTs it here. `404` if `device_id` doesn't
-exist.
-
-### `DELETE /devices/{device_id}` — dashboard
-Removes a device. This is a **soft delete**: the row is marked `suspended`
-(kept as a tombstone) rather than erased, so the device's next heartbeat can be
-told it's gone. Idempotent; `404` if the device never existed.
-```jsonc
-// response
-{ "ok": true, "device_id": "uuid", "state": "suspended" }
-```
-Lifecycle: `active` → (Remove) `suspended` → the device's next heartbeat gets
-**`410 Gone`** and the row flips to `revoked_ack` → the next dashboard device
-list purges it. On the device, the 410 makes it delete its `device_identity.json`
-and return to the unbound state (ready to scan a new QR); face auth from the
-local DB is unaffected throughout. A removed device that is offline stays
-`suspended` until it next checks in.
-
-### Reads — dashboard
-- `GET /devices` — all devices with derived `online`, `last_seen_age_sec`, and
-  admin `state` (`active`/`suspended`/`revoked_ack`). Purges acknowledged
-  removals as a side effect.
-- `GET /devices/{id}` — the above plus the last 50 status reports.
-- `GET /devices/{id}/events?limit=&type=` — recent device events, newest first,
-  optionally filtered by `type`. `limit` is clamped to `EVENTS_LIMIT`.
-- `GET /tokens` — unredeemed provisioning tokens.
-- `GET /healthz` — unauthenticated liveness probe.
+On the device, the `410` deletes `device_identity.json`, erases the local users
+and faceprints, and returns to init mode, ready for a new QR. A device that is
+offline stays `suspended` until it next checks in. The heartbeat that gets the
+`410` is not recorded, and neither are the events of the device's final POST.
 
 ## Device events
 
-A lightweight event log for door telemetry — `device_boot`, `access_granted`,
-`access_denied`, `auth_matched`, `qr_accepted`, `qr_rejected`, `relay_opened`,
-`hardware_error`, `db_sync_ok` / `db_sync_failed`, `init_mode_entered`,
-`device_shutdown`, etc. The device-side emitter lives in `observability/events.py`.
-Access events reference a person by the opaque `user_id` only — never a real name
-or raw card id (schema v2 / FR-DATA-06).
+A light event log for door telemetry: `access_granted`, `access_denied`,
+`attendance_event`, `qr_accepted`, `db_sync_ok`, `hardware_error`, and so on.
+The device side lives in `observability/events.py`. Events name a person only
+by the opaque `user_id`, never a real name or card ID.
 
-**No new endpoint or connection.** Events piggyback on the existing heartbeat:
-the device buffers them and sends them in `metadata.events` on the next status
-POST. Each event is:
+There is no extra endpoint. Events ride in `metadata.events` of the status
+call. The device drops an event only after a `2xx`. The server does
+`INSERT OR IGNORE` on the unique `event_id`, so a resend never duplicates, and
+trims the log to `EVENTS_LIMIT` rows per device.
+
+Each device page (`/device/{id}`) shows an event log with a type filter.
 ```jsonc
-{ "event_id": "uuid",        // device-generated; enables idempotent resend
-  "ts": "2026-08-16T10:00:00Z",
-  "type": "access_granted",
-  "user_id": "u-8f2c1a", "method": "card" }   // any extra fields become "data"
+{ "event_id": "uuid", "ts": "2026-08-16T10:00:00Z", "type": "access_granted",
+  "user_id": 1, "method": "card" }   // extra fields are stored as "data"
 ```
-
-**Guaranteed delivery.** The device only drops an event from its buffer after
-the heartbeat carrying it returns 2xx, so a failed beat re-sends on the next
-one. Because a beat could be delivered but its response lost (device then
-resends), the server does `INSERT OR IGNORE` on the unique `event_id` — so
-resends never duplicate. The per-device log is trimmed to `EVENTS_LIMIT` rows.
-
-The dashboard shows these in an **Event log** section on each device's detail
-page (`/device/{id}`), with a type filter, auto-refreshing on the same cadence
-as the device list.
-
-### `DELETE /devices/{device_id}/events` — dashboard
-
-Admin-authed. Clears this device's stored event log only — the device row,
-its status history, and its assigned users are left untouched. Idempotent:
-clearing an already-empty log returns `deleted: 0`. `404` if `device_id`
-doesn't exist. Because ingestion is keyed by the device-generated `event_id`,
-cleared events are not re-created unless the device actually resends them on
-a later heartbeat.
-```jsonc
-// response
-{ "ok": true, "device_id": "uuid", "deleted": 12 }
-```
-
-## Signing
-
-`server/signing.py` imports `sign_payload()` and the issuer key from
-`other/qr_code_poc/`, rather than reimplementing either. The public half of that
-key is already deployed at
-`provisioning_keys/installer-signing-key-2026-01.pem`, which is exactly what the
-device's `QRScanner` loads — so codes issued here verify on an unmodified
-device, and canonical-JSON drift between the two sides is impossible.
-
-Timestamps use `%Y-%m-%dT%H:%M:%SZ` because the device parses `expires_at` with
-a literal `strptime` of that format and rejects anything else.
-
-### Why every QR is decoded before it is returned
-
-The signed payload is ~600 characters, which renders as a QR version 17 symbol.
-The device reads these with **pyzbar (zbar)**, so `signing.generate()` verifies
-each rendered image with that *same* decoder before returning it — an image the
-device's decoder can't read is one an installer would hold up to the camera in
-vain. If a render fails to decode, it re-signs with a fresh nonce (which changes
-the module pattern) and retries.
-
-pyzbar reads version-17+ symbols reliably, so this almost always passes on the
-first attempt; the retry loop is just a cheap safety net. (This is a deliberate
-switch away from OpenCV's `QRCodeDetector`, which dudded roughly 1 in 20 of
-these large symbols even from a pixel-perfect PNG — that unreliability was the
-original reason the self-check and retry loop exist.)
-
-pyzbar needs the system shared library `libzbar0`. Where it isn't available
-(e.g. a plain Render Python runtime with no apt), the self-check degrades to
-"skip" rather than failing the request — the QR is still returned, just not
-pre-verified server-side.
-
-Error correction is set to L rather than M: it drops the symbol from version 19
-to 17, so the modules are larger and easier for the camera to resolve. Error
-correction buys little here — the code is displayed on a clean screen, and the
-Ed25519 signature already covers integrity.
-
-> The issuer private key is committed to this repo, so anyone with repo access
-> can forge provisioning QRs. Acceptable for a POC; before production, generate
-> a fresh keypair, ship only the public half to `provisioning_keys/`, and load
-> the private half from a secret. Devices load *every* `*.pem` in that
-> directory, so both key ids can coexist during rotation.
-
-## Expiry
-
-Checked twice against the same signed `expires_at`:
-
-- **On the device**, in `QRScanner._verify()` — a stale QR never reaches the
-  network. `expires_at` is inside the signed blob, so it cannot be edited.
-- **On the server**, at `/devices/register` — the server never assumes the
-  device honoured the first check, since a device could be replaying an old
-  capture.
 
 ## Testing
 
@@ -364,52 +198,37 @@ Checked twice against the same signed `expires_at`:
 python -m pytest server/tests -q
 ```
 
-Three files, 62 tests, no hardware required:
-
-- **`test_provisioning.py`** drives the API through `TestClient`. The tests that
-  matter most run server-generated QR *images* through the real, unmodified
-  device verifier (`qr_scanner/qr_scanner.py`) and assert they are accepted,
-  that replays are rejected, that expired codes are rejected, and that 25
-  consecutive codes are all decodable. They skip if `numpy`/`pyzbar` are absent.
-- **`test_device_binding.py`** starts a live uvicorn server and exercises
-  `provisioning/client.py` and `provisioning/binding.py` over real HTTP — the
-  same code the Pi runs, including the reboot-resumes case and the "server
-  unreachable" path. It imports no PySide6 and no `rsid_py`.
-- **`test_events.py`** posts heartbeats carrying `metadata.events` and asserts
-  they are filed, deduped by `event_id`, bounded to `EVENTS_LIMIT`, stripped
-  from stored metadata, and served back (with type filtering) by the events
-  endpoint.
-
-### Fake device
-
-Exercises the whole flow with no hardware. Its requests are exactly the ones the
-real device will make.
-
-```bash
-# 1. generate a QR (or use the /new page and save the payload)
-curl -s -X POST http://localhost:8000/devices/generate-qr \
-     -H 'Content-Type: application/json' \
-     -d '{"customer_id":"acme","site_id":"hq","door_id":"main-entrance"}' \
-  | python -c "import json,sys; json.dump(json.load(sys.stdin)['payload'], open('payload.json','w'))"
-
-# 2. register + heartbeat
-python -m server.tools.fake_device --payload-file payload.json --interval 15
-```
-
-The device appears on the dashboard and goes green. Stop it with Ctrl-C and it
-flips to offline after `HEARTBEAT_TIMEOUT_SEC`.
+59 tests, no hardware needed, in four files: `test_installations.py`
+(installation and pairing rules), `test_server_api.py` (the API through
+`TestClient`), `test_device_binding.py` (a live uvicorn server driven by
+`provisioning/client.py` and `provisioning/binding.py` over real HTTP) and
+`test_events.py` (events are filed, deduplicated, bounded and served back).
 
 ## Deploying to Render
 
-`render.yaml` at the repo root is a ready blueprint. Two things to get right:
+`render.yaml` at the repo root is a ready blueprint. Two things must be right:
 
-- **Attach the disk.** Render's filesystem is ephemeral; without the declared
-  disk at `/var/data`, every deploy wipes the device registry.
-- **Set `PUBLIC_BASE_URL`** to the service's public URL. It is signed into every
-  QR, so if it is wrong, devices scan the code fine and then call nowhere.
+- **Attach the disk.** Render's filesystem is ephemeral. Without the disk at
+  `/var/data`, every deploy wipes the device registry.
+- **Set `PUBLIC_BASE_URL`** to the service's public URL. It is the `serverLink`
+  in every QR. If it is wrong, devices scan the code fine and then call nowhere.
+
+The blueprint uses `PUBLIC_BASE_URL=https://rsid-face-guard.onrender.com`,
+`DB_PATH=/var/data/faceguard.db` and
+`USER_STORE_FILE=/var/data/server_user_database.json`.
+
+- Before you switch an existing deployment to the persistent user-store path,
+  copy its current assigned-user file there. Do not overwrite an existing
+  persistent store.
+- The SQLite migration is additive and keeps legacy device rows.
+- Deploy the server before you update the kiosks.
+- Installation IDs only exist on the server that created them. The device uses
+  the `serverLink` from its QR.
 
 Free-tier services sleep when idle. A sleeping server means heartbeats fail and
-every device shows offline — worth knowing before a demo.
+every device shows offline. Remember this before a demo.
+
+---
 
 ## The device side
 
@@ -417,54 +236,66 @@ Implemented in `provisioning/` at the repo root:
 
 | Module | Role |
 |---|---|
-| `identity.py` | Load/save/`clear()` `device_identity.json` (atomic write; holds the bearer token + the customer/site/door and network_profile, so it is gitignored). `clear()` is used when the server revokes the device. |
-| `client.py` | The two HTTP calls — `register()` and `post_status()`. |
-| `heartbeat.py` | Daemon thread posting status every `config.HEARTBEAT_INTERVAL_SEC`, with capped backoff. Never raises into the kiosk. |
-| `binding.py` | `BindingManager` — the flow the GUI calls. |
+| `identity.py` | Load/save/`clear()` `device_identity.json` (atomic write, mode 0600, gitignored). It holds the bearer token, the customer/site/door, the network profile and the device mode. `clear()` runs when the server removes the device. |
+| `client.py` | The two HTTP calls: `pair()` and `post_status()`. |
+| `heartbeat.py` | Daemon thread posting status every `heartbeat_interval_sec`, with capped backoff (300 s). Never raises into the kiosk. |
+| `binding.py` | `BindingManager`, the flow the GUI calls. |
+| `network.py` | Joins the QR's Wi-Fi through NetworkManager. |
+| `hardware_identity.py` | Reads the Pi serial (`DEVICE_SERIAL_OVERRIDE` overrides it for development). |
 
-`_on_qr_detected()` in `session/controller.py` calls
-`BindingManager.bind_async()`, which registers on a worker thread
-(registration is blocking HTTP and must not touch the UI thread) and reports
-back through the window's `_SignalBridge`. At startup the app calls
-`start_if_bound()`, so a device that was provisioned on an earlier run comes
-back online after a reboot without rescanning anything.
+`session/controller.py` calls `BindingManager.bind_async()` when a QR is
+accepted. It pairs on a worker thread, because pairing is blocking HTTP and must
+not touch the UI thread, and reports back through the window's `_SignalBridge`.
+At startup the app calls `start_if_bound()`, so a paired device comes back
+online after a reboot without rescanning.
 
-Rescanning a new QR re-binds the device to the new door, replacing the old
-identity. A failed registration leaves the device unbound rather than
-half-configured.
+Scanning a new QR re-pairs the device and replaces the old identity. A failed
+pairing keeps the old identity.
 
-**Removal handling.** The GUI passes an `on_revoked` callback to
-`BindingManager`. When a heartbeat gets `410 Gone` (the device was removed on
-the dashboard), the heartbeat thread drops the identity file via
-`identity.clear()`, goes unbound, and the GUI shows "Device removed — Rescan a
-QR to re-enroll". A reboot then comes back unbound, ready for a fresh QR.
+**Removal.** When a heartbeat gets `410 Gone`, `BindingManager` queues
+`device_revoked`, tries one final POST, drops the identity file and calls the
+GUI, which stops sync, erases the local users and faceprints and returns to init
+mode. A reboot comes back unbound.
 
-Device-side config lives in the root `config.py` under "Device Binding". Note
-the server URL is deliberately *not* configured there — it comes from the signed
-QR payload, which is how a fresh device learns which deployment it belongs to.
+Device-side settings are in the root `config.py` under "Device Binding". The
+server URL is deliberately not configured there. It comes from the QR's
+`serverLink`.
+
+### Wi-Fi from the QR
+
+When `config.APPLY_NETWORK_PROFILE` is `True` (set it only on the Pi), a QR
+with a `wifi` profile makes the device join that network through NetworkManager
+(`nmcli`) **before** it pairs. So a device with no LAN cable can come online
+from the QR alone. A `local` profile does nothing.
+
+`nmcli` needs polkit authorisation. The rule NetworkManager ships only grants
+it to a real logind session, so a systemd service fails with
+`Insufficient privileges`. Install the scoped rule from
+`deploy/50-faceguard-nm.rules` into `/etc/polkit-1/rules.d/`. See
+`docs/SETUP_RPI5.md` §6.2 for the details. If the Pi joins a *new* Wi-Fi it
+drops its current connection, so do not pair over the Wi-Fi you are using for
+SSH.
 
 ## Real-device demo runbook
 
 1. **Run the server where the Pi can reach it.** A laptop on the same LAN is the
-   lower-risk choice for a first run — fewer moving parts than Render, which
-   also sleeps when idle.
+   lower-risk choice for a first run. Render also sleeps when idle.
    ```bash
    PUBLIC_BASE_URL=http://192.168.1.50:8000 uvicorn server.main:app --host 0.0.0.0 --port 8000
    ```
    Check from the Pi: `curl http://192.168.1.50:8000/healthz`.
-2. **Generate.** Fill the form at `/new`, leave validity at 10 minutes.
-3. **Bind.** Boot the device with `config.INIT_MODE_ENABLED = True` and hold the
-   QR to the camera. `face_guard.log` should show `QR scan result: ACCEPTED`
-   followed by `Registered successfully: device_id=…`, and the screen should
-   read "Device registered".
-4. **Confirm.** The device appears on the dashboard and goes green; `last_seen`
-   ticks over every 30s. The detail page should show `user_count`,
-   `camera_available` and `relay_available` matching reality.
-5. **Reboot.** Restart the Pi. It must return online *without* rescanning.
+2. **Create the installation.** Fill the form at `/new`.
+3. **Pair.** Boot the device with `config.INIT_MODE_ENABLED = True` and hold the
+   QR to the camera. Keep it near the middle of the picture, because the
+   preview is cropped to the centre square. The log should show `qr_accepted`
+   and `Device identity saved`, and the screen should read "Device paired".
+4. **Confirm.** The device appears on the dashboard and goes green. `last_seen`
+   ticks over every `heartbeat_interval_sec`. The detail page should show
+   `user_count`, `camera_available` and `relay_available` matching reality.
+5. **Reboot.** Restart the Pi. It must come back online without rescanning.
 6. **Offline detection.** Stop the server or unplug the network. The dashboard
    flips the device to offline after `HEARTBEAT_TIMEOUT_SEC`, while the kiosk
    keeps authenticating faces from the local database. Restore the link and it
    recovers on its own.
-7. **Expired QR.** Generate with `validity_minutes=1`, wait two minutes, then
-   show it. `qr_scanner` must reject it (`token expired` in the log) and no
-   device should appear.
+7. **Removal.** Remove the device on the dashboard. Within one heartbeat the
+   kiosk shows "Device removed", erases its users and waits for a new QR.

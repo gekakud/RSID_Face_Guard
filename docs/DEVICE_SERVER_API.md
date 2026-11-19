@@ -1,17 +1,19 @@
 # RSID Face Guard — Device ↔ Server API
 
-> **Current contract.** Unsigned installation QR →
+> **Scope.** Only what the terminal (the door device) and your backend send
+> each other: QR pairing, user list fetch, heartbeat with events, and removal.
+> How your backend creates installations, shows QR codes or removes devices
+> (dashboard, admin tools) is your own business and is not described here.
+> A reference backend is in [server/README.md](../server/README.md).
+>
+> **Flow in short.** The terminal scans an unsigned installation QR, then calls
 > `POST {serverLink}/installation/pair` with `{installationId, mac, serial}`.
-> The server answers with the paired installation, the hardware `device` ID, a
-> `device_token` and a `heartbeat_interval_sec`. The terminal then uses the
-> users and status APIs below. There is no signature, nonce or one-time token.
-> The old signed-QR flow (`/devices/generate-qr`, `/devices/register`, Ed25519)
-> is gone from both the server and the device, see
-> [§11](#11-what-changed-from-the-old-contract). Server internals:
-> [server/README.md](../server/README.md).
+> The backend answers with the hardware `device` ID, a `device_token` and a
+> `heartbeat_interval_sec`. The terminal then uses the users and status APIs
+> below. There is no signature, nonce or one-time token. The old signed-QR flow
+> is gone, see [§11](#11-what-changed-from-the-old-contract).
 
-What the terminal (the door device) and your server send each other. Four
-endpoints, in the order you will build them.
+Three endpoints, in the order you will build them.
 
 ---
 
@@ -19,28 +21,28 @@ endpoints, in the order you will build them.
 
 | # | Endpoint | Called by | Auth | How often |
 |---|---|---|---|---|
-| 1 | `POST /installation` | your dashboard | operator login (HTTP Basic, only if `ADMIN_USER`/`ADMIN_PASSWORD` are set) | when a technician installs a terminal |
-| 2 | `POST /installation/pair` | terminal | none — the installation ID in the body is the credential | once per scan of a QR |
-| 3 | `GET /devices/{device_id}/users` | terminal | `Authorization: Bearer <device_token>` | at start-up, right after pairing, then every 60 s |
-| 4 | `POST /devices/{device_id}/status` | terminal | `Authorization: Bearer <device_token>` | every `heartbeat_interval_sec` |
+| 1 | `POST /installation/pair` | terminal | none — the installation ID in the body is the credential | once per scan of a QR |
+| 2 | `GET /devices/{device_id}/users` | terminal | `Authorization: Bearer <device_token>` | at start-up, right after pairing, then every 60 s |
+| 3 | `POST /devices/{device_id}/status` | terminal | `Authorization: Bearer <device_token>` | every `heartbeat_interval_sec` |
 
-Operator actions the terminal never calls: removing a terminal
-([§9](#9-removing-a-terminal)), assigning users (`POST /devices/{device_id}/users`),
-and listing installations or devices.
+Two more things your backend must do, even though they are not endpoints the
+terminal calls: produce the installation QR before pairing
+([§4](#4-the-installation-qr)) and answer `410` to a removed device
+([§9](#9-removing-a-terminal)). How you do either is up to you.
 
 Three facts that shape everything else:
 
 - **The terminal decides access on its own.** It never asks you whether to open
   a door. It matches the card and face against the user list it downloaded from
-  endpoint 3 and cached locally, so doors keep working while your server is
+  endpoint 2 and cached locally, so doors keep working while your backend is
   down. What you control is *what is in that list*.
-- **That list is a full replacement set.** Whatever endpoint 3 returns is
+- **That list is a full replacement set.** Whatever endpoint 2 returns is
   exactly what the door honours from then on. Anyone missing from a usable
   `200` loses access ([§7.3](#73-two-rules-you-must-not-break)).
 - **The QR is not signed.** It carries only an installation ID, a device type
-  and your server URL (plus Wi-Fi credentials when you ask for them). The
-  server has no expiry on installations, so treat the QR as sensitive,
-  especially when it holds a Wi-Fi password.
+  and your backend URL (plus Wi-Fi credentials when you ask for them). The
+  reference backend has no expiry on installations, so treat the QR as
+  sensitive, especially when it holds a Wi-Fi password.
 
 ---
 
@@ -83,13 +85,11 @@ only on heartbeat) is special. On pairing every non-`2xx` is final for that scan
 
 ```mermaid
 sequenceDiagram
-    participant Dash as Dashboard
-    participant Srv as Server
     participant Tech as Technician
     participant Dev as Terminal
+    participant Srv as Backend
 
-    Dash->>Srv: POST /installation {customer_id, site_id, door_id, ...}
-    Srv-->>Dash: 201 {_id, status: pending, payload, qr_png}
+    Note over Srv: creates an installation and its QR (your own tooling)
     Tech->>Dev: holds the QR to the camera
     Dev->>Dev: parse + validate the QR (no signature)
     Dev->>Dev: join Wi-Fi if the QR has a wifi profile
@@ -100,8 +100,8 @@ sequenceDiagram
     Dev->>Srv: GET /users, then POST /status on a timer (Bearer)
 ```
 
-If pairing fails, nothing is saved on the terminal. A technician fixes the
-cause (often by generating a new QR) and scans again.
+If pairing fails, nothing is saved on the terminal. The technician fixes the
+cause (often by creating a new QR) and scans again.
 
 ### 3.2 Normal running
 
@@ -113,71 +113,14 @@ cause (often by generating a new QR) and scans again.
 
 ---
 
-## 4. `POST /installation` — create an installation and its QR
+## 4. The installation QR
 
-Called by your dashboard when a technician is installing a terminal. It creates
-a *pending* installation and returns the QR image.
+Before a terminal can pair, your backend creates an *installation* and shows its
+QR to the technician. Remember these per installation, because the pair call
+returns them: the installation ID, the customer / site / door names, the
+`device_mode` and the `network_profile` ([§5](#5-device-mode-and-network-profile)).
 
-### Request
-
-```json
-{
-  "customer_id": "acme",
-  "site_id": "hq",
-  "door_id": "main-entrance",
-  "deviceType": "Genie Door Camera Lite",
-  "device_mode": "card_and_face",
-  "network_profile": {
-    "mode": "wifi",
-    "wifi": { "ssid": "acme-installers", "password": "s3cr3t-pass" }
-  }
-}
-```
-
-| Field | Required | Notes |
-|---|---|---|
-| `customer_id`, `site_id`, `door_id` | yes | 1–64 chars. Human-readable names. They come back in the pair response as `customer`, `venue` and `gate`. |
-| `deviceType` | no | Default `Genie Door Camera Lite`. |
-| `device_mode` | no | One of the four values below. Default `card_and_face`. |
-| `network_profile` | no | `{"mode": "local"}` (default, terminal is cabled) or `{"mode": "wifi", "wifi": {"ssid": "...", "password": "..."}}`. |
-
-`device_mode` values:
-
-| Mode | Behaviour at the door |
-|---|---|
-| `card_only` | Valid, active card opens the relay. No face step. |
-| `card_and_face` | Valid card starts a session, then the face is verified against that cardholder. **Normal production mode.** |
-| `face_only` | Screen tap starts a face search against all enrolled users. For doors with no card reader. |
-| `time_registry` | IN/OUT attendance. No relay. See [§10](#10-time_registry-mode). |
-
-The terminal applies the mode **at boot**. If a new pairing returns a different
-mode than the one running, the screen says "Restart for <mode>". When the server
-returns no mode, the terminal keeps its own `config.DEVICE_MODE` (`face_only`).
-
-### Response — `201`
-
-```json
-{
-  "_id": "16e467fae6e2692c8255c33a",
-  "status": "pending",
-  "payload": {
-    "installationId": "16e467fae6e2692c8255c33a",
-    "deviceType": "Genie Door Camera Lite",
-    "serverLink": "https://access.example.com"
-  },
-  "qr_png": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg..."
-}
-```
-
-`_id` is 24 random hex characters. `qr_png` drops straight into an
-`<img src="...">`. `serverLink` is the server's `PUBLIC_BASE_URL`, so set it
-correctly: a wrong value means the terminal scans fine and then calls nowhere.
-
----
-
-## 5. The QR content
-
-The QR holds the compact JSON of `payload`, with no signature:
+The QR holds this compact JSON, with no signature:
 
 ```json
 {"installationId":"16e467fae6e2692c8255c33a","deviceType":"Genie Door Camera Lite","serverLink":"https://access.example.com"}
@@ -189,6 +132,10 @@ the QR small:
 ```json
 "networkProfile": { "mode": "wifi", "wifi": { "ssid": "acme-installers", "password": "s3cr3t-pass" } }
 ```
+
+`serverLink` is your public base URL. If it is wrong, the terminal scans fine
+and then calls nowhere. The reference backend uses 24 random hex characters for
+`installationId`.
 
 What the terminal accepts (`qr_scanner/payload.py`):
 
@@ -202,12 +149,35 @@ What the terminal accepts (`qr_scanner/payload.py`):
 
 On a good scan the terminal queues `qr_accepted` and, **before** the pair call,
 joins the Wi-Fi network if the QR has one (`APPLY_NETWORK_PROFILE` is on). A
-fresh terminal may have no other route to your server.
+fresh terminal may have no other route to your backend.
 
-The scanner reads the same camera frame the preview shows, which is now cropped
-to the centre square. Keep the QR near the middle of the picture.
+The scanner reads the same camera frame the preview shows, which is cropped to
+the centre square. Keep the QR near the middle of the picture.
 
 ---
+
+## 5. Device mode and network profile
+
+Your backend chooses these per installation. The terminal gets `device_mode` in
+the pair response and the Wi-Fi block in the QR.
+
+| `device_mode` | Behaviour at the door |
+|---|---|
+| `card_only` | Valid, active card opens the relay. No face step. |
+| `card_and_face` | Valid card starts a session, then the face is verified against that cardholder. **Normal production mode.** |
+| `face_only` | Screen tap starts a face search against all enrolled users. For doors with no card reader. |
+| `time_registry` | IN/OUT attendance. No relay. See [§10](#10-time_registry-mode). |
+
+The terminal applies the mode **at boot**. If a new pairing returns a different
+mode than the one running, the screen says "Restart for <mode>". When the
+response has no mode, the terminal keeps its own `config.DEVICE_MODE`
+(`face_only`). The reference backend defaults to `card_and_face`.
+
+`network_profile` is `{"mode": "local"}` (terminal is cabled, the default) or
+`{"mode": "wifi", "wifi": {"ssid": "...", "password": "..."}}`.
+
+---
+
 ## 6. `POST /installation/pair` — the terminal pairs
 
 The terminal calls this after it accepts the QR and joins Wi-Fi if needed. **No
@@ -484,46 +454,49 @@ is `db_sync_invalid_record`, which carries the `badge_id` of the bad record.
 
 ## 9. Removing a terminal
 
-The terminal never asks to be removed. It finds out by getting **`410`** on a
-heartbeat. Our server does this with `DELETE /devices/{device_id}` (operator
-login).
+The terminal never asks to be removed and never calls a remove endpoint. Your
+backend tells it by answering **`410`** to a status call. Who removes the device
+and how (dashboard, admin tool) is your own business. The terminal only reacts
+to the `410`.
 
-### 9.1 Keep the row
+### 9.1 Keep a record of the device
 
 A hard delete cannot revoke anything. The token would resolve to nothing, the
 heartbeat would get `401`, and the terminal would back off, retry forever, keep
-its users and keep opening the door. Only `410` triggers the wipe. So the server
-keeps a row with a state:
+its users and keep opening the door. Only `410` triggers the wipe. So when a
+device is removed, keep a record of it:
 
 | State | Meaning | Answer to `POST /status` |
 |---|---|---|
-| `active` | Normal | `200` |
-| `suspended` | Operator removed it, device not told yet | `410`, then the state becomes `revoked_ack` |
-| `revoked_ack` | Device has been told | `410` |
-| *(row deleted)* | Purged the next time the device list is loaded | `401` |
+| active | Normal | `200` |
+| removed, not told yet | Removed on your side | `410`, then move to "told" |
+| removed, told | The terminal has seen the `410` | `410` |
+| *(record deleted)* | Cleaned up after it was told | `401` |
 
-### 9.2 What to expect
+Delete the record only after the terminal has been told. A terminal that is
+switched off gets told at its next boot.
 
-- Removal takes effect on the **next heartbeat**, or at the next boot for a
-  terminal that is off.
-- On `410` the terminal queues `device_revoked`, tries one final status POST,
-  deletes its identity, stops sync, **erases all users and faceprints**, and
-  returns to init mode (deny everyone) waiting for a QR.
-- **That final POST is not stored.** It carries the old token, our server
-  answers `410` again, and it records nothing for a removed device. So
-  `device_revoked` never reaches the dashboard. Use the change to `revoked_ack`
-  as the proof.
-- **The users endpoint does not answer `410`.** `GET /devices/{device_id}/users`
-  only checks the token, so a suspended terminal can still fetch users until its
-  next heartbeat. The terminal treats any non-`200` there as a failed sync, so a
-  `410` would not wipe it anyway.
-- There is no un-remove. A new QR pairs the same hardware again. The server finds
-  the row by serial, so the `device_id` stays the same if the row has not been
-  purged yet, and the state returns to `active`. After a purge the device gets a
-  new `device_id`.
+### 9.2 What the terminal does
+
+- It reacts on the **next heartbeat**, or at the next boot if it was off.
+- On `410` it queues `device_revoked`, tries one final status POST, deletes its
+  identity, stops sync, **erases all users and faceprints**, and returns to init
+  mode (deny everyone) waiting for a QR.
+- **That final POST is not stored by the reference backend.** It carries the old
+  token and gets `410` again, so `device_revoked` never arrives. Use your own
+  "told" state as the proof that the wipe was ordered.
+- **The users endpoint should not rely on `410`.** The terminal treats any
+  non-`200` there as a failed sync and does not wipe. The reference backend only
+  checks the token there, so a removed terminal can still fetch users until its
+  next heartbeat.
+- There is no un-remove. A new QR pairs the same hardware again. The reference
+  backend finds the record by serial, so the `device_id` stays the same if the
+  record still exists, and the device becomes active again. After the record is
+  deleted the device gets a new `device_id`.
 - To disable a *person*, set `active: false` ([§7.1](#71-record-fields)).
 
 ---
+
 
 ## 10. `time_registry` mode
 
@@ -542,11 +515,11 @@ so a power cut, or more than 200 events during an outage, loses them.
 
 | Old | Now |
 |---|---|
-| `POST /devices/generate-qr`, Ed25519-signed QR with nonce and expiry | `POST /installation`, plain QR with `installationId`, `deviceType`, `serverLink` |
-| `POST /devices/register` with a one-time token | `POST /installation/pair` with `{installationId, mac, serial}` |
+| Ed25519-signed QR with nonce and expiry | Plain QR with `installationId`, `deviceType`, `serverLink` |
+| `POST /devices/register` with a one-time token (terminal side) | `POST /installation/pair` with `{installationId, mac, serial}` |
 | Terminal verifies a signature offline | No signature. Pairing does not use `provisioning_keys/`. |
 | Server mints a new `device_id` per registration | Hardware is keyed by Pi serial and keeps its `device_id` |
-| `device_mode` and `network_profile` signed into the QR flow | Set on `POST /installation`, returned by pair. Wi-Fi also rides in the QR. |
+| `device_mode` and `network_profile` signed into the QR flow | Chosen by the backend per installation, returned by pair. Wi-Fi rides in the QR. |
 | User sync every 600 s | Every 60 s (`DB_SYNC_INTERVAL_SEC`) and once right after pairing |
 | Heartbeat every 30 s, fixed | `heartbeat_interval_sec` from the pair response (30 s on our server) |
 | `401`/`403` on heartbeat: "nothing stops" | Counts as a failed beat: backoff up to 300 s, door keeps working |
