@@ -78,6 +78,33 @@ def test_placeholder_is_valid_jpeg():
     assert data.endswith(b"\xff\xd9")    # JPEG EOI marker
 
 
+def test_wait_for_frame_returns_new_frame():
+    s = _streamer()
+    seq0, frame0 = s.wait_for_frame(-1, timeout=0.05)
+    assert frame0 is None  # nothing encoded yet
+
+    s._encode_store(_frame())
+    seq1, frame1 = s.wait_for_frame(seq0, timeout=0.5)
+    assert seq1 != seq0
+    assert frame1 is not None
+
+
+def test_wait_for_frame_times_out_without_new_frame():
+    s = _streamer()
+    s._encode_store(_frame())
+    seq, _ = s.wait_for_frame(-1, timeout=0.05)
+    seq2, _ = s.wait_for_frame(seq, timeout=0.05)
+    assert seq2 == seq  # no new frame arrived
+
+
+def test_wait_for_frame_hides_stale_frame():
+    s = _streamer()
+    s._encode_store(_frame())
+    s._latest_ts -= CameraStreamer.STALE_AFTER_SEC + 0.1
+    _, frame = s.wait_for_frame(-1, timeout=0.05)
+    assert frame is None
+
+
 def test_portrait_frame_is_cropped_square_and_downscaled():
     import io
     from PIL import Image

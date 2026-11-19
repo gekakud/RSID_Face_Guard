@@ -366,7 +366,7 @@ class GUIWeb(QMainWindow):
             directory=os.path.join(PROJECT_ROOT, config.WEB_UI_DIR),
             streamer=self.streamer,
             port=config.WEB_FRAME_PORT,
-            stream_fps=10,
+            stream_fps=15,  # upper cap; the stream follows the camera (~14 fps)
         )
         # Periodic disk-space check (independent of the heartbeat interval).
         # Emits storage_low/storage_ok events on threshold crossings; the

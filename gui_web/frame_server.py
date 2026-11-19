@@ -54,7 +54,9 @@ class CameraStreamer:
         self.max_width = max_width
         self._latest = None
         self._latest_ts = 0.0
+        self._seq = 0
         self._lock = threading.Lock()
+        self._cond = threading.Condition(self._lock)
         self._running = False
         self._thread = None
 
@@ -108,9 +110,26 @@ class CameraStreamer:
             img = img.resize((self.max_width, self.max_width), Image.BILINEAR, reducing_gap=2.0)
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=self.jpeg_quality)
-        with self._lock:
+        with self._cond:
             self._latest = buf.getvalue()
             self._latest_ts = time.monotonic()
+            self._seq += 1
+            self._cond.notify_all()
+
+    def wait_for_frame(self, last_seq: int, timeout: float = 1.0):
+        """Block until a frame newer than last_seq exists (or timeout/stop).
+
+        Returns (seq, jpeg); jpeg is None when no fresh frame (camera paused).
+        """
+        with self._cond:
+            self._cond.wait_for(
+                lambda: self._seq != last_seq or not self._running, timeout
+            )
+            fresh = (
+                self._latest is not None
+                and time.monotonic() - self._latest_ts <= self.STALE_AFTER_SEC
+            )
+            return self._seq, (self._latest if fresh else None)
 
     def latest(self):
         """Newest JPEG, or None if it is stale (camera paused/stopped).
@@ -133,7 +152,9 @@ class CameraStreamer:
         return self.latest() is not None
 
     def stop(self):
-        self._running = False
+        with self._cond:
+            self._running = False
+            self._cond.notify_all()
 
 
 def _placeholder_jpeg(width: int = 320, height: int = 320) -> bytes:
@@ -170,21 +191,28 @@ def make_handler(directory, streamer, stream_fps):
             self.send_header("Pragma", "no-cache")
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=FRAME")
             self.end_headers()
-            interval = 1.0 / stream_fps
+            min_interval = 1.0 / stream_fps
             placeholder = _placeholder_jpeg()
+            seq = -1
+            last_sent = 0.0
             try:
-                while True:
-                    # A paused preview yields None (stale). Push the neutral
-                    # placeholder rather than skipping, otherwise the browser
-                    # keeps showing the last live frame and the screen looks
-                    # frozen mid-authentication.
-                    frame = streamer.latest() or placeholder
+                while streamer.available:
+                    # Send on each new camera frame (no timer, no duplicates).
+                    # While paused there is no fresh frame: push the neutral
+                    # placeholder about once a second, so the browser doesn't
+                    # keep the last live frame (looks frozen) and its stall
+                    # watchdog still sees data.
+                    seq, frame = streamer.wait_for_frame(seq, timeout=1.0)
+                    now = time.monotonic()
+                    if frame is not None and now - last_sent < min_interval:
+                        continue  # over the fps cap: drop this frame
+                    frame = frame or placeholder
                     self.wfile.write(b"--FRAME\r\n")
                     self.wfile.write(b"Content-Type: image/jpeg\r\n")
                     self.wfile.write(f"Content-Length: {len(frame)}\r\n\r\n".encode())
                     self.wfile.write(frame)
                     self.wfile.write(b"\r\n")
-                    time.sleep(interval)
+                    last_sent = now
             except (BrokenPipeError, ConnectionResetError):
                 pass  # client (the <img>) navigated away / reloaded
 

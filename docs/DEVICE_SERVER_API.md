@@ -1,14 +1,14 @@
 # RSID Face Guard — Device ↔ Server API
 
-> **Current binding contract (2026-10-18):** unsigned installation QR →
+> **Current contract.** Unsigned installation QR →
 > `POST {serverLink}/installation/pair` with `{installationId, mac, serial}`.
-> `serial` is the Raspberry Pi board serial. Our Render server returns paired
-> installation metadata and hardware `device` ID, plus `device_token` and
-> `heartbeat_interval_sec` compatibility extensions. Identity version 2 uses
-> local network and `face_only`, then the existing users/status APIs.
-> No signature, nonce, token redemption or Wi-Fi changes are part of new
-> binding. See [server documentation](../server/README.md) for the current
-> contract. The signed provisioning contract below is legacy documentation.
+> The server answers with the paired installation, the hardware `device` ID, a
+> `device_token` and a `heartbeat_interval_sec`. The terminal then uses the
+> users and status APIs below. There is no signature, nonce or one-time token.
+> The old signed-QR flow (`/devices/generate-qr`, `/devices/register`, Ed25519)
+> is gone from both the server and the device, see
+> [§11](#11-what-changed-from-the-old-contract). Server internals:
+> [server/README.md](../server/README.md).
 
 What the terminal (the door device) and your server send each other. Four
 endpoints, in the order you will build them.
@@ -19,13 +19,14 @@ endpoints, in the order you will build them.
 
 | # | Endpoint | Called by | Auth | How often |
 |---|---|---|---|---|
-| 1 | `POST /devices/generate-qr` | your dashboard | your own operator login | when a technician installs a terminal |
-| 2 | `POST /devices/register` | terminal | none — the one-time token in the body is the credential | once per terminal |
-| 3 | `GET /devices/{device_id}/users` | terminal | `Authorization: Bearer <device_token>` | every 600 s |
-| 4 | `POST /devices/{device_id}/status` | terminal | `Authorization: Bearer <device_token>` | every 30 s |
+| 1 | `POST /installation` | your dashboard | operator login (HTTP Basic, only if `ADMIN_USER`/`ADMIN_PASSWORD` are set) | when a technician installs a terminal |
+| 2 | `POST /installation/pair` | terminal | none — the installation ID in the body is the credential | once per scan of a QR |
+| 3 | `GET /devices/{device_id}/users` | terminal | `Authorization: Bearer <device_token>` | at start-up, right after pairing, then every 60 s |
+| 4 | `POST /devices/{device_id}/status` | terminal | `Authorization: Bearer <device_token>` | every `heartbeat_interval_sec` |
 
-There is also one operator action that is **not** an endpoint the terminal
-calls: removing a terminal. See [§9](#9-removing-a-terminal).
+Operator actions the terminal never calls: removing a terminal
+([§9](#9-removing-a-terminal)), assigning users (`POST /devices/{device_id}/users`),
+and listing installations or devices.
 
 Three facts that shape everything else:
 
@@ -34,191 +35,88 @@ Three facts that shape everything else:
   endpoint 3 and cached locally, so doors keep working while your server is
   down. What you control is *what is in that list*.
 - **That list is a full replacement set.** Whatever endpoint 3 returns is
-  exactly what the door will honour from then on. Anyone missing from a `200`
-  loses access.
-- **You hold the signing key.** You sign the provisioning QR with an Ed25519
-  private key; terminals carry only the public half and verify offline.
+  exactly what the door honours from then on. Anyone missing from a usable
+  `200` loses access ([§7.3](#73-two-rules-you-must-not-break)).
+- **The QR is not signed.** It carries only an installation ID, a device type
+  and your server URL (plus Wi-Fi credentials when you ask for them). The
+  server has no expiry on installations, so treat the QR as sensitive,
+  especially when it holds a Wi-Fi password.
 
 ---
 
-## 2. Before you start: the signing key
+## 2. Conventions
 
-1. Generate an Ed25519 keypair. The private key stays on your server, always.
-2. Give it a `key_id` string, e.g. `installer-signing-key-2026-01`.
-3. Send us the **public** key (PEM) plus that `key_id` — we deploy it to the
-   terminals' trust store. Terminals can hold several keys at once, so rotation
-   is: deploy the new public key first, then switch the signer.
-
----
-
-## 3. Conventions
-
-- **HTTPS** with a valid certificate in production; terminals verify it.
+- **HTTPS** with a valid certificate in production. The pairing call does not
+  follow redirects, so `serverLink` must be the final URL.
+- **Timeout:** the terminal waits `REMOTE_TIMEOUT_SEC` = 10 s for every call.
 - **Auth header** on endpoints 3 and 4: `Authorization: Bearer <device_token>`.
-  Check the token belongs to the `device_id` in the URL, else `403`.
-- **Timestamps**: UTC, exactly `YYYY-MM-DDTHH:MM:SSZ` — no offsets, no
+  The server answers `401` (`Missing bearer token` / `Invalid device token`) for
+  a bad token and `403` (`Token does not belong to this device`) when the token
+  belongs to another `device_id`.
+- **Timestamps**: UTC, exactly `YYYY-MM-DDTHH:MM:SSZ`, no offsets, no
   fractional seconds. Example: `2026-07-27T15:02:00Z`.
-- **Errors**: a JSON body with a `detail` string.
+- **Errors**: a JSON body with a `detail` string. For pairing, the terminal
+  shows `Pairing failed (<code>): <detail>` to the technician, so write it for
+  them.
 
-  ```json
-  { "detail": "Provisioning token expired — generate a new QR" }
-  ```
+What the terminal does with each answer:
 
-  On registration, this text is shown on the terminal screen to the technician
-  standing at the door, so write it for them.
+| Call | Answer | What the terminal does |
+|---|---|---|
+| Pairing | `2xx` | Checks the body ([§6](#6-post-installationpair--the-terminal-pairs)) and saves its identity. |
+| Pairing | any other code | Shows your `detail`. No retry: the technician scans again. |
+| Pairing | timeout / unreachable | Shows "Pairing server unreachable or timed out; scan again to recover". Not retried. |
+| Heartbeat | `2xx` | Success. Buffered events are deleted. |
+| Heartbeat | `410` | **This device was removed.** Wipes identity, users and faceprints ([§9](#9-removing-a-terminal)). Use it for nothing else. |
+| Heartbeat | anything else, or network error | A failure. Events stay buffered, the retry delay doubles from the interval up to 300 s, and the door keeps working from cached data. This includes `401`/`403`. |
+| User sync | `200` with at least one usable record | Replaces the local list. |
+| User sync | anything else | No change. A `db_sync_failed` event is queued and the next sync tries again. |
 
-- **Status codes the terminal reacts to**:
-
-| Code | What the terminal does |
-|---|---|
-| `2xx` | Success. |
-| `400` / `404` / `409` on **registration only** | Permanent failure for that token. Shows your `detail` on screen; the technician must scan a new QR — the terminal does not retry. |
-| `401` / `403` on **heartbeat / user sync** | Bad or mismatched token. This one call fails, but the terminal keeps calling on its normal schedule and keeps working from its cached data — nothing stops. |
-| `410` | **This device was removed.** Wipes its identity, users and faceprints. Use it for nothing else ([§9](#9-removing-a-terminal)). |
-| `5xx` | Temporary. Backs off, retries, keeps its cached data. |
-
-Report your own failures as `5xx`, never as one of the codes above. `400`,
-`404` and `409` mean "this specific request can never succeed" — the terminal
-stops *that one action* (e.g. gives up on registering with this token) rather
-than retrying it, since retrying an already-used or expired token would just
-fail the same way again. `401`/`403` don't stop anything: the heartbeat and
-user-sync calls keep firing on their normal schedule regardless.
+Report your own failures as `5xx`. On heartbeat and user sync only `410` (and
+only on heartbeat) is special. On pairing every non-`2xx` is final for that scan.
 
 ---
 
-## 4. The flow
+## 3. The flow
 
-### 4.1 Installing a terminal — happens once
-
-```
-   +----------------------------------------------------------------------+
-   | 1   DASHBOARD  -->  SERVER      POST /devices/generate-qr            |
-   |                                                                      |
-   |     { customer_id, site_id, door_id, device_mode,                    |
-   |       validity_minutes, network_profile }                            |
-   +----------------------------------------------------------------------+
-                                       |
-                                       v
-   +----------------------------------------------------------------------+
-   | 2   SERVER                                                           |
-   |                                                                      |
-   |     - create a one-time token + nonce, store them                    |
-   |     - build the QR envelope, sign it (canonical JSON + Ed25519)      |
-   |     - render the QR PNG, check it decodes before returning it        |
-   |                                                                      |
-   |     -> { token, nonce, expires_at, payload, qr_png }                 |
-   +----------------------------------------------------------------------+
-                                       |
-                                       v
-   +----------------------------------------------------------------------+
-   | 3   TECHNICIAN  -->  TERMINAL   holds the QR to the camera           |
-   |                                                                      |
-   |     the terminal verifies it OFFLINE, no network call:               |
-   |     signature, schema, command, expires_at                           |
-   |     then joins Wi-Fi if the QR carried a wifi profile                |
-   +----------------------------------------------------------------------+
-                                       |
-                                       v
-   +----------------------------------------------------------------------+
-   | 4   TERMINAL  -->  SERVER       POST /devices/register               |
-   |                                 (no Authorization header)            |
-   |                                                                      |
-   |     { token, nonce, mac, device_type, fw_version, app_version }      |
-   +----------------------------------------------------------------------+
-                                       |
-                                       v
-   +----------------------------------------------------------------------+
-   | 5   SERVER                                                           |
-   |                                                                      |
-   |     - is the token known, unused and not expired?                    |
-   |     - does the nonce match the one stored with that token?           |
-   |     - mark the token used AND bind the device, in one transaction    |
-   +----------------------------------------------------------------------+
-                                       |
-                                       v
-   +----------------------------------------------------------------------+
-   | 6   SERVER  -->  TERMINAL       200                                  |
-   |                                                                      |
-   |     { device_id, device_token, heartbeat_interval_sec,               |
-   |       customer_id, site_id, door_id, device_mode, registered_at }    |
-   |                                                                      |
-   |     the terminal saves this, then starts calling the two             |
-   |     endpoints below on its own                                       |
-   +----------------------------------------------------------------------+
-```
-
-**Mermaid view of the same flow:**
+### 3.1 Installing a terminal
 
 ```mermaid
 sequenceDiagram
-    participant QR as Signed QR (provisioning_token)
-    participant Dev as Terminal (unbound)
+    participant Dash as Dashboard
     participant Srv as Server
+    participant Tech as Technician
+    participant Dev as Terminal
 
-    Dev->>Dev: scan + verify signature/expiry offline
-    Dev->>Srv: POST /devices/register {token, nonce, mac, ...}
-    Srv->>Srv: check token is valid & unused, then invalidate it
-    Srv-->>Dev: 200 {device_id, device_token, customer_id, site_id, door_id, ...}
-    Dev->>Dev: save as device_identity.json (0600)
-    Dev->>Srv: every heartbeat: Authorization: Bearer device_token
+    Dash->>Srv: POST /installation {customer_id, site_id, door_id, ...}
+    Srv-->>Dash: 201 {_id, status: pending, payload, qr_png}
+    Tech->>Dev: holds the QR to the camera
+    Dev->>Dev: parse + validate the QR (no signature)
+    Dev->>Dev: join Wi-Fi if the QR has a wifi profile
+    Dev->>Srv: POST /installation/pair {installationId, mac, serial}
+    Srv->>Srv: bind hardware (by serial) to the installation
+    Srv-->>Dev: 200 {status: paired, device, device_token, heartbeat_interval_sec, ...}
+    Dev->>Dev: save device_identity.json (0600)
+    Dev->>Srv: GET /users, then POST /status on a timer (Bearer)
 ```
 
-If step 5 fails, nothing is bound and the technician generates a new QR:
+If pairing fails, nothing is saved on the terminal. A technician fixes the
+cause (often by generating a new QR) and scans again.
 
-```
-   +----------------------------------------------------------------------+
-   | 5b  SERVER  -->  TERMINAL       400 / 404 / 409                      |
-   |                                                                      |
-   |     { "detail": "Provisioning token already used -- generate         |
-   |                  a new QR" }                                         |
-   |                                                                      |
-   |     nothing is bound; your detail text is shown on the terminal      |
-   |     screen to the technician                                         |
-   +----------------------------------------------------------------------+
-```
+### 3.2 Normal running
 
-### 4.2 Normal running — from then on
-
-```
-   +----------------------------------------------------------------------+
-   | every 600 s     GET /devices/{device_id}/users                       |
-   |                 Authorization: Bearer <device_token>                 |
-   |                                                                      |
-   |     -> 200 { "2325780402": { user_id, name, active, faceprints },    |
-   |              "1049337812": { ... } }                                 |
-   |                                                                      |
-   |     the terminal REPLACES its whole local user list with this        |
-   +----------------------------------------------------------------------+
-                                       |
-                                       v
-   +----------------------------------------------------------------------+
-   | every 30 s      POST /devices/{device_id}/status                     |
-   |                 Authorization: Bearer <device_token>                 |
-   |                                                                      |
-   |     { status, metadata { ...device state..., events: [ ... ] } }     |
-   |                                                                      |
-   |     -> 200 { "ok": true }                                            |
-   |        means you stored the events; the terminal deletes them        |
-   +----------------------------------------------------------------------+
-                                       |
-                                       v
-   +----------------------------------------------------------------------+
-   | after you remove the device on your dashboard                        |
-   |                                                                      |
-   |     -> 410 on the next status call                                   |
-   |                                                                      |
-   |     the terminal wipes its identity, users and faceprints,           |
-   |     denies everyone, and waits for a new QR   (see section 9)        |
-   +----------------------------------------------------------------------+
-```
+| When | Call | Result |
+|---|---|---|
+| start-up, after pairing, then every 60 s | `GET /devices/{device_id}/users` | the terminal replaces its whole local user list |
+| every `heartbeat_interval_sec` | `POST /devices/{device_id}/status` | `200` means you stored the events, the terminal deletes them |
+| after you remove the device | next status call gets `410` | the terminal wipes itself and waits for a new QR ([§9](#9-removing-a-terminal)) |
 
 ---
 
-## 5. `POST /devices/generate-qr` — create a provisioning QR
+## 4. `POST /installation` — create an installation and its QR
 
-Called by your dashboard when a technician is installing a terminal. You create
-a one-time token, put it in a signed envelope, and render that envelope as a QR
-image for the technician to hold up to the camera.
+Called by your dashboard when a technician is installing a terminal. It creates
+a *pending* installation and returns the QR image.
 
 ### Request
 
@@ -227,8 +125,8 @@ image for the technician to hold up to the camera.
   "customer_id": "acme",
   "site_id": "hq",
   "door_id": "main-entrance",
+  "deviceType": "Genie Door Camera Lite",
   "device_mode": "card_and_face",
-  "validity_minutes": 10,
   "network_profile": {
     "mode": "wifi",
     "wifi": { "ssid": "acme-installers", "password": "s3cr3t-pass" }
@@ -238,238 +136,177 @@ image for the technician to hold up to the camera.
 
 | Field | Required | Notes |
 |---|---|---|
-| `customer_id`, `site_id`, `door_id` | yes | 1–64 chars. Human-readable names from your dashboard, not numeric primary keys. Signed into the QR and stored on the device. |
-| `device_mode` | no | One of the three values below. Default `card_and_face`. |
-| `validity_minutes` | no | Keep it around 10. Anyone who photographs the QR can read the Wi-Fi password out of it, and the QR stays usable until it expires. |
-| `network_profile` | no | `{"mode": "local"}` (default, terminal is already cabled) or `{"mode": "wifi", "wifi": {"ssid": "...", "password": "..."}}` — the terminal joins that network before registering. |
+| `customer_id`, `site_id`, `door_id` | yes | 1–64 chars. Human-readable names. They come back in the pair response as `customer`, `venue` and `gate`. |
+| `deviceType` | no | Default `Genie Door Camera Lite`. |
+| `device_mode` | no | One of the four values below. Default `card_and_face`. |
+| `network_profile` | no | `{"mode": "local"}` (default, terminal is cabled) or `{"mode": "wifi", "wifi": {"ssid": "...", "password": "..."}}`. |
 
 `device_mode` values:
 
 | Mode | Behaviour at the door |
 |---|---|
-| `card_only` | Valid card opens the relay. No face step. |
+| `card_only` | Valid, active card opens the relay. No face step. |
 | `card_and_face` | Valid card starts a session, then the face is verified against that cardholder. **Normal production mode.** |
 | `face_only` | Screen tap starts a face search against all enrolled users. For doors with no card reader. |
+| `time_registry` | IN/OUT attendance. No relay. See [§10](#10-time_registry-mode). |
 
-A fourth mode, `time_registry`, is **not implemented yet** — reject it for now
-([§10](#10-not-implemented-yet)).
+The terminal applies the mode **at boot**. If a new pairing returns a different
+mode than the one running, the screen says "Restart for <mode>". When the server
+returns no mode, the terminal keeps its own `config.DEVICE_MODE` (`face_only`).
 
-### Response
+### Response — `201`
 
 ```json
 {
-  "token": "kR3vQ8mN2pL7xW4tY6bZ1aC5",
-  "nonce": "8f2c1a4b-6d3e-4f7a-9b2c-5e8d1f3a7c9b",
-  "issued_at": "2026-07-27T14:52:00Z",
-  "expires_at": "2026-07-27T15:02:00Z",
+  "_id": "16e467fae6e2692c8255c33a",
+  "status": "pending",
   "payload": {
-    "schema": "acme.provisioning-qr.v1",
-    "command": "provision_device",
-    "server_url": "https://access.example.com"
+    "installationId": "16e467fae6e2692c8255c33a",
+    "deviceType": "Genie Door Camera Lite",
+    "serverLink": "https://access.example.com"
   },
   "qr_png": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg..."
 }
 ```
 
-`payload` is the complete signed envelope that went into the QR image (§5.1),
-returned only so you can inspect it while debugging — shortened above.
-`qr_png` drops straight into an `<img src="...">` on your dashboard.
-
-Store the token (hashed), the nonce, the expiry and the chosen `device_mode`
-together — you need all four when the terminal registers.
-
-### 5.1 The QR envelope
-
-This exact JSON is what goes into the QR image, and what the terminal parses:
-
-```json
-{
-  "schema": "acme.provisioning-qr.v1",
-  "command": "provision_device",
-  "server_url": "https://access.example.com",
-  "customer_id": "acme",
-  "site_id": "hq",
-  "door_id": "main-entrance",
-  "provisioning_token": "kR3vQ8mN2pL7xW4tY6bZ1aC5",
-  "issued_at": "2026-07-27T14:52:00Z",
-  "expires_at": "2026-07-27T15:02:00Z",
-  "nonce": "8f2c1a4b-6d3e-4f7a-9b2c-5e8d1f3a7c9b",
-  "network_profile": { "mode": "local" },
-  "signature": {
-    "algorithm": "Ed25519",
-    "key_id": "installer-signing-key-2026-01",
-    "value": "3rT9xK2mQ7pL...base64url of the 64-byte signature"
-  }
-}
-```
-
-- `schema` must be exactly `acme.provisioning-qr.v1` and `command` exactly
-  `provision_device`. Anything else is rejected by the terminal.
-- `server_url` is your public base URL. The terminal registers against it and
-  stores it — get it wrong and the device is bound to an unreachable host.
-- `device_mode` is deliberately **not** here; it comes back in the register
-  response instead. Do not add fields to this envelope: it is already ~600
-  characters, about the largest QR the camera reads reliably off a phone screen.
-
-### 5.2 Signing — get this exactly right
-
-If your signing bytes differ from what the terminal computes by even one
-character, **every terminal rejects every QR you produce**, and you get no error
-on your side.
-
-1. Build the envelope **without** the `signature` key.
-2. Serialise it to canonical JSON: keys sorted, no whitespace, UTF-8.
-3. Sign those bytes with raw Ed25519 (not pre-hashed, not `Ed25519ph`).
-4. Base64url-encode the 64-byte signature (the `-_` alphabet, RFC 4648 §5) and
-   attach it as `signature.value`.
-
-```python
-import json, base64
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-def sign_envelope(envelope: dict, private_key: Ed25519PrivateKey, key_id: str) -> dict:
-    unsigned = {k: v for k, v in envelope.items() if k != "signature"}
-    message = json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    envelope["signature"] = {
-        "algorithm": "Ed25519",
-        "key_id": key_id,
-        "value": base64.urlsafe_b64encode(private_key.sign(message)).decode("ascii"),
-    }
-    return envelope
-```
-
-The terminal verifies by stripping `signature` and rebuilding the same bytes, so
-the signature covers every other field, including `network_profile`.
-
-Ways this goes wrong, all of them fatal and silent:
-
-- Unsorted keys, or pretty-printed JSON with spaces or newlines.
-- Standard base64 (`+/`) instead of base64url (`-_`).
-- Signing the string *after* adding a placeholder `signature` field.
-- Passing the envelope through a library that reorders or reformats nested
-  objects before signing.
-
-### 5.3 Rendering the QR
-
-- Error correction level **L**, QR version 17.
-- Decode the PNG you just produced before returning it. If it does not decode,
-  re-render with a fresh nonce (our reference implementation retries up to 6
-  times). A QR no decoder can read is worse than an error, because the
-  technician only finds out at the door.
+`_id` is 24 random hex characters. `qr_png` drops straight into an
+`<img src="...">`. `serverLink` is the server's `PUBLIC_BASE_URL`, so set it
+correctly: a wrong value means the terminal scans fine and then calls nowhere.
 
 ---
 
-## 6. `POST /devices/register` — the terminal redeems the token
+## 5. The QR content
 
-The terminal calls this after verifying the QR offline and joining Wi-Fi if
-needed. **No `Authorization` header** — the one-time token in the body is the
-credential.
+The QR holds the compact JSON of `payload`, with no signature:
+
+```json
+{"installationId":"16e467fae6e2692c8255c33a","deviceType":"Genie Door Camera Lite","serverLink":"https://access.example.com"}
+```
+
+`networkProfile` is added only for Wi-Fi. A `local` profile is left out to keep
+the QR small:
+
+```json
+"networkProfile": { "mode": "wifi", "wifi": { "ssid": "acme-installers", "password": "s3cr3t-pass" } }
+```
+
+What the terminal accepts (`qr_scanner/payload.py`):
+
+- `installationId`, `deviceType`, `serverLink` must be non-empty strings.
+- `serverLink` must be `http` or `https`, have a host and a valid port, and have
+  no user name, password, query or fragment.
+- `networkProfile` is optional. `{}` means local. `mode` must be `wifi` or
+  `local`, and `wifi` needs a non-empty `ssid` and `password`.
+- Anything else is rejected: the terminal logs it and queues a `qr_rejected`
+  event.
+
+On a good scan the terminal queues `qr_accepted` and, **before** the pair call,
+joins the Wi-Fi network if the QR has one (`APPLY_NETWORK_PROFILE` is on). A
+fresh terminal may have no other route to your server.
+
+The scanner reads the same camera frame the preview shows, which is now cropped
+to the centre square. Keep the QR near the middle of the picture.
+
+---
+## 6. `POST /installation/pair` — the terminal pairs
+
+The terminal calls this after it accepts the QR and joins Wi-Fi if needed. **No
+`Authorization` header.**
 
 ### Request
 
 ```json
 {
-  "token": "kR3vQ8mN2pL7xW4tY6bZ1aC5",
-  "nonce": "8f2c1a4b-6d3e-4f7a-9b2c-5e8d1f3a7c9b",
-  "mac": "aa:bb:cc:dd:ee:ff",
-  "device_type": "F455",
-  "fw_version": "6.1.0",
-  "app_version": "face-guard-0.1.0"
+  "installationId": "16e467fae6e2692c8255c33a",
+  "mac": "AA:BB:CC:DD:EE:FF",
+  "serial": "10000000abcd1234"
 }
 ```
 
-Only `token` is guaranteed. Every other field may be `null` or missing — MAC
-detection can fail, and a dev box without the SDK sends `"unknown"`. Do not
-reject on that.
+- `mac` must look like `xx:xx:xx:xx:xx:xx`, otherwise the server answers `422`.
+  The terminal sends it in upper case.
+- `serial` is the Raspberry Pi board serial, 16 hex digits (zero-padded). The
+  server stores it in lower case and uses it as the **hardware key**. Windows
+  development boxes send `dev-<name>`.
 
-### What to check, in one transaction
+### What the server does, in one transaction
 
-1. The token exists, has not been used, and `expires_at` has not passed. Check
-   the expiry even though the terminal already did — a terminal could be
-   replaying an old photo of a QR. Single-use tokens plus this check are the
-   whole replay defence.
-2. If `nonce` is present, it matches the nonce you stored with that token.
-3. Mark the token used **and** create the device row in the same transaction, so
-   a crash between the two cannot leave a usable token pointing at a live
-   device.
+1. The installation must exist (`404` otherwise).
+2. Its status must be `pending` or `paired`. Any other status gives `409`.
+3. A repeat call for an already `paired` installation is accepted only from the
+   same hardware (same serial, same MAC, still active). Otherwise `409`.
+4. The hardware row is found by serial, or created with a new random ID.
+5. The device row is created or updated, with a **new token**. The old token
+   stops working.
+6. A first pairing marks any older installation of that hardware as `replaced`
+   and seeds the device's user list from the demo template. A repeat call keeps
+   the uploaded users.
 
 ### Response — `200`
 
 ```json
 {
-  "device_id": "3f9a2c7e-5b18-4d6f-a91c-7e2b4d8f1a30",
-  "device_token": "v8Kq2Xn5Rt7Yw1Zb4Ce6Df9Gh0Jk3Lm5Np8Qr1St4Uv",
-  "heartbeat_interval_sec": 30,
-  "customer_id": "acme",
-  "site_id": "hq",
-  "door_id": "main-entrance",
+  "_id": "16e467fae6e2692c8255c33a",
+  "status": "paired",
+  "deviceType": "Genie Door Camera Lite",
+  "customer": { "_id": "acme", "name": "acme", "serverType": "remote", "serverLink": "https://access.example.com" },
+  "venue": "hq",
+  "gate": { "_id": "main-entrance", "name": "main-entrance", "status": true },
+  "device": "3f9a2c7e5b184d6fa91c7e2b",
   "device_mode": "card_and_face",
-  "registered_at": "2026-07-27T15:02:00Z"
+  "network_profile": { "mode": "local" },
+  "timeStamp": "2026-07-27T15:02:00Z",
+  "device_token": "v8Kq2Xn5Rt7Yw1Zb4Ce6Df9Gh0Jk3Lm5Np8Qr1St4Uv",
+  "heartbeat_interval_sec": 30
 }
 ```
 
-- `device_token` is returned **exactly once** and is never retrievable again.
-  Store only a hash of it (e.g. SHA-256), and never log it.
-- `heartbeat_interval_sec` is yours to decide — whatever you return becomes the
-  terminal's heartbeat rate for the life of the binding. Use it to control your
-  own load.
-- `device_mode` must be the mode you stored with that token. If it somehow has
-  none, fall back to `card_and_face`.
-- The terminal writes this whole object to a local credential file and starts
-  calling endpoints 3 and 4.
+The terminal requires `status` = `paired`, an `_id` equal to the one it sent, and
+a non-empty `device` string. Otherwise it reports "Invalid pair response" and
+saves nothing. It reads:
 
-### 6.1 `device_id` generation and uniqueness
+| Response field | Stored as |
+|---|---|
+| `device` | `device_id`, used in the users and status URLs |
+| `device_token` | the bearer token. If it is missing the terminal pairs but has no database credentials, and shows a warning. |
+| `customer._id`, `venue`, `gate._id` | `customer_id`, `site_id`, `door_id` |
+| `device_mode` | `device_mode` (empty keeps the local default) |
+| `heartbeat_interval_sec` | heartbeat rate. Must be above 0. Without it the terminal uses its own 10 s. |
 
-`device_id` is minted server-side as a fresh random UUID4 at the moment the
-token is redeemed -- never derived from `mac`, `door_id`, or anything the
-terminal supplies, and never reused across terminals:
-
-```python
-device_id = str(uuid.uuid4())
-```
-
-122 bits of randomness plus a unique/primary-key constraint on the `devices`
-table together make a collision a non-concern in practice.
-
-```mermaid
-sequenceDiagram
-    participant Dev as Terminal
-    participant Srv as Server
-
-    Dev->>Srv: POST /devices/register {provisioning_token, mac, nonce, ...}
-    Srv->>Srv: validate + consume the single-use token
-    Srv->>Srv: device_id = str(uuid.uuid4())
-    Srv->>Srv: INSERT devices (device_id, mac, door_id, ...)
-    Srv-->>Dev: 200 {device_id, device_token, ...}
-    Dev->>Dev: save to device_identity.json
-```
+`device_token` is a plain field in the pair response. The terminal stores it in
+`device_identity.json` (mode 0600). The server keeps only a hash. Do not log it.
 
 ### Failures
 
-| Status | Condition | `detail` to return |
+| Status | Condition | `detail` |
 |---|---|---|
-| `404` | Token unknown | `Unknown provisioning token` |
-| `409` | Token already used | `Provisioning token already used — generate a new QR` |
-| `400` | Token expired | `Provisioning token expired — generate a new QR` |
-| `400` | `nonce` does not match the token | `Nonce does not match token` |
+| `404` | Installation unknown | `Installation not found; generate a QR on this server` |
+| `409` | Installation replaced or removed | `Installation is no longer active; generate a new QR` |
+| `409` | Paired already, or by other hardware | `Installation is already paired or device was removed; generate a new QR` |
+| `422` | Bad `mac`, or an empty field | validation errors. `detail` is a list here, so the terminal shows that list raw in `Pairing failed (422): ...`. |
 
-### 6.2 A terminal registering again replaces its old binding
+### Moving a terminal
 
-Moving a terminal to another door is done by simply showing it a new QR. Being
-already bound is **not** an error.
+Moving a terminal to another door is a new installation and a new QR. Being
+already bound is not an error: the terminal replaces its identity, stops the old
+heartbeat and restarts it with the new credentials. If it cannot save the new
+identity it keeps the old one, but the server has already rotated the token, so
+it needs another scan.
 
-Match on a stable identifier (`mac`, or whatever device identity you keep) and
-**update the existing row** — new `door_id`, new `device_mode`, new
-`device_token` — instead of inserting a second device. The old `device_token`
-must stop working. Otherwise every re-installation leaves behind a live row
-holding a valid token, still counted as a device at its old door.
+### The saved identity (`device_identity.json`)
+
+`device_id`, `device_token`, `server_url`, `customer_id`, `site_id`, `door_id`,
+`network_profile`, `device_mode`, `registered_at`, `heartbeat_interval_sec`,
+`identity_version` (2), `installation_id`, `serial`, `mac`, `device_type`.
+Unknown keys are ignored on load, so a newer server may add fields.
 
 ---
 
 ## 7. `GET /devices/{device_id}/users` — the door's user list
 
 Bearer authenticated. This is the data the door runs on. Return **only the users
-allowed through this terminal's door**.
+allowed through this terminal's door**. Today our server keeps one user list per
+device and returns it.
 
 ### Response — `200`
 
@@ -488,95 +325,79 @@ A JSON object keyed by card/badge id:
       "flags": 3,
       "adaptive_descriptor_nomask": [-142, 87, -310, 455, 12, 2, 0, 0]
     }
-  },
-  "1049337812": {
-    "user_id": 2,
-    "name": "John Doe",
-    "active": true,
-    "permission_level": "employee",
-    "faceprints": {
-      "version": 9,
-      "features_type": 0,
-      "flags": 3,
-      "adaptive_descriptor_nomask": [93, -204, 71, -388, 626, 2, 0, 0]
-    }
   }
 }
 ```
 
-The descriptor arrays above are shortened for readability — each one is always
-exactly 515 integers.
+The array is shortened here. A real one has exactly 515 integers. The terminal
+also accepts `{"users": {...}}` or a list of records that each carry `badge_id`
+(or `id`), but use the plain object above.
 
 ### 7.1 Record fields
 
 | Field | Required | Notes |
 |---|---|---|
-| *(the key)* | yes | Card/badge id exactly as the reader reads it off the card. Must be a **string**, even when numeric. |
-| `user_id` | **yes** | Stable person id. Any non-null integer or string; we never interpret it. A record without it is skipped. This — never the card id — identifies the person in every event we send you. |
-| `faceprints` | **yes** | Face data from the RealSense SDK, see §7.2. A record without a valid one is skipped. |
-| `name` | no | Shown on the welcome screen. Defaults to `""`. |
-| `active` | no | `false` = kept on the device but never opens the door. Defaults to `true`. This is how you disable a person. |
-| `permission_level` | no | Informational only; the device does no permission check. Defaults to `"User"`. |
+| *(the key)* | yes | Card/badge id as the reader reads it. Treated as a string. |
+| `user_id` | **yes** | Any non-null integer or string. A record without it is skipped and a `db_sync_invalid_record` event is queued. This, never the card id, identifies the person in events. |
+| `faceprints` | **yes** | Needs `version`, `features_type`, `flags` and `adaptive_descriptor_nomask`. Otherwise the record is skipped. |
+| `name` | no | Default `""`. |
+| `active` | no | `false` keeps the record but never opens the door. Default `true`. |
+| `permission_level` | no | Informational only. Default `"User"`. |
 
-Every enrolled person has a faceprint, in every mode — `card_only` is a property
-of a *door*, not of a person. "A user with no faceprints" is not a supported
-case.
+The terminal keeps only the four `faceprints` keys. Anything else
+(`adaptive_descriptor_withmask`, `enroll_descriptor`) is dropped, so do not send
+them.
 
 ### 7.2 The `faceprints` object
 
-Pass it through **exactly** as it was given to you at enrolment. Store it as
-opaque JSON: do not truncate, round, reorder, or convert the numbers to floats.
+Pass it through exactly as it was given at enrolment. Do not round, reorder or
+convert the numbers.
 
-| Key | Type | Value |
-|---|---|---|
-| `version` | int | Currently **9**. Must match the device firmware, or every comparison silently fails and nobody gets in. |
-| `features_type` | int | `0` in practice. |
-| `flags` | int | `3` in practice. |
-| `adaptive_descriptor_nomask` | array of int | **Exactly 515** integers, each within **±1023**. |
+| Key | Value |
+|---|---|
+| `version` | Currently **9**. Must match the firmware, or comparisons fail. |
+| `features_type` | `0` in practice. |
+| `flags` | `3` in practice. |
+| `adaptive_descriptor_nomask` | **Exactly 515** integers, each within ±1023. |
 
-The 515 length is a hard requirement: 512 face features plus 3 slots, where
-index 512 is a flag (value `2`) and 513–514 are `0`. Trimming the array to the
-512 "real" features breaks matching.
-
-Do **not** send `adaptive_descriptor_withmask` or `enroll_descriptor`. The
-terminal ignores both, and together they are about two thirds of the payload
-size for no benefit.
+The terminal does **not** check the length, range or version at sync. These
+limits come from the earlier version of this document and the SDK, and were
+not re-tested. A wrong array is rejected later by the SDK, when that person shows
+their face.
 
 ### 7.3 Two rules you must not break
 
-**(a) Only this door's users.** The terminal treats the presence of an `active`
-record in its local list as the permission itself — no further check, no
-schedules, no per-door rules on the device. If another door's user appears in
-this response, that user can open this door. Any access rules you need must be
-applied by deciding what goes into this payload.
+**(a) Only this door's users.** A present, `active` record is the permission
+itself. There are no schedules or per-door rules on the device.
 
-**(b) All or nothing.** This is a full replacement, not a delta, and there is no
-"removed users" list. Anyone missing from a well-formed `200` is deleted from
-the device, faceprints and all.
+**(b) Send the complete list.** A usable `200` replaces the local list. Anyone
+missing from it is deleted from the device, faceprints and all, and a
+`db_users_revoked` event is queued.
 
-- Never return a partial list — not on a slow query, not on a partly failed DB
-  read, not paginated. A truncated `200` silently removes access for everyone
-  missing from it.
-- If you cannot build the complete list, return **`5xx`**. The terminal keeps its
-  existing list and retries. A failed sync never clears anything.
+- Never return a partial list (slow query, paging, failed read). Return `5xx`
+  instead. The terminal keeps its list and retries.
+- **An empty result changes nothing.** If a `200` has no usable record (`{}`, or
+  every record invalid), the terminal keeps its old list and queues no
+  `db_users_revoked`. So you cannot remove the last user by returning an empty
+  list. Set that user `active: false` instead.
 
 ### 7.4 What a bad record does
 
 | Problem | Result |
 |---|---|
-| Missing `user_id`, or a missing key inside `faceprints` | Record is skipped cleanly at sync; the rest of the payload is fine. We send you a `db_sync_invalid_record` event. |
-| `adaptive_descriptor_nomask` not exactly 515 ints | Sync succeeds, then the SDK rejects the array when that person presents their face. It surfaces as a `hardware_error` and **blocks all access at that door for 20 s**, on every attempt. |
-| Wrong `version` | No error anywhere. Every comparison silently fails, so **every user is denied**. |
+| Missing `user_id`, or a missing `faceprints` key | Record skipped. `db_sync_invalid_record`, then `db_sync_skipped_entries`. |
+| Array of the wrong length | The SDK rejects it when that person presents their face. |
+| Wrong `version` | Matching fails for that data. |
 
-Treat `db_sync_invalid_record` and `db_sync_skipped_entries` events as bugs on
-your side: they mean we received records we could not use.
+Treat `db_sync_invalid_record` and `db_sync_skipped_entries` as bugs on your
+side.
 
 ---
 
 ## 8. `POST /devices/{device_id}/status` — heartbeat and events
 
-Bearer authenticated, sent every `heartbeat_interval_sec`. It reports the
-device's current state and carries any queued events in the same request.
+Bearer authenticated, sent every `heartbeat_interval_sec` (never faster than
+5 s). It reports the device state and carries any queued events.
 
 ### Request
 
@@ -584,7 +405,7 @@ device's current state and carries any queued events in the same request.
 {
   "status": "online",
   "metadata": {
-    "app_version": "face-guard-0.1.0",
+    "app_version": "face-guard",
     "device_type": "F455",
     "serial_port": "/dev/ttyACM0",
     "user_count": 42,
@@ -593,34 +414,17 @@ device's current state and carries any queued events in the same request.
     "session_active": false,
     "init_mode_active": false,
     "auth_in_progress": false,
-    "storage": {
-      "path": "/", "total_mb": 29820.0, "used_mb": 17540.0,
-      "free_mb": 12280.0, "free_pct": 41.2, "low": false
-    },
+    "storage": { "path": "/", "total_mb": 29820.0, "used_mb": 17540.0, "free_mb": 12280.0, "free_pct": 41.2, "low": false },
     "events": [
-      {
-        "event_id": "b2c4e6f8-1a3c-4d5e-8f90-2b4d6e8a0c1f",
-        "type": "access_granted",
-        "ts": "2026-07-27T15:04:11Z",
-        "user_id": 1,
-        "method": "card"
-      },
-      {
-        "event_id": "d7e9f1a3-5c7e-4a9b-b1d3-6f8a0c2e4d60",
-        "type": "access_denied",
-        "ts": "2026-07-27T15:05:02Z",
-        "user_id": 2,
-        "reason": "face_mismatch"
-      }
+      { "event_id": "b2c4e6f8-1a3c-4d5e-8f90-2b4d6e8a0c1f", "type": "access_granted", "ts": "2026-07-27T15:04:11Z", "user_id": 1, "method": "card" }
     ]
   }
 }
 ```
 
-Treat `metadata` as an **open object**: store it as JSON, do not validate its
-shape, do not reject unknown keys. Its contents are diagnostic and will grow
-between device releases. `metadata.events` is the one part with rules — see
-§8.1.
+`status` is `online` normally and `shutting_down` on the final flush. Treat
+`metadata` as an **open object**: store it, do not validate it. Our server
+removes `events` from it before storing the rest.
 
 ### Response — `200`
 
@@ -628,114 +432,125 @@ between device releases. `metadata.events` is the one part with rules — see
 { "ok": true, "server_time": "2026-07-27T15:04:12Z" }
 ```
 
-The terminal only looks at the status code; the body is ignored. It does not
-read configuration back from this response, so returning a new `device_mode` or
-`heartbeat_interval_sec` here has no effect today.
+The terminal only looks at the status code. It does not read configuration back,
+so a new `device_mode` or `heartbeat_interval_sec` here has no effect.
 
 ### 8.1 Events: store them before you answer `200`
 
-Events sit in a 200-entry in-memory buffer on the device (oldest dropped first)
-and are deleted **as soon as you answer `2xx`**. So:
+Events sit in a 200-entry memory buffer on the device (oldest dropped first) and
+are deleted **when you answer `2xx`**.
 
-- **`2xx` means "every event in that array is safely stored."** Persist them
-  first, then respond. Once you answer, they are gone from the device.
-- **Anything other than `2xx` keeps them buffered** and the terminal resends
-  them on the next heartbeat. Never answer `2xx` after storing only some of
-  them.
-- **Ignore duplicate `event_id`s** — a unique index plus `INSERT OR IGNORE`. If
-  your response is lost after you stored the events, the terminal resends the
-  same `event_id`s, and without this you get duplicate door records.
+- `2xx` means every event in the array is stored. Persist first, then answer.
+- Any other answer keeps them buffered, and the terminal resends them.
+- Ignore duplicate `event_id`s (`INSERT OR IGNORE`). A lost response makes the
+  terminal resend the same IDs.
+- Our server silently skips an event that has no `event_id` or no `type`, and
+  still answers `2xx`.
+- Our server keeps at most 500 events per device (`EVENTS_LIMIT`) and 200
+  heartbeats (`STATUS_HISTORY_LIMIT`).
 
-Every event has `event_id` (uuid4), `type`, `ts` (the device's UTC clock), plus
-a few fields specific to the type. Record your own `received_at` as well —
-device clocks drift.
+Every event has `event_id` (uuid4), `type`, `ts` (device clock, UTC) and
+type-specific fields. Record your own `received_at` too.
 
 ### 8.2 Event types
 
-Store `type` as a plain string. Accept unknown types rather than rejecting them:
-the terminal is permissive and this list will grow.
+Store `type` as a string and accept unknown types.
 
 | Type | Meaning and extra fields |
 |---|---|
 | `access_granted` | Door opened. `user_id`, `method` |
-| `access_denied` | Refused. `user_id` if known, plus `reason`: `face_mismatch` (a genuine refusal), `no_faceprints_on_file` or `face_extraction_failed` (usually a data problem on your side) |
+| `access_denied` | Refused. `reason`: `card_unregistered`, `user_inactive`, `no_match`, `face_mismatch`, `no_faceprints_on_file` or `face_extraction_failed`. Plus `user_id` and `method` when known. |
 | `access_output_failed` | Access approved but the relay pulse failed |
 | `auth_matched` | Face matched, logged before the access decision |
 | `relay_opened` | Relay triggered |
 | `card_unregistered` | Card is not in the device's list |
+| `attendance_event` | `time_registry` check-in: `user_id`, `direction` (`in`/`out`), `method` |
 | `device_boot` / `device_shutdown` | Terminal started / stopped |
-| `device_revoked` | Sent right before the terminal wipes itself after a `410` |
-| `init_mode_entered` | Terminal is waiting for a provisioning QR |
-| `qr_accepted` / `qr_rejected` | QR scan outcome; `qr_rejected` carries a `reason` |
-| `db_sync_ok` / `db_sync_failed` | User sync outcome, with counts or a `reason` |
-| `db_sync_invalid_record` / `db_sync_skipped_entries` | **Records you sent that we could not use — watch these** |
-| `db_users_revoked` | Users deleted locally because they were missing from your payload |
-| `hardware_error` | Camera, card reader or relay fault |
+| `device_revoked` | Terminal is wiping itself after a `410` (see §9) |
+| `init_mode_entered` | Terminal is waiting for a QR |
+| `qr_accepted` / `qr_rejected` | QR scan outcome. `qr_accepted` carries `installation_id`. |
+| `db_sync_ok` | `users`, `skipped` |
+| `db_sync_failed` | `reason`: `network_error`, `http_error` (with `status`), `invalid_json`, `unexpected_payload_shape`, `unexpected_payload_type` or `exception` |
+| `db_sync_invalid_record` / `db_sync_skipped_entries` | **Records you sent that we could not use** |
+| `db_users_revoked` | `count` users deleted locally because they were missing from your list |
+| `heartbeat_post_failed` | Three heartbeats in a row failed. Delivered with the next good one. |
+| `hardware_error` | Camera, card reader, relay or QR-scanner fault |
 | `storage_low` / `storage_ok` | Disk space crossed a threshold |
-| `attendance_event` | Not used yet ([§10](#10-not-implemented-yet)) |
 
-Events always identify a person by `user_id`, never by card id or name.
+Events identify a person by `user_id`, never by card id or name. The exception
+is `db_sync_invalid_record`, which carries the `badge_id` of the bad record.
 
 ---
 
 ## 9. Removing a terminal
 
-The terminal never calls anything to be removed and never asks. It finds out by
-getting **`410`** on its next heartbeat, and that single response is the whole
-mechanism.
+The terminal never asks to be removed. It finds out by getting **`410`** on a
+heartbeat. Our server does this with `DELETE /devices/{device_id}` (operator
+login).
 
-So this is an effect you must produce, not a URL we depend on — build whatever
-operator action you like (our mock server uses `DELETE /devices/{device_id}`).
+### 9.1 Keep the row
 
-### 9.1 Keep the row — a hard delete cannot revoke anything
-
-This is the one choice that looks right and is not. If you delete the device row
-when the operator clicks remove, the terminal's token resolves to nothing and
-its heartbeat comes back `401`/`404`. The terminal treats that as an ordinary
-rejected heartbeat: it backs off, **retries forever, keeps its cached users and
-faceprints, and keeps opening the door.** Only `410` triggers the wipe.
-
-So mark the device removed and keep the row:
+A hard delete cannot revoke anything. The token would resolve to nothing, the
+heartbeat would get `401`, and the terminal would back off, retry forever, keep
+its users and keep opening the door. Only `410` triggers the wipe. So the server
+keeps a row with a state:
 
 | State | Meaning | Answer to `POST /status` |
 |---|---|---|
 | `active` | Normal | `200` |
-| `suspended` | Operator removed it, device not told yet | `410`, then move it to `revoked_ack` |
-| `revoked_ack` | Device has been told at least once | `410` |
-| *(row deleted)* | Cleaned up after acknowledgement | `401` |
-
-Delete the row only after the device has been told (`revoked_ack`). Keep a
-`suspended` row indefinitely — a terminal that is switched off gets told on its
-next boot, and one that never returns costs you a single row.
+| `suspended` | Operator removed it, device not told yet | `410`, then the state becomes `revoked_ack` |
+| `revoked_ack` | Device has been told | `410` |
+| *(row deleted)* | Purged the next time the device list is loaded | `401` |
 
 ### 9.2 What to expect
 
-- Removal takes effect on the **next heartbeat** — up to
-  `heartbeat_interval_sec` for a running terminal, or next boot for one that is
-  off. Your UI should distinguish "removal pending" from "acknowledged".
-- **Expect one final heartbeat right after you answer `410`**, carrying a
-  `device_revoked` event, sent while the terminal still has a valid token.
-  Accept it and store its events — it is your proof the wipe happened.
-- **Answer `410` on `GET /devices/{device_id}/users` too**, otherwise a removed
-  terminal can still refresh its full user list in the window before its next
-  heartbeat.
-- On `410` the terminal deletes its identity, **erases all users and
-  faceprints**, denies everyone, and goes back to waiting for a QR. You are the
-  master copy of the face data; the first sync after re-provisioning restores it.
-- There is no un-remove. Re-provisioning with a new QR gives the terminal a
-  **new** `device_id`. To disable a *person* rather than a terminal, set their
-  record `active: false` (§7.1).
+- Removal takes effect on the **next heartbeat**, or at the next boot for a
+  terminal that is off.
+- On `410` the terminal queues `device_revoked`, tries one final status POST,
+  deletes its identity, stops sync, **erases all users and faceprints**, and
+  returns to init mode (deny everyone) waiting for a QR.
+- **That final POST is not stored.** It carries the old token, our server
+  answers `410` again, and it records nothing for a removed device. So
+  `device_revoked` never reaches the dashboard. Use the change to `revoked_ack`
+  as the proof.
+- **The users endpoint does not answer `410`.** `GET /devices/{device_id}/users`
+  only checks the token, so a suspended terminal can still fetch users until its
+  next heartbeat. The terminal treats any non-`200` there as a failed sync, so a
+  `410` would not wipe it anyway.
+- There is no un-remove. A new QR pairs the same hardware again. The server finds
+  the row by serial, so the `device_id` stays the same if the row has not been
+  purged yet, and the state returns to `active`. After a purge the device gets a
+  new `device_id`.
+- To disable a *person*, set `active: false` ([§7.1](#71-record-fields)).
 
 ---
 
-## 10. Not implemented yet
+## 10. `time_registry` mode
 
-`time_registry` mode (working-hours IN/OUT logging) is planned but built on
-neither side. Reject `time_registry` as a `device_mode` for now.
+Built on both sides. The terminal shows an IN/OUT screen instead of a
+screensaver and does not trigger the relay. A valid, active card queues one
+`attendance_event` with `user_id`, `direction` and `method: "card"`. The reader
+is held off for the result hold, so one tap is one event.
 
-When it lands, the terminal will show an IN/OUT screen instead of a
-screensaver, trigger no relay, and send `attendance_event` events (`user_id`,
-`direction` of `in`/`out`, `ts`) through the normal heartbeat channel with the
-same `event_id` duplicate handling. Attendance events will be queued on disk
-rather than in memory: a lost check-in is a payroll error, not just lost
-telemetry.
+Attendance events travel in the normal heartbeat with the same `event_id`
+handling. They sit in the **memory** buffer like every other event, not on disk,
+so a power cut, or more than 200 events during an outage, loses them.
+
+---
+
+## 11. What changed from the old contract
+
+| Old | Now |
+|---|---|
+| `POST /devices/generate-qr`, Ed25519-signed QR with nonce and expiry | `POST /installation`, plain QR with `installationId`, `deviceType`, `serverLink` |
+| `POST /devices/register` with a one-time token | `POST /installation/pair` with `{installationId, mac, serial}` |
+| Terminal verifies a signature offline | No signature. Pairing does not use `provisioning_keys/`. |
+| Server mints a new `device_id` per registration | Hardware is keyed by Pi serial and keeps its `device_id` |
+| `device_mode` and `network_profile` signed into the QR flow | Set on `POST /installation`, returned by pair. Wi-Fi also rides in the QR. |
+| User sync every 600 s | Every 60 s (`DB_SYNC_INTERVAL_SEC`) and once right after pairing |
+| Heartbeat every 30 s, fixed | `heartbeat_interval_sec` from the pair response (30 s on our server) |
+| `401`/`403` on heartbeat: "nothing stops" | Counts as a failed beat: backoff up to 300 s, door keeps working |
+| `410` also on users | Only on status |
+| `device_revoked` arrives after `410` | It is not stored |
+| An empty list wipes users | An empty or fully invalid list changes nothing |
+| `time_registry` not implemented | Implemented |
