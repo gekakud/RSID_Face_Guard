@@ -68,11 +68,12 @@ What the terminal does with each answer:
 | Pairing | `2xx` | Checks the body ([§6](#6-post-installationpair--the-terminal-pairs)) and saves its identity. |
 | Pairing | any other code | Shows your `detail`. No retry: the technician scans again. |
 | Pairing | timeout / unreachable | Shows "Pairing server unreachable or timed out; scan again to recover". Not retried. |
-| Heartbeat | `2xx` | Success. Buffered events are deleted. |
+| Heartbeat | any status below 400 | Success. Buffered events are deleted. Redirects are followed, so always answer `2xx` at the final URL. |
 | Heartbeat | `410` | **This device was removed.** Wipes identity, users and faceprints ([§9](#9-removing-a-terminal)). Use it for nothing else. |
 | Heartbeat | anything else, or network error | A failure. Events stay buffered, the retry delay doubles from the interval up to 300 s, and the door keeps working from cached data. This includes `401`/`403`. |
 | User sync | `200` with at least one usable record | Replaces the local list. |
-| User sync | non-`200`, network error or unusable body | No change. A `db_sync_failed` event is queued and the next sync tries again. |
+| User sync | non-`200`, network error or non-JSON body | No change. A `db_sync_failed` event is queued and the next sync tries again. |
+| User sync | `200` with a JSON body of the wrong shape or type | No change. `db_sync_failed` (`unexpected_payload_shape` / `unexpected_payload_type`) and also `db_sync_ok` (`users` = 0) are queued. |
 | User sync | `200` with no usable record | No change. `db_sync_ok` (`users` = 0) is queued, plus `db_sync_invalid_record` and `db_sync_skipped_entries` for rejected records. No `db_sync_failed`. |
 
 Report your own failures as `5xx`. On heartbeat and user sync only `410` (and
@@ -108,7 +109,7 @@ cause (often by creating a new QR) and scans again.
 
 | When | Call | Result |
 |---|---|---|
-| start-up, after pairing, then every 60 s | `GET /devices/{device_id}/users` | the terminal replaces its whole local user list |
+| start-up, after pairing (one or two immediate fetches), then every 60 s | `GET /devices/{device_id}/users` | the terminal replaces its whole local user list. Keep it idempotent. |
 | every `heartbeat_interval_sec` | `POST /devices/{device_id}/status` | `200` means you stored the events, the terminal deletes them |
 | after you remove the device | next status call gets `410` | the terminal wipes itself and waits for a new QR ([§9](#9-removing-a-terminal)) |
 
@@ -240,10 +241,11 @@ saves nothing. It reads:
 | `device_token` | the bearer token. If it is missing the terminal pairs but has no database credentials, and shows a warning. |
 | `customer._id`, `venue`, `gate._id` | `customer_id`, `site_id`, `door_id` |
 | `device_mode` | `device_mode` (empty keeps the local default) |
-| `heartbeat_interval_sec` | heartbeat rate. Must be above 0. Without it the terminal uses its own 10 s. |
+| `heartbeat_interval_sec` | heartbeat rate. Must be a positive integer (`int()` is applied; null or non-numeric is "Invalid pair response"). Without it the terminal uses its own 10 s. |
 
 `device_token` is a plain field in the pair response. The terminal stores it in
 `device_identity.json` (mode 0600). The server keeps only a hash. Do not log it.
+The same file also holds the QR's `network_profile`, including the Wi-Fi password.
 
 ### Failures
 
@@ -252,7 +254,7 @@ saves nothing. It reads:
 | `404` | Installation unknown | `Installation not found; generate a QR on this server` |
 | `409` | Installation replaced or removed | `Installation is no longer active; generate a new QR` |
 | `409` | Paired already, or by other hardware | `Installation is already paired or device was removed; generate a new QR` |
-| `422` | Bad `mac`, bad `serial` (not a nonzero Pi serial or `dev-...`), or an empty field | validation errors. `detail` is a list here, so the terminal shows that list raw in `Pairing failed (422): ...`. |
+| `422` | Bad `mac`, bad `serial` (not a nonzero Pi serial or `dev-...`), or an empty field | validation errors. For pydantic errors `detail` is a list, so the terminal shows it raw in `Pairing failed (422): ...`. A bad serial gives a plain string. |
 
 ### Moving a terminal
 
@@ -310,7 +312,7 @@ also accepts `{"users": {...}}` or a list of records that each carry `badge_id`
 | `user_id` | **yes** | Any non-null integer or string. A record without it is skipped and a `db_sync_invalid_record` event is queued. This, never the card id, identifies the person in events. |
 | `faceprints` | **yes** | Needs `version`, `features_type`, `flags` and `adaptive_descriptor_nomask`. Otherwise the record is skipped. |
 | `name` | no | Default `""`. |
-| `active` | no | `false` keeps the record but never opens the door. Default `true`. |
+| `active` | no | JSON boolean. `false` keeps the record but never opens the door. Default `true`. Do not send strings: `"false"` is read as true. |
 | `permission_level` | no | Informational only. Default `"User"`. |
 
 The terminal keeps only the four `faceprints` keys. Anything else
@@ -430,12 +432,12 @@ Store `type` as a string and accept unknown types.
 |---|---|
 | `access_granted` | Door opened. `user_id`, `method` |
 | `access_denied` | Refused. `reason`: `card_unregistered`, `user_inactive`, `no_match`, `face_mismatch`, `no_faceprints_on_file` or `face_extraction_failed`. Plus `user_id` and `method` when known. `face_extraction_failed` also carries `status`. |
-| `access_output_failed` | Access approved but the relay pulse failed |
-| `auth_matched` | Face matched, logged before the access decision |
+| `access_output_failed` | Access approved but the relay pulse failed. `user_id`, `method` |
+| `auth_matched` | Face matched, logged before the access decision. `user_id`, `method`, `score` |
 | `relay_opened` | Relay triggered. `seconds` |
 | `card_unregistered` | Card is not in the device's list |
 | `attendance_event` | `time_registry` check-in: `user_id`, `direction` (`in`/`out`), `method` |
-| `device_boot` / `device_shutdown` | Terminal started / stopped |
+| `device_boot` / `device_shutdown` | Terminal started / stopped. `device_boot` carries `app_version` and `ui`. |
 | `device_revoked` | Terminal is wiping itself after a `410` (see §9) |
 | `init_mode_entered` | Terminal is waiting for a QR |
 | `qr_accepted` / `qr_rejected` | QR scan outcome. `qr_accepted` carries `installation_id`. |

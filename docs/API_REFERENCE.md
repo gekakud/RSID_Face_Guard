@@ -38,9 +38,11 @@ Response `200`:
 | `status` | must be `paired` |
 | `device` | device ID (required), used in the URLs below |
 | `device_token` | bearer token |
-| `heartbeat_interval_sec` | above 0. Default on the terminal: 10. |
+| `heartbeat_interval_sec` | positive integer (the terminal runs `int()` on it; null or non-numeric gives "Invalid pair response"). Default on the terminal: 10. |
 | `device_mode` | `card_only`, `card_and_face`, `face_only` or `time_registry` |
-| `deviceType`, `venue`, `timeStamp` | informational |
+| `venue` | stored as `site_id` |
+| `deviceType` | stored as `device_type` (falls back to the QR value) |
+| `timeStamp` | informational, unused |
 | `customer`, `gate` | objects, the terminal reads `_id` |
 
 Errors: any non-2xx is final for that scan. The terminal shows `detail`. Reference backend: `404` unknown installation, `409` not active or other hardware, `422` bad fields.
@@ -54,7 +56,7 @@ Response `200`: object keyed by card/badge ID.
 | `user_id` | yes | int or string, not null |
 | `faceprints` | yes | see below |
 | `name` | no | default `""` |
-| `active` | no | default `true` |
+| `active` | no | JSON boolean, default `true`. Do not send strings: `"false"` is read as true. |
 | `permission_level` | no | default `"User"`, informational |
 
 `faceprints`: `version` (9), `features_type` (0), `flags` (3), `adaptive_descriptor_nomask` (515 ints, ±1023).
@@ -79,7 +81,7 @@ Response `200`: `{"ok": true, "server_time": "..."}`. The terminal reads only th
 
 | Answer | Terminal does |
 |---|---|
-| `2xx` | deletes the sent events |
+| any status below 400 | deletes the sent events. Redirects are followed, so answer `2xx` at the final URL. |
 | `410` | device was removed: wipes identity, users and faceprints, waits for a new QR |
 | anything else | keeps the events, retries with backoff up to 300 s |
 
@@ -91,11 +93,13 @@ Removal: the backend answers `410` to this call for a removed device. The termin
 |---|---|
 | `access_granted` | `user_id`, `method` |
 | `access_denied` | `reason`, `user_id`?, `method`?, `status`? (`face_extraction_failed`) |
-| `access_output_failed`, `auth_matched` | |
+| `access_output_failed` | `user_id`, `method` |
+| `auth_matched` | `user_id`, `method`, `score` |
 | `relay_opened` | `seconds` |
 | `card_unregistered` | |
 | `attendance_event` | `user_id`, `direction`, `method` |
-| `device_boot`, `device_shutdown`, `device_revoked` | |
+| `device_boot` | `app_version`, `ui` |
+| `device_shutdown`, `device_revoked` | |
 | `init_mode_entered` | |
 | `qr_accepted` | `installation_id` |
 | `qr_rejected` | |

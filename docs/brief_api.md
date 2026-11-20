@@ -37,16 +37,16 @@ sequenceDiagram
    - The backend binds the hardware, keyed by serial, to the installation.
    - It issues a new `device_token`, and the old one stops working.
    - The reply includes `device` (the device ID), `device_mode` and `heartbeat_interval_sec`.
-   - A new pairing resets the device's users to the demo template.
+   - Pairing a `pending` installation resets the device's users to the demo template. A repeat pair of an already `paired` installation keeps them.
 5. **Save identity.** The terminal writes `device_identity.json` (mode 0600). This survives reboots, so it needs no rescan.
-6. **Sync users.** `GET /devices/{id}/users` with `Authorization: Bearer <token>` runs once after pairing and then every 60 s.
+6. **Sync users.** `GET /devices/{id}/users` with `Authorization: Bearer <token>` runs right after pairing (one or two immediate fetches, so keep it idempotent) and then every 60 s.
    - The result is a full replacement set, keyed by card or badge ID.
    - Each record needs `user_id` and a `faceprints` object.
    - A non-`200`, empty or fully invalid response changes nothing.
    - A user missing from a good response is deleted on the terminal.
 7. **Heartbeat.** `POST /devices/{id}/status` runs every `heartbeat_interval_sec`, at least 5 s apart.
    - The body is `{status, metadata}`. The `metadata` holds device state plus an `events` array.
-   - On `200`, the terminal deletes the sent events. Otherwise it keeps them and retries with backoff up to 300 s.
+   - On any status below 400 (answer `2xx`; redirects are followed), the terminal deletes the sent events. Otherwise it keeps them and retries with backoff up to 300 s.
    - The backend stores events idempotently by `event_id` and answers `{ok, server_time}`.
 8. **Door use.** The terminal matches cards and faces against its local cache, so doors still work if the backend is down. It reports `access_granted`, `access_denied` and similar events through the heartbeat.
 9. **Removal.** If the device row is suspended, the next status call gets `410`.
