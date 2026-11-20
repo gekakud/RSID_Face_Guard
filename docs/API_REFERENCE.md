@@ -90,8 +90,9 @@ Removal: the backend answers `410` to this call for a removed device. The termin
 | Type | Fields |
 |---|---|
 | `access_granted` | `user_id`, `method` |
-| `access_denied` | `reason`, `user_id`?, `method`? |
-| `access_output_failed`, `auth_matched`, `relay_opened` | |
+| `access_denied` | `reason`, `user_id`?, `method`?, `status`? (`face_extraction_failed`) |
+| `access_output_failed`, `auth_matched` | |
+| `relay_opened` | `seconds` |
 | `card_unregistered` | |
 | `attendance_event` | `user_id`, `direction`, `method` |
 | `device_boot`, `device_shutdown`, `device_revoked` | |
@@ -99,12 +100,12 @@ Removal: the backend answers `410` to this call for a removed device. The termin
 | `qr_accepted` | `installation_id` |
 | `qr_rejected` | |
 | `db_sync_ok` | `users`, `skipped` |
-| `db_sync_failed` | `reason`, `status`? |
+| `db_sync_failed` | `reason`, `status`?, `error`? |
 | `db_sync_invalid_record` | `badge_id` |
 | `db_sync_skipped_entries` | `count` |
 | `db_users_revoked` | `count` |
 | `heartbeat_post_failed` | `consecutive_failures`, `server_url` |
 | `hardware_error` | `where`?, `error`? |
-| `storage_low`, `storage_ok` | |
+| `storage_low`, `storage_ok` | `path`, `free_mb`, `min_free_mb`? (`storage_low` only) |
 
 `access_denied` reasons: `card_unregistered`, `user_inactive`, `no_match`, `face_mismatch`, `no_faceprints_on_file`, `face_extraction_failed`.

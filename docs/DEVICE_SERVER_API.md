@@ -51,7 +51,7 @@ Three facts that shape everything else:
 - **HTTPS** with a valid certificate in production. The pairing call does not
   follow redirects, so `serverLink` must be the final URL.
 - **Timeout:** the terminal waits `REMOTE_TIMEOUT_SEC` = 10 s for every call.
-- **Auth header** on endpoints 3 and 4: `Authorization: Bearer <device_token>`.
+- **Auth header** on endpoints 2 and 3: `Authorization: Bearer <device_token>`.
   The server answers `401` (`Missing bearer token` / `Invalid device token`) for
   a bad token and `403` (`Token does not belong to this device`) when the token
   belongs to another `device_id`.
@@ -72,7 +72,8 @@ What the terminal does with each answer:
 | Heartbeat | `410` | **This device was removed.** Wipes identity, users and faceprints ([§9](#9-removing-a-terminal)). Use it for nothing else. |
 | Heartbeat | anything else, or network error | A failure. Events stay buffered, the retry delay doubles from the interval up to 300 s, and the door keeps working from cached data. This includes `401`/`403`. |
 | User sync | `200` with at least one usable record | Replaces the local list. |
-| User sync | anything else | No change. A `db_sync_failed` event is queued and the next sync tries again. |
+| User sync | non-`200`, network error or unusable body | No change. A `db_sync_failed` event is queued and the next sync tries again. |
+| User sync | `200` with no usable record | No change. `db_sync_ok` (`users` = 0) is queued, plus `db_sync_invalid_record` and `db_sync_skipped_entries` for rejected records. No `db_sync_failed`. |
 
 Report your own failures as `5xx`. On heartbeat and user sync only `410` (and
 only on heartbeat) is special. On pairing every non-`2xx` is final for that scan.
@@ -208,9 +209,7 @@ The terminal calls this after it accepts the QR and joins Wi-Fi if needed. **No
 4. The hardware row is found by serial, or created with a new random ID.
 5. The device row is created or updated, with a **new token**. The old token
    stops working.
-6. A first pairing marks any older installation of that hardware as `replaced`
-   and seeds the device's user list from the demo template. A repeat call keeps
-   the uploaded users.
+6. Pairing a `pending` installation (first pairing, or moving known hardware to a new installation) marks any older installation of that hardware as `replaced` and **resets the device user list to the demo template**, discarding uploaded users. A repeat call for an already `paired` installation keeps the uploaded users.
 
 ### Response — `200`
 
@@ -253,7 +252,7 @@ saves nothing. It reads:
 | `404` | Installation unknown | `Installation not found; generate a QR on this server` |
 | `409` | Installation replaced or removed | `Installation is no longer active; generate a new QR` |
 | `409` | Paired already, or by other hardware | `Installation is already paired or device was removed; generate a new QR` |
-| `422` | Bad `mac`, or an empty field | validation errors. `detail` is a list here, so the terminal shows that list raw in `Pairing failed (422): ...`. |
+| `422` | Bad `mac`, bad `serial` (not a nonzero Pi serial or `dev-...`), or an empty field | validation errors. `detail` is a list here, so the terminal shows that list raw in `Pairing failed (422): ...`. |
 
 ### Moving a terminal
 
@@ -356,6 +355,7 @@ missing from it is deleted from the device, faceprints and all, and a
 | Problem | Result |
 |---|---|
 | Missing `user_id`, or a missing `faceprints` key | Record skipped. `db_sync_invalid_record`, then `db_sync_skipped_entries`. |
+| A record that is not a JSON object | Skipped and counted in `db_sync_skipped_entries`. No `db_sync_invalid_record` is queued. |
 | Array of the wrong length | The SDK rejects it when that person presents their face. |
 | Wrong `version` | Matching fails for that data. |
 
@@ -429,10 +429,10 @@ Store `type` as a string and accept unknown types.
 | Type | Meaning and extra fields |
 |---|---|
 | `access_granted` | Door opened. `user_id`, `method` |
-| `access_denied` | Refused. `reason`: `card_unregistered`, `user_inactive`, `no_match`, `face_mismatch`, `no_faceprints_on_file` or `face_extraction_failed`. Plus `user_id` and `method` when known. |
+| `access_denied` | Refused. `reason`: `card_unregistered`, `user_inactive`, `no_match`, `face_mismatch`, `no_faceprints_on_file` or `face_extraction_failed`. Plus `user_id` and `method` when known. `face_extraction_failed` also carries `status`. |
 | `access_output_failed` | Access approved but the relay pulse failed |
 | `auth_matched` | Face matched, logged before the access decision |
-| `relay_opened` | Relay triggered |
+| `relay_opened` | Relay triggered. `seconds` |
 | `card_unregistered` | Card is not in the device's list |
 | `attendance_event` | `time_registry` check-in: `user_id`, `direction` (`in`/`out`), `method` |
 | `device_boot` / `device_shutdown` | Terminal started / stopped |
@@ -440,12 +440,12 @@ Store `type` as a string and accept unknown types.
 | `init_mode_entered` | Terminal is waiting for a QR |
 | `qr_accepted` / `qr_rejected` | QR scan outcome. `qr_accepted` carries `installation_id`. |
 | `db_sync_ok` | `users`, `skipped` |
-| `db_sync_failed` | `reason`: `network_error`, `http_error` (with `status`), `invalid_json`, `unexpected_payload_shape`, `unexpected_payload_type` or `exception` |
+| `db_sync_failed` | `reason`: `network_error`, `http_error` (with `status`), `invalid_json`, `unexpected_payload_shape`, `unexpected_payload_type` or `exception`. `network_error` and `exception` also carry `error`. |
 | `db_sync_invalid_record` / `db_sync_skipped_entries` | **Records you sent that we could not use** |
 | `db_users_revoked` | `count` users deleted locally because they were missing from your list |
 | `heartbeat_post_failed` | Three heartbeats in a row failed. Delivered with the next good one. |
 | `hardware_error` | Camera, card reader, relay or QR-scanner fault |
-| `storage_low` / `storage_ok` | Disk space crossed a threshold |
+| `storage_low` / `storage_ok` | Disk space crossed a threshold. both carry `path` and `free_mb`; `storage_low` also carries `min_free_mb` |
 
 Events identify a person by `user_id`, never by card id or name. The exception
 is `db_sync_invalid_record`, which carries the `badge_id` of the bad record.
